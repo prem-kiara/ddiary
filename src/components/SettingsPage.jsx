@@ -1,11 +1,36 @@
 import { useState, useEffect } from 'react';
-import { Save, Mail, Clock, Cloud, Shield, Palette, Download, Upload } from 'lucide-react';
+import { Save, Mail, Clock, Cloud, Shield, Download, Globe } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+
+// Common timezones for the selector
+const TIMEZONES = [
+  { label: 'UTC',                       value: 'UTC' },
+  { label: 'London (GMT/BST)',           value: 'Europe/London' },
+  { label: 'Paris / Berlin (CET)',       value: 'Europe/Paris' },
+  { label: 'Moscow (MSK)',               value: 'Europe/Moscow' },
+  { label: 'Dubai (GST)',                value: 'Asia/Dubai' },
+  { label: 'Karachi (PKT)',              value: 'Asia/Karachi' },
+  { label: 'Mumbai / Delhi (IST)',       value: 'Asia/Kolkata' },
+  { label: 'Dhaka (BST)',                value: 'Asia/Dhaka' },
+  { label: 'Bangkok (ICT)',              value: 'Asia/Bangkok' },
+  { label: 'Singapore / KL (SGT)',       value: 'Asia/Singapore' },
+  { label: 'Tokyo / Seoul (JST/KST)',   value: 'Asia/Tokyo' },
+  { label: 'Sydney (AEST)',              value: 'Australia/Sydney' },
+  { label: 'New Zealand (NZST)',         value: 'Pacific/Auckland' },
+  { label: 'Hawaii (HST)',               value: 'Pacific/Honolulu' },
+  { label: 'Los Angeles (PT)',           value: 'America/Los_Angeles' },
+  { label: 'Denver (MT)',                value: 'America/Denver' },
+  { label: 'Chicago (CT)',               value: 'America/Chicago' },
+  { label: 'New York (ET)',              value: 'America/New_York' },
+  { label: 'São Paulo (BRT)',            value: 'America/Sao_Paulo' },
+  { label: 'Buenos Aires (ART)',         value: 'America/Argentina/Buenos_Aires' },
+];
 
 export default function SettingsPage({ showToast }) {
   const { user, updateSettings, logout } = useAuth();
   const [email, setEmail] = useState('');
   const [reminderTime, setReminderTime] = useState('09:00');
+  const [timezone, setTimezone] = useState('Asia/Kolkata');
   const [emailReminders, setEmailReminders] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -13,6 +38,7 @@ export default function SettingsPage({ showToast }) {
     if (user?.settings) {
       setEmail(user.settings.reminderEmail || user.email || '');
       setReminderTime(user.settings.reminderTime || '09:00');
+      setTimezone(user.settings.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
       setEmailReminders(user.settings.emailRemindersEnabled ?? true);
     }
   }, [user]);
@@ -23,6 +49,7 @@ export default function SettingsPage({ showToast }) {
       await updateSettings({
         reminderEmail: email,
         reminderTime,
+        timezone,
         emailRemindersEnabled: emailReminders,
       });
       showToast('Settings saved!', 'success');
@@ -94,6 +121,26 @@ export default function SettingsPage({ showToast }) {
               style={{ maxWidth: 200 }}
             />
           </div>
+        </div>
+
+        <div className="form-group">
+          <label className="label">Your Timezone</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Globe size={18} color="#8a7a6a" />
+            <select
+              className="select"
+              value={timezone}
+              onChange={e => setTimezone(e.target.value)}
+              style={{ flex: 1 }}
+            >
+              {TIMEZONES.map(tz => (
+                <option key={tz.value} value={tz.value}>{tz.label}</option>
+              ))}
+            </select>
+          </div>
+          <p style={{ fontSize: 12, color: '#b5a898', marginTop: 4 }}>
+            Reminders are sent at your chosen time in this timezone
+          </p>
         </div>
 
         <div className="form-group">

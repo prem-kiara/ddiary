@@ -24,11 +24,6 @@
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
-  "functions": {
-    "source": "functions",
-    "runtime": "nodejs18"
-  },
-  "storage": {
-    "rules": "storage.rules"
-  }
+  "_functions_disabled": "Requires Blaze plan — re-add 'functions' key to enable",
+  "_storage_disabled": "Replaced by Cloudinary — re-add 'storage' key to enable"
 }

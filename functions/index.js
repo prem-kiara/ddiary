@@ -19,18 +19,20 @@ admin.initializeApp();
 const db = admin.firestore();
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 📧 DAILY EMAIL REMINDER — Runs every day at 9:00 AM UTC
-// Adjust the schedule to match your preferred time zone
+// 📧 HOURLY CHECK — Respects each user's saved timezone + reminder time.
+// Runs every hour; skips users whose local hour doesn't match their setting.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 exports.sendDailyReminders = functions.pubsub
-  .schedule('0 9 * * *') // Every day at 9:00 AM UTC
-  .timeZone('Asia/Kolkata') // Change to your timezone
+  .schedule('0 * * * *') // Every hour on the hour (UTC)
+  .timeZone('UTC')
   .onRun(async (context) => {
     try {
       const sgMail = require('@sendgrid/mail');
       const config = functions.config();
       sgMail.setApiKey(config.sendgrid.key);
       const fromEmail = config.sendgrid.from;
+
+      const nowUtc = new Date();
 
       // Get all users with email reminders enabled
       const usersSnap = await db.collection('users').get();
@@ -44,6 +46,20 @@ exports.sendDailyReminders = functions.pubsub
 
         const reminderEmail = settings.reminderEmail || userData.email;
         if (!reminderEmail) continue;
+
+        // Resolve user timezone and preferred reminder hour
+        const userTz = settings.timezone || 'Asia/Kolkata';
+        const reminderTime = settings.reminderTime || '09:00';
+        const [prefHour] = reminderTime.split(':').map(Number);
+
+        // Get the current hour in the user's local timezone
+        const localHour = parseInt(
+          nowUtc.toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: userTz }),
+          10
+        );
+
+        // Only send when the local hour matches their setting
+        if (localHour !== prefHour) continue;
 
         // Get pending tasks for this user
         const tasksSnap = await db
@@ -61,23 +77,17 @@ exports.sendDailyReminders = functions.pubsub
         const overdue = tasks.filter(t => t.dueDate && new Date(t.dueDate) < now);
         const upcoming = tasks.filter(t => !t.dueDate || new Date(t.dueDate) >= now);
 
-        // Build HTML email
-        const html = buildReminderEmail(userData.displayName || 'there', overdue, upcoming);
-        const plainText = buildReminderText(overdue, upcoming);
-
-        const msg = {
+        await sgMail.send({
           to: reminderEmail,
           from: fromEmail,
           subject: `📖 Diary Reminder: ${tasks.length} pending task${tasks.length > 1 ? 's' : ''}`,
-          text: plainText,
-          html: html,
-        };
-
-        await sgMail.send(msg);
-        console.log(`Reminder sent to ${reminderEmail} (${tasks.length} tasks)`);
+          text: buildReminderText(overdue, upcoming),
+          html: buildReminderEmail(userData.displayName || 'there', overdue, upcoming),
+        });
+        console.log(`Reminder sent to ${reminderEmail} (${tasks.length} tasks, tz: ${userTz})`);
       }
 
-      console.log('Daily reminder job completed');
+      console.log('Hourly reminder check completed');
       return null;
     } catch (error) {
       console.error('Error sending reminders:', error);
@@ -87,17 +97,34 @@ exports.sendDailyReminders = functions.pubsub
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 📧 ON-DEMAND REMINDER — Callable function from the app
+// Rate-limited to one email per user per hour to prevent abuse.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const RATE_LIMIT_MS = 60 * 60 * 1000; // 1 hour
+
 exports.sendReminderNow = functions.https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   }
 
   const uid = context.auth.uid;
-  const userDoc = await db.collection('users').doc(uid).get();
+  const userRef = db.collection('users').doc(uid);
+  const userDoc = await userRef.get();
   const userData = userDoc.data();
-  const email = data.email || userData?.settings?.reminderEmail || userData?.email;
 
+  // ── Rate limiting ──────────────────────────────────────────────────────
+  const lastSent = userData?.lastReminderSentAt;
+  if (lastSent) {
+    const elapsed = Date.now() - new Date(lastSent).getTime();
+    if (elapsed < RATE_LIMIT_MS) {
+      const waitMins = Math.ceil((RATE_LIMIT_MS - elapsed) / 60000);
+      throw new functions.https.HttpsError(
+        'resource-exhausted',
+        `Please wait ${waitMins} more minute${waitMins !== 1 ? 's' : ''} before sending another reminder.`
+      );
+    }
+  }
+
+  const email = data.email || userData?.settings?.reminderEmail || userData?.email;
   if (!email) {
     throw new functions.https.HttpsError('failed-precondition', 'No email configured');
   }
@@ -130,6 +157,9 @@ exports.sendReminderNow = functions.https.onCall(async (data, context) => {
       text: buildReminderText(overdue, upcoming),
       html: buildReminderEmail(userData?.displayName || 'there', overdue, upcoming),
     });
+
+    // Record the send time for rate limiting
+    await userRef.update({ lastReminderSentAt: new Date().toISOString() });
 
     return { success: true, message: `Reminder sent to ${email}` };
   } catch (error) {

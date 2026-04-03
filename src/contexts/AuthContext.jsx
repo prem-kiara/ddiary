@@ -56,6 +56,7 @@ export function AuthProvider({ children }) {
         settings: {
           reminderEmail: email,
           reminderTime: '09:00',
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
           emailRemindersEnabled: true,
           theme: 'warm'
         }

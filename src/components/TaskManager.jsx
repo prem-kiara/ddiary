@@ -1,32 +1,10 @@
 import { useState } from 'react';
-import { Plus, Trash2, Bell, Calendar, CheckSquare, AlertTriangle } from 'lucide-react';
-
-const formatDate = (d) => {
-  if (!d) return '';
-  const date = typeof d === 'string' ? new Date(d) : d.toDate ? d.toDate() : new Date(d);
-  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-};
-
-const isOverdue = (dueDate) => {
-  if (!dueDate) return false;
-  const date = typeof dueDate === 'string' ? new Date(dueDate) : dueDate.toDate ? dueDate.toDate() : new Date(dueDate);
-  return date < new Date() && date.toDateString() !== new Date().toDateString();
-};
-
-const isDueToday = (dueDate) => {
-  if (!dueDate) return false;
-  const date = typeof dueDate === 'string' ? new Date(dueDate) : dueDate.toDate ? dueDate.toDate() : new Date(dueDate);
-  return date.toDateString() === new Date().toDateString();
-};
-
-const toDateInput = (d) => {
-  const dt = d ? new Date(d) : new Date(Date.now() + 86400000);
-  return dt.toISOString().split('T')[0];
-};
+import { Plus, Trash2, Bell, Calendar, CheckSquare } from 'lucide-react';
+import { formatDate, isOverdue, isDueToday, toDateInputValue } from '../utils/dates';
 
 export default function TaskManager({ tasks, loading, onAdd, onToggle, onDelete, onClearCompleted, showToast }) {
   const [newText, setNewText] = useState('');
-  const [newDue, setNewDue] = useState(toDateInput());
+  const [newDue, setNewDue] = useState(toDateInputValue());
   const [newPriority, setNewPriority] = useState('medium');
 
   const pendingCount = tasks.filter(t => !t.completed).length;
@@ -42,7 +20,7 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onDelete,
         priority: newPriority,
       });
       setNewText('');
-      setNewDue(toDateInput());
+      setNewDue(toDateInputValue());
       setNewPriority('medium');
       showToast('Task added!', 'success');
     } catch (err) {

@@ -14,7 +14,10 @@ import './styles/diary.css';
 
 function DiaryApp() {
   const { user, loading: authLoading } = useAuth();
-  const { entries, loading: entriesLoading, addEntry, updateEntry, deleteEntry } = useEntries();
+  const {
+    entries, trashedEntries, loading: entriesLoading,
+    addEntry, updateEntry, deleteEntry, restoreEntry, purgeEntry,
+  } = useEntries();
   const { tasks, loading: tasksLoading, addTask, toggleTask, deleteTask, clearCompleted } = useTasks();
 
   const [page, setPage] = useState('home');
@@ -63,7 +66,17 @@ function DiaryApp() {
   const handleDeleteEntry = async (id) => {
     await deleteEntry(id);
     setViewingEntry(null);
-    showToast('Entry deleted', 'success');
+    showToast('Entry moved to trash', 'success');
+  };
+
+  const handleRestoreEntry = async (id) => {
+    await restoreEntry(id);
+    showToast('Entry restored', 'success');
+  };
+
+  const handlePurgeEntry = async (id) => {
+    await purgeEntry(id);
+    showToast('Entry permanently deleted', 'success');
   };
 
   const handleCancelEdit = () => {
@@ -109,9 +122,12 @@ function DiaryApp() {
         {page === 'home' && !viewingEntry && (
           <DiaryList
             entries={entries}
+            trashedEntries={trashedEntries}
             loading={entriesLoading}
             onView={handleViewEntry}
             onNew={goToNewEntry}
+            onRestore={handleRestoreEntry}
+            onPurge={handlePurgeEntry}
           />
         )}
 

@@ -10,7 +10,7 @@
     "deploy": "firebase deploy"
   },
   "dependencies": {
-    "firebase": "^10.8.0",
+    "firebase": "^12.11.0",
     "lucide-react": "^0.383.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -20,7 +20,7 @@
   "devDependencies": {
     "@types/react": "^18.2.43",
     "@vitejs/plugin-react": "^4.2.1",
-    "vite": "^5.0.8",
-    "vite-plugin-pwa": "^0.17.4"
+    "vite": "^7.3.1",
+    "vite-plugin-pwa": "^0.19.8"
   }
 }
