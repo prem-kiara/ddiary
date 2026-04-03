@@ -9,8 +9,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { createLogger } from '../utils/errorLogger';
 
 // ─── Cloudinary upload (replaces Firebase Storage) ────────────────────────
-const CLOUDINARY_CLOUD = 'drsfpz3t6';
-const CLOUDINARY_PRESET = 'ddiary_upload_preset';
+const CLOUDINARY_CLOUD = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
+const CLOUDINARY_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
 
 async function uploadToCloudinary(dataUrl) {
   const res = await fetch(
