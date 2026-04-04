@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BookOpen, Plus, Trash2, RotateCcw, Archive, ArchiveRestore } from 'lucide-react';
+import { BookOpen, Plus, Trash2, RotateCcw, Archive } from 'lucide-react';
 import { formatDateTime, formatTime } from '../utils/dates';
 
 export default function DiaryList({
@@ -91,7 +91,7 @@ export default function DiaryList({
                     onClick={() => onUnarchive(entry.id)}
                     style={{ padding: '4px 10px', flexShrink: 0 }}
                   >
-                    <ArchiveRestore size={13} /> Unarchive
+                    <RotateCcw size={13} /> Unarchive
                   </button>
                 </div>
               ))}

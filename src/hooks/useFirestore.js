@@ -252,15 +252,21 @@ export function useTeamMembers() {
   useEffect(() => {
     if (!user) { setMembers([]); setLoading(false); return; }
 
-    const q = query(
+    // No orderBy — avoids needing a Firestore composite index on new collections.
+    // We sort client-side instead.
+    const unsub = onSnapshot(
       collection(db, 'users', user.uid, 'teamMembers'),
-      orderBy('name')
+      (snap) => {
+        const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        data.sort((a, b) => a.name.localeCompare(b.name));
+        setMembers(data);
+        setLoading(false);
+      },
+      (err) => {
+        console.error('teamMembers snapshot error:', err);
+        setLoading(false);
+      }
     );
-
-    const unsub = onSnapshot(q, (snap) => {
-      setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setLoading(false);
-    }, () => setLoading(false));
 
     return unsub;
   }, [user]);

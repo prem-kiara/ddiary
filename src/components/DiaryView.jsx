@@ -1,4 +1,4 @@
-import { ChevronLeft, Edit3, Trash2, Archive, ArchiveRestore } from 'lucide-react';
+import { ChevronLeft, Edit3, Trash2, Archive, RotateCcw } from 'lucide-react';
 
 const formatDate = (d) => {
   if (!d) return '';
@@ -94,7 +94,7 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
             </button>
             {entry.archived ? (
               <button className="btn btn-sm btn-outline" onClick={() => onUnarchive(entry.id)}>
-                <ArchiveRestore size={14} /> Unarchive
+                <RotateCcw size={14} /> Unarchive
               </button>
             ) : (
               <button className="btn btn-sm btn-outline" onClick={() => {
