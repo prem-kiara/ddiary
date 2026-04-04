@@ -92,25 +92,49 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onUpdate,
           }}
           onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleAdd(); }}
         />
-        {/* Due Date + Priority side by side — same control type so heights match on iOS */}
+        {/* Due Date + Priority — explicit identical height, webkit-appearance stripped to prevent iOS date input inflation */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
           <div>
             <label className="label">Due Date</label>
             <input
-              className="input"
               type="date"
               value={newDue}
               onChange={e => setNewDue(e.target.value)}
-              style={{ width: '100%' }}
+              style={{
+                WebkitAppearance: 'none',
+                appearance: 'none',
+                width: '100%',
+                height: 48,
+                padding: '0 12px',
+                border: '1px solid #d4c5a9',
+                borderRadius: 8,
+                fontSize: 15,
+                fontFamily: 'var(--font-body)',
+                background: '#fffdf5',
+                color: '#4a3728',
+                boxSizing: 'border-box',
+                outline: 'none',
+              }}
             />
           </div>
           <div>
             <label className="label">Priority</label>
             <select
-              className="select"
               value={newPriority}
               onChange={e => setNewPriority(e.target.value)}
-              style={{ width: '100%' }}
+              style={{
+                width: '100%',
+                height: 48,
+                padding: '0 12px',
+                border: '1px solid #d4c5a9',
+                borderRadius: 8,
+                fontSize: 15,
+                fontFamily: 'var(--font-body)',
+                background: '#fffdf5',
+                color: '#4a3728',
+                boxSizing: 'border-box',
+                outline: 'none',
+              }}
             >
               <option value="low">Low</option>
               <option value="medium">Medium</option>
