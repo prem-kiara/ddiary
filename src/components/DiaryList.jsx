@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { BookOpen, Plus, Trash2, RotateCcw, Archive } from 'lucide-react';
+import { BookOpen, Plus, Trash2, RotateCcw, Archive, ChevronRight } from 'lucide-react';
 import { formatDateTime, formatTime } from '../utils/dates';
 
 export default function DiaryList({
   entries, trashedEntries = [], archivedEntries = [],
-  loading, onView, onNew, onRestore, onPurge, onUnarchive,
+  loading, onView, onNew, onRestore, onPurge, onArchive, onUnarchive,
 }) {
   const [trashOpen, setTrashOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -30,15 +30,37 @@ export default function DiaryList({
         </div>
       ) : (
         entries.map(entry => (
-          <div key={entry.id} className="card card-interactive" onClick={() => onView(entry)}>
+          <div key={entry.id} className="card" style={{ cursor: 'default' }}>
             <div className="entry-card">
               <span className="entry-mood">📝</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => onView(entry)}>
                 <h3 className="entry-title">{entry.title || 'Untitled'}</h3>
                 <p className="entry-date">
                   {formatDateTime(entry.createdAt)} · {formatTime(entry.createdAt)}
                 </p>
                 <p className="entry-preview">{entry.content}</p>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
+                <button
+                  className="btn-icon"
+                  title="Read entry"
+                  onClick={() => onView(entry)}
+                  style={{ color: '#8B6914' }}
+                >
+                  <ChevronRight size={18} />
+                </button>
+                <button
+                  className="btn-icon"
+                  title="Archive this entry"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm('Archive this entry? Find it anytime in the Archived section below.')) {
+                      onArchive(entry.id);
+                    }
+                  }}
+                >
+                  <Archive size={16} />
+                </button>
               </div>
             </div>
           </div>

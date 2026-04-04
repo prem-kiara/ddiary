@@ -16,6 +16,11 @@ service cloud.firestore {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
 
+      // Team members — only the owner
+      match /teamMembers/{memberId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
       // Error logs — owner can create only; never readable from the client
       match /errorLogs/{logId} {
         allow create: if request.auth != null && request.auth.uid == userId;

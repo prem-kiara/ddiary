@@ -92,31 +92,33 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onUpdate,
           }}
           onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleAdd(); }}
         />
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, alignItems: 'end' }}>
-          <div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, alignItems: 'end', minWidth: 0 }}>
+          <div style={{ minWidth: 0, overflow: 'hidden' }}>
             <label className="label">Due Date</label>
             <input
               className="input"
               type="date"
               value={newDue}
               onChange={e => setNewDue(e.target.value)}
+              style={{ width: '100%', boxSizing: 'border-box' }}
             />
           </div>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <label className="label">Priority</label>
             <select
               className="select"
               value={newPriority}
               onChange={e => setNewPriority(e.target.value)}
+              style={{ width: '100%', boxSizing: 'border-box' }}
             >
               <option value="low">Low</option>
               <option value="medium">Medium</option>
               <option value="high">High</option>
             </select>
           </div>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <label className="label" style={{ visibility: 'hidden' }}>Add</label>
-            <button className="btn btn-gold" onClick={handleAdd} style={{ width: '100%', justifyContent: 'center' }}>
+            <button className="btn btn-gold" onClick={handleAdd} style={{ width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
               <Plus size={16} /> Add
             </button>
           </div>

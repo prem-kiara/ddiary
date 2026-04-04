@@ -136,6 +136,7 @@ function DiaryApp() {
             onNew={goToNewEntry}
             onRestore={handleRestoreEntry}
             onPurge={handlePurgeEntry}
+            onArchive={handleArchiveEntry}
             onUnarchive={handleUnarchiveEntry}
           />
         )}
