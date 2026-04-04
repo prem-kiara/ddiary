@@ -100,7 +100,7 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onUpdate,
               type="date"
               value={newDue}
               onChange={e => setNewDue(e.target.value)}
-              style={{ width: '100%', boxSizing: 'border-box' }}
+              style={{ width: '100%', boxSizing: 'border-box', height: 44 }}
             />
           </div>
           <div style={{ flex: '1 1 130px' }}>
@@ -109,7 +109,7 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onUpdate,
               className="select"
               value={newPriority}
               onChange={e => setNewPriority(e.target.value)}
-              style={{ width: '100%', boxSizing: 'border-box' }}
+              style={{ width: '100%', boxSizing: 'border-box', height: 44 }}
             >
               <option value="low">Low</option>
               <option value="medium">Medium</option>
@@ -117,7 +117,8 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onUpdate,
             </select>
           </div>
           <div style={{ flex: '1 1 110px' }}>
-            <button className="btn btn-gold" onClick={handleAdd} style={{ width: '100%', justifyContent: 'center' }}>
+            <label className="label" style={{ visibility: 'hidden' }}>Add</label>
+            <button className="btn btn-gold" onClick={handleAdd} style={{ width: '100%', justifyContent: 'center', height: 44, display: 'flex', alignItems: 'center' }}>
               <Plus size={16} /> Add
             </button>
           </div>

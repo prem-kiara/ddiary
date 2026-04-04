@@ -103,7 +103,7 @@ export default function TeamMembers({ members, loading, onAdd, onAddBulk, onUpda
             <input className="input" type="email" placeholder="email@company.com" value={email} onChange={e => setEmail(e.target.value)} />
           </div>
           <div>
-            <label className="label"><Phone size={12} style={{ display: 'inline', marginRight: 4 }} />Phone / WhatsApp</label>
+            <label className="label"><Phone size={12} style={{ display: 'inline', marginRight: 4 }} />WhatsApp</label>
             <input className="input" placeholder="e.g. 917305013582" value={phone} onChange={e => setPhone(e.target.value)} />
           </div>
         </div>
