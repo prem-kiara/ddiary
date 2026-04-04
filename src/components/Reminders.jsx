@@ -237,7 +237,7 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
                 />
               </div>
               <div>
-                <label className="label">Phone / WhatsApp</label>
+                <label className="label">WhatsApp</label>
                 <input
                   className="input"
                   style={{ padding: '10px 12px', fontSize: 14 }}
@@ -250,11 +250,24 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
             <div style={{ marginBottom: 12 }}>
               <label className="label">Schedule Send Time (optional)</label>
               <input
-                className="input"
-                style={{ padding: '10px 12px', fontSize: 14 }}
                 type="datetime-local"
                 value={scheduleTime}
                 onChange={e => setScheduleTime(e.target.value)}
+                style={{
+                  WebkitAppearance: 'none',
+                  appearance: 'none',
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  height: 44,
+                  padding: '0 12px',
+                  border: '1px solid #d4c5a9',
+                  borderRadius: 8,
+                  fontSize: 14,
+                  fontFamily: 'var(--font-body)',
+                  background: '#fffdf5',
+                  color: '#4a3728',
+                  outline: 'none',
+                }}
               />
               <p style={{ fontSize: 12, color: '#8a7a6a', marginTop: 4 }}>
                 Save a scheduled time and use the Email Now / WhatsApp buttons to send when the time comes.
