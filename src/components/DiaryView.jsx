@@ -1,4 +1,4 @@
-import { ChevronLeft, Edit3, Trash2 } from 'lucide-react';
+import { ChevronLeft, Edit3, Trash2, Archive, ArchiveRestore } from 'lucide-react';
 
 const formatDate = (d) => {
   if (!d) return '';
@@ -66,7 +66,7 @@ function renderContent(content) {
   );
 }
 
-export default function DiaryView({ entry, onBack, onEdit, onDelete }) {
+export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, onUnarchive }) {
   return (
     <div className="fade-in">
       <button className="btn btn-ghost" onClick={onBack} style={{ marginBottom: 12 }}>
@@ -88,10 +88,23 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete }) {
               )}
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button className="btn btn-sm btn-gold" onClick={() => onEdit(entry)}>
               <Edit3 size={14} /> Edit
             </button>
+            {entry.archived ? (
+              <button className="btn btn-sm btn-outline" onClick={() => onUnarchive(entry.id)}>
+                <ArchiveRestore size={14} /> Unarchive
+              </button>
+            ) : (
+              <button className="btn btn-sm btn-outline" onClick={() => {
+                if (window.confirm('Archive this entry? You can find it in the Archived section anytime.')) {
+                  onArchive(entry.id);
+                }
+              }}>
+                <Archive size={14} /> Archive
+              </button>
+            )}
             <button className="btn btn-sm btn-red" onClick={() => {
               if (window.confirm('Are you sure you want to delete this entry?')) {
                 onDelete(entry.id);

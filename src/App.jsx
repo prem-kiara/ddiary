@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { useEntries, useTasks } from './hooks/useFirestore';
+import { useEntries, useTasks, useTeamMembers } from './hooks/useFirestore';
 import Auth from './components/Auth';
 import Layout from './components/Layout';
 import Toast from './components/Toast';
@@ -9,16 +9,19 @@ import DiaryView from './components/DiaryView';
 import DiaryEditor from './components/DiaryEditor';
 import TaskManager from './components/TaskManager';
 import Reminders from './components/Reminders';
+import TeamMembers from './components/TeamMembers';
 import SettingsPage from './components/SettingsPage';
 import './styles/diary.css';
 
 function DiaryApp() {
   const { user, loading: authLoading } = useAuth();
   const {
-    entries, trashedEntries, loading: entriesLoading,
+    entries, trashedEntries, archivedEntries, loading: entriesLoading,
     addEntry, updateEntry, deleteEntry, restoreEntry, purgeEntry,
+    archiveEntry, unarchiveEntry,
   } = useEntries();
   const { tasks, loading: tasksLoading, addTask, updateTask, toggleTask, deleteTask, clearCompleted } = useTasks();
+  const { members, loading: membersLoading, addMember, addMembersBulk, updateMember, deleteMember } = useTeamMembers();
 
   const [page, setPage] = useState('home');
   const [viewingEntry, setViewingEntry] = useState(null);
@@ -69,6 +72,18 @@ function DiaryApp() {
     showToast('Entry moved to trash', 'success');
   };
 
+  const handleArchiveEntry = async (id) => {
+    await archiveEntry(id);
+    setViewingEntry(null);
+    showToast('Entry archived', 'success');
+  };
+
+  const handleUnarchiveEntry = async (id) => {
+    await unarchiveEntry(id);
+    setViewingEntry(null);
+    showToast('Entry restored to diary', 'success');
+  };
+
   const handleRestoreEntry = async (id) => {
     await restoreEntry(id);
     showToast('Entry restored', 'success');
@@ -88,13 +103,9 @@ function DiaryApp() {
   if (authLoading) {
     return (
       <div style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
+        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
         background: 'linear-gradient(135deg, #fef9ef 0%, #f5e6c8 50%, #ede0c8 100%)',
-        fontFamily: "'Georgia', serif",
-        color: '#8B6914'
+        fontFamily: "'Georgia', serif", color: '#8B6914'
       }}>
         <div style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 48, marginBottom: 12 }}>📖</div>
@@ -110,11 +121,7 @@ function DiaryApp() {
   return (
     <>
       {toast && (
-        <Toast
-          message={toast.message}
-          type={toast.type}
-          onClose={() => setToast(null)}
-        />
+        <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
       )}
 
       <Layout currentPage={page} onNavigate={navigate} pendingCount={pendingCount}>
@@ -123,11 +130,13 @@ function DiaryApp() {
           <DiaryList
             entries={entries}
             trashedEntries={trashedEntries}
+            archivedEntries={archivedEntries}
             loading={entriesLoading}
             onView={handleViewEntry}
             onNew={goToNewEntry}
             onRestore={handleRestoreEntry}
             onPurge={handlePurgeEntry}
+            onUnarchive={handleUnarchiveEntry}
           />
         )}
 
@@ -138,6 +147,8 @@ function DiaryApp() {
             onBack={() => setViewingEntry(null)}
             onEdit={goToEditEntry}
             onDelete={handleDeleteEntry}
+            onArchive={handleArchiveEntry}
+            onUnarchive={handleUnarchiveEntry}
           />
         )}
 
@@ -169,8 +180,22 @@ function DiaryApp() {
         {page === 'reminders' && (
           <Reminders
             tasks={tasks}
+            teamMembers={members}
             onToggle={toggleTask}
             onUpdate={updateTask}
+            showToast={showToast}
+          />
+        )}
+
+        {/* Team Members */}
+        {page === 'team' && (
+          <TeamMembers
+            members={members}
+            loading={membersLoading}
+            onAdd={addMember}
+            onAddBulk={addMembersBulk}
+            onUpdate={updateMember}
+            onDelete={deleteMember}
             showToast={showToast}
           />
         )}

@@ -31,6 +31,7 @@ export function useEntries() {
   const { user } = useAuth();
   const [entries, setEntries] = useState([]);
   const [trashedEntries, setTrashedEntries] = useState([]);
+  const [archivedEntries, setArchivedEntries] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -45,8 +46,9 @@ export function useEntries() {
 
     const unsub = onSnapshot(q, (snap) => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // Split into active and soft-deleted
-      setEntries(data.filter(e => !e.deletedAt));
+      // Split into active, archived, and soft-deleted
+      setEntries(data.filter(e => !e.deletedAt && !e.archived));
+      setArchivedEntries(data.filter(e => !e.deletedAt && !!e.archived));
       setTrashedEntries(data.filter(e => !!e.deletedAt));
       setLoading(false);
     }, (err) => {
@@ -134,9 +136,30 @@ export function useEntries() {
     return deleteDoc(doc(db, 'users', user.uid, 'entries', id));
   }, [user]);
 
+  /** Archive an entry — moves it to the archive section. */
+  const archiveEntry = useCallback(async (id) => {
+    if (!user) return;
+    return updateDoc(doc(db, 'users', user.uid, 'entries', id), {
+      archived: true,
+      archivedAt: new Date().toISOString(),
+      updatedAt: serverTimestamp(),
+    });
+  }, [user]);
+
+  /** Unarchive an entry — restores it to the main list. */
+  const unarchiveEntry = useCallback(async (id) => {
+    if (!user) return;
+    return updateDoc(doc(db, 'users', user.uid, 'entries', id), {
+      archived: false,
+      archivedAt: null,
+      updatedAt: serverTimestamp(),
+    });
+  }, [user]);
+
   return {
-    entries, trashedEntries, loading,
+    entries, trashedEntries, archivedEntries, loading,
     addEntry, updateEntry, deleteEntry, restoreEntry, purgeEntry,
+    archiveEntry, unarchiveEntry,
   };
 }
 
@@ -218,4 +241,57 @@ export function useTasks() {
   }, [user, tasks]);
 
   return { tasks, loading, addTask, updateTask, toggleTask, deleteTask, clearCompleted };
+}
+
+// ─── Team Members Hook ─────────────────────────────────────────────────────
+export function useTeamMembers() {
+  const { user } = useAuth();
+  const [members, setMembers] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) { setMembers([]); setLoading(false); return; }
+
+    const q = query(
+      collection(db, 'users', user.uid, 'teamMembers'),
+      orderBy('name')
+    );
+
+    const unsub = onSnapshot(q, (snap) => {
+      setMembers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    }, () => setLoading(false));
+
+    return unsub;
+  }, [user]);
+
+  const addMember = useCallback(async (member) => {
+    if (!user) return;
+    return addDoc(collection(db, 'users', user.uid, 'teamMembers'), {
+      ...member,
+      createdAt: serverTimestamp(),
+    });
+  }, [user]);
+
+  const addMembersBulk = useCallback(async (newMembers) => {
+    if (!user || !newMembers.length) return;
+    const batch = writeBatch(db);
+    newMembers.forEach(m => {
+      const ref = doc(collection(db, 'users', user.uid, 'teamMembers'));
+      batch.set(ref, { ...m, createdAt: serverTimestamp() });
+    });
+    return batch.commit();
+  }, [user]);
+
+  const updateMember = useCallback(async (id, updates) => {
+    if (!user) return;
+    return updateDoc(doc(db, 'users', user.uid, 'teamMembers', id), updates);
+  }, [user]);
+
+  const deleteMember = useCallback(async (id) => {
+    if (!user) return;
+    return deleteDoc(doc(db, 'users', user.uid, 'teamMembers', id));
+  }, [user]);
+
+  return { members, loading, addMember, addMembersBulk, updateMember, deleteMember };
 }

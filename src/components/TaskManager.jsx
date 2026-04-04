@@ -92,8 +92,8 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onUpdate,
           }}
           onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleAdd(); }}
         />
-        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: 140 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, alignItems: 'end' }}>
+          <div>
             <label className="label">Due Date</label>
             <input
               className="input"
@@ -102,7 +102,7 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onUpdate,
               onChange={e => setNewDue(e.target.value)}
             />
           </div>
-          <div style={{ minWidth: 120 }}>
+          <div>
             <label className="label">Priority</label>
             <select
               className="select"
@@ -114,9 +114,12 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onUpdate,
               <option value="high">High</option>
             </select>
           </div>
-          <button className="btn btn-gold" onClick={handleAdd} style={{ marginBottom: 0 }}>
-            <Plus size={16} /> Add
-          </button>
+          <div>
+            <label className="label" style={{ visibility: 'hidden' }}>Add</label>
+            <button className="btn btn-gold" onClick={handleAdd} style={{ width: '100%', justifyContent: 'center' }}>
+              <Plus size={16} /> Add
+            </button>
+          </div>
         </div>
       </div>
 

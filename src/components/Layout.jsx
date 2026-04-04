@@ -1,4 +1,4 @@
-import { BookOpen, Home, PenTool, CheckSquare, Bell, Settings, LogOut } from 'lucide-react';
+import { BookOpen, Home, PenTool, CheckSquare, Bell, Settings, LogOut, Users } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const formatDate = (d) => new Date(d).toLocaleDateString('en-US', {
@@ -13,6 +13,7 @@ export default function Layout({ children, currentPage, onNavigate, pendingCount
     { id: 'write', icon: PenTool, label: 'Write' },
     { id: 'tasks', icon: CheckSquare, label: 'Tasks' },
     { id: 'reminders', icon: Bell, label: 'Reminders' },
+    { id: 'team', icon: Users, label: 'Team' },
     { id: 'settings', icon: Settings, label: 'Settings' },
   ];
 
