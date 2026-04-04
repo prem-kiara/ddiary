@@ -18,7 +18,7 @@ function DiaryApp() {
     entries, trashedEntries, loading: entriesLoading,
     addEntry, updateEntry, deleteEntry, restoreEntry, purgeEntry,
   } = useEntries();
-  const { tasks, loading: tasksLoading, addTask, toggleTask, deleteTask, clearCompleted } = useTasks();
+  const { tasks, loading: tasksLoading, addTask, updateTask, toggleTask, deleteTask, clearCompleted } = useTasks();
 
   const [page, setPage] = useState('home');
   const [viewingEntry, setViewingEntry] = useState(null);
@@ -157,6 +157,7 @@ function DiaryApp() {
             tasks={tasks}
             loading={tasksLoading}
             onAdd={addTask}
+            onUpdate={updateTask}
             onToggle={toggleTask}
             onDelete={deleteTask}
             onClearCompleted={clearCompleted}
@@ -169,6 +170,7 @@ function DiaryApp() {
           <Reminders
             tasks={tasks}
             onToggle={toggleTask}
+            onUpdate={updateTask}
             showToast={showToast}
           />
         )}

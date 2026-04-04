@@ -1,11 +1,5 @@
 import { ChevronLeft, Edit3, Trash2 } from 'lucide-react';
 
-const MOODS = {
-  happy: '😊', sad: '😢', neutral: '😐',
-  excited: '🤩', thoughtful: '🤔', tired: '😴',
-  grateful: '🙏', anxious: '😰', calm: '🧘',
-};
-
 const formatDate = (d) => {
   if (!d) return '';
   const date = d.toDate ? d.toDate() : new Date(d);
@@ -18,6 +12,60 @@ const formatTime = (d) => {
   return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 };
 
+/** Renders entry content with each line/paragraph on its own line. */
+function renderContent(content) {
+  if (!content) return null;
+
+  // Split into paragraphs (double newline) or lines (single newline)
+  const paragraphs = content.split(/\n\n+/);
+
+  return (
+    <div style={{ fontSize: 16, lineHeight: 2, fontFamily: 'var(--font-body)' }}>
+      {paragraphs.map((para, pi) => {
+        const lines = para.split('\n').filter(l => l.length > 0);
+
+        // Detect numbered list (lines starting with 1. or 1))
+        const isNumbered = lines.length > 0 && lines.every(l => /^\d+[.)]\s/.test(l.trim()));
+        // Detect bullet list (lines starting with - * or •)
+        const isBulleted = lines.length > 0 && lines.every(l => /^[-*•]\s/.test(l.trim()));
+
+        if (isNumbered) {
+          return (
+            <ol key={pi} style={{ paddingLeft: 24, marginBottom: 16 }}>
+              {lines.map((line, li) => (
+                <li key={li} style={{ marginBottom: 6 }}>
+                  {line.replace(/^\d+[.)]\s/, '').trim()}
+                </li>
+              ))}
+            </ol>
+          );
+        }
+
+        if (isBulleted) {
+          return (
+            <ul key={pi} style={{ paddingLeft: 24, marginBottom: 16 }}>
+              {lines.map((line, li) => (
+                <li key={li} style={{ marginBottom: 6 }}>
+                  {line.replace(/^[-*•]\s/, '').trim()}
+                </li>
+              ))}
+            </ul>
+          );
+        }
+
+        // Plain paragraphs / lines — each on its own line
+        return (
+          <div key={pi} style={{ marginBottom: 12 }}>
+            {lines.map((line, li) => (
+              <p key={li} style={{ marginBottom: 4 }}>{line}</p>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function DiaryView({ entry, onBack, onEdit, onDelete }) {
   return (
     <div className="fade-in">
@@ -28,10 +76,9 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete }) {
       <div className="card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-              <span style={{ fontSize: 28 }}>{MOODS[entry.mood] || '📝'}</span>
-              <h2 style={{ fontFamily: "'Caveat', cursive", fontSize: 32 }}>{entry.title || 'Untitled'}</h2>
-            </div>
+            <h2 style={{ fontFamily: "'Caveat', cursive", fontSize: 32, marginBottom: 4 }}>
+              {entry.title || 'Untitled'}
+            </h2>
             <p style={{ color: '#8a7a6a', fontSize: 14 }}>
               {formatDate(entry.createdAt)} · {formatTime(entry.createdAt)}
               {entry.updatedAt && entry.updatedAt !== entry.createdAt && (
@@ -55,11 +102,20 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete }) {
           </div>
         </div>
 
-        <div className="reading-content">{entry.content}</div>
+        <div style={{
+          borderTop: '1px solid #e8d5b7',
+          paddingTop: 16,
+          backgroundImage: 'repeating-linear-gradient(transparent, transparent 31px, #e8d5b7 31px, #e8d5b7 32px)',
+          backgroundPosition: '0 4px',
+          paddingBottom: 8,
+        }}>
+          {renderContent(entry.content)}
+        </div>
 
+        {/* Legacy drawings from old entries */}
         {entry.drawings?.length > 0 && (
           <div style={{ marginTop: 24 }}>
-            <h4 style={{ color: '#8a7a6a', marginBottom: 10, fontSize: 14 }}>Drawings & Sketches</h4>
+            <h4 style={{ color: '#8a7a6a', marginBottom: 10, fontSize: 14 }}>Attached Drawings</h4>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               {entry.drawings.map((d, i) => (
                 <img

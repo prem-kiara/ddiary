@@ -1,11 +1,17 @@
 import { useState } from 'react';
-import { Plus, Trash2, Bell, Calendar, CheckSquare } from 'lucide-react';
+import { Plus, Bell, Calendar, CheckSquare, Edit2, Check, X } from 'lucide-react';
 import { formatDate, isOverdue, isDueToday, toDateInputValue } from '../utils/dates';
 
-export default function TaskManager({ tasks, loading, onAdd, onToggle, onDelete, onClearCompleted, showToast }) {
+export default function TaskManager({ tasks, loading, onAdd, onToggle, onUpdate, onClearCompleted, showToast }) {
   const [newText, setNewText] = useState('');
   const [newDue, setNewDue] = useState(toDateInputValue());
   const [newPriority, setNewPriority] = useState('medium');
+
+  // Editing state
+  const [editingId, setEditingId] = useState(null);
+  const [editText, setEditText] = useState('');
+  const [editDue, setEditDue] = useState('');
+  const [editPriority, setEditPriority] = useState('medium');
 
   const pendingCount = tasks.filter(t => !t.completed).length;
   const completedCount = tasks.filter(t => t.completed).length;
@@ -23,13 +29,38 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onDelete,
       setNewDue(toDateInputValue());
       setNewPriority('medium');
       showToast('Task added!', 'success');
-    } catch (err) {
+    } catch {
       showToast('Failed to add task', 'warning');
     }
   };
 
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter') handleAdd();
+  const startEdit = (task) => {
+    setEditingId(task.id);
+    setEditText(task.text);
+    setEditDue(task.dueDate ? task.dueDate.slice(0, 10) : '');
+    setEditPriority(task.priority || 'medium');
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditText('');
+    setEditDue('');
+    setEditPriority('medium');
+  };
+
+  const handleSaveEdit = async (taskId) => {
+    if (!editText.trim()) return;
+    try {
+      await onUpdate(taskId, {
+        text: editText.trim(),
+        dueDate: editDue ? new Date(editDue).toISOString() : null,
+        priority: editPriority,
+      });
+      showToast('Task updated!', 'success');
+      cancelEdit();
+    } catch {
+      showToast('Failed to update task', 'warning');
+    }
   };
 
   if (loading) {
@@ -40,33 +71,53 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onDelete,
     <div className="fade-in">
       <h2 className="section-title">Tasks & To-Dos</h2>
 
-      {/* Add Task Form */}
-      <div className="card" style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 200 }}>
-          <label className="label">New Task</label>
-          <input
-            className="input"
-            value={newText}
-            onChange={e => setNewText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="What needs to be done?"
-          />
+      {/* Add Task Form — stacked layout for iPad compatibility */}
+      <div className="card">
+        <label className="label">New Task</label>
+        <textarea
+          className="textarea"
+          rows={2}
+          value={newText}
+          onChange={e => setNewText(e.target.value)}
+          placeholder="What needs to be done?"
+          style={{
+            minHeight: 'unset',
+            height: 'auto',
+            resize: 'none',
+            marginBottom: 12,
+            fontFamily: 'var(--font-body)',
+            fontSize: 15,
+            backgroundImage: 'none',
+            lineHeight: 1.6,
+          }}
+          onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleAdd(); }}
+        />
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 140 }}>
+            <label className="label">Due Date</label>
+            <input
+              className="input"
+              type="date"
+              value={newDue}
+              onChange={e => setNewDue(e.target.value)}
+            />
+          </div>
+          <div style={{ minWidth: 120 }}>
+            <label className="label">Priority</label>
+            <select
+              className="select"
+              value={newPriority}
+              onChange={e => setNewPriority(e.target.value)}
+            >
+              <option value="low">Low</option>
+              <option value="medium">Medium</option>
+              <option value="high">High</option>
+            </select>
+          </div>
+          <button className="btn btn-gold" onClick={handleAdd} style={{ marginBottom: 0 }}>
+            <Plus size={16} /> Add
+          </button>
         </div>
-        <div style={{ minWidth: 150 }}>
-          <label className="label">Due Date</label>
-          <input className="input" type="date" value={newDue} onChange={e => setNewDue(e.target.value)} />
-        </div>
-        <div style={{ minWidth: 110 }}>
-          <label className="label">Priority</label>
-          <select className="select" value={newPriority} onChange={e => setNewPriority(e.target.value)}>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-        </div>
-        <button className="btn btn-gold" onClick={handleAdd}>
-          <Plus size={16} /> Add
-        </button>
       </div>
 
       {/* Stats */}
@@ -98,31 +149,93 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onDelete,
               const overdue = !task.completed && isOverdue(task.dueDate);
               const dueToday = !task.completed && isDueToday(task.dueDate);
               const priorityColors = { high: '#c0392b', medium: '#e67e22', low: '#27ae60' };
+              const isEditing = editingId === task.id;
+
               return (
-                <div key={task.id} className={`task-row ${task.completed ? 'completed' : ''}`}>
-                  {/* Priority indicator */}
-                  <div style={{ width: 4, height: 32, borderRadius: 2, background: priorityColors[task.priority] || '#e67e22', flexShrink: 0 }} />
-                  <input
-                    type="checkbox"
-                    className="task-checkbox"
-                    checked={task.completed}
-                    onChange={() => onToggle(task.id, task.completed)}
-                  />
-                  <div style={{ flex: 1 }}>
-                    <span className={`task-text ${task.completed ? 'done' : ''}`}>{task.text}</span>
-                    {task.dueDate && (
-                      <div className={`task-due ${overdue ? 'overdue' : ''}`}>
-                        <Calendar size={12} />
-                        {formatDate(task.dueDate)}
-                        {overdue && <span className="overdue-badge">OVERDUE</span>}
-                        {dueToday && <span className="overdue-badge" style={{ background: '#e67e22' }}>DUE TODAY</span>}
+                <div key={task.id}>
+                  {/* Normal task row */}
+                  {!isEditing && (
+                    <div className={`task-row ${task.completed ? 'completed' : ''}`}>
+                      <div style={{ width: 4, height: 32, borderRadius: 2, background: priorityColors[task.priority] || '#e67e22', flexShrink: 0 }} />
+                      <input
+                        type="checkbox"
+                        className="task-checkbox"
+                        checked={task.completed}
+                        onChange={() => onToggle(task.id, task.completed)}
+                      />
+                      <div style={{ flex: 1 }}>
+                        <span className={`task-text ${task.completed ? 'done' : ''}`}>{task.text}</span>
+                        {task.dueDate && (
+                          <div className={`task-due ${overdue ? 'overdue' : ''}`}>
+                            <Calendar size={12} />
+                            {formatDate(task.dueDate)}
+                            {overdue && <span className="overdue-badge">OVERDUE</span>}
+                            {dueToday && <span className="overdue-badge" style={{ background: '#e67e22' }}>DUE TODAY</span>}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                  {task.reminder && !task.completed && <Bell size={16} color="#c9a96e" />}
-                  <button className="btn-icon" onClick={() => onDelete(task.id)}>
-                    <Trash2 size={16} />
-                  </button>
+                      {task.reminder && !task.completed && <Bell size={16} color="#c9a96e" />}
+                      {!task.completed && (
+                        <button className="btn-icon" onClick={() => startEdit(task)} title="Edit task">
+                          <Edit2 size={16} />
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Inline edit form */}
+                  {isEditing && (
+                    <div style={{
+                      padding: '12px 0',
+                      borderBottom: '1px solid #f0e6d2',
+                    }}>
+                      <textarea
+                        className="textarea"
+                        rows={2}
+                        value={editText}
+                        onChange={e => setEditText(e.target.value)}
+                        style={{
+                          minHeight: 'unset',
+                          height: 'auto',
+                          resize: 'none',
+                          marginBottom: 10,
+                          fontFamily: 'var(--font-body)',
+                          fontSize: 15,
+                          backgroundImage: 'none',
+                          lineHeight: 1.6,
+                        }}
+                      />
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                        <div style={{ flex: 1, minWidth: 130 }}>
+                          <label className="label">Due Date</label>
+                          <input
+                            className="input"
+                            type="date"
+                            value={editDue}
+                            onChange={e => setEditDue(e.target.value)}
+                          />
+                        </div>
+                        <div style={{ minWidth: 110 }}>
+                          <label className="label">Priority</label>
+                          <select
+                            className="select"
+                            value={editPriority}
+                            onChange={e => setEditPriority(e.target.value)}
+                          >
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                          </select>
+                        </div>
+                        <button className="btn btn-sm btn-outline" onClick={cancelEdit}>
+                          <X size={14} /> Cancel
+                        </button>
+                        <button className="btn btn-sm btn-teal" onClick={() => handleSaveEdit(task.id)}>
+                          <Check size={14} /> Save
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -131,7 +244,7 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onDelete,
             {completedCount > 0 && (
               <div style={{ marginTop: 16, textAlign: 'center' }}>
                 <button className="btn btn-sm btn-outline" onClick={onClearCompleted}>
-                  <Trash2 size={14} /> Clear {completedCount} completed task{completedCount > 1 ? 's' : ''}
+                  Clear {completedCount} completed task{completedCount > 1 ? 's' : ''}
                 </button>
               </div>
             )}
