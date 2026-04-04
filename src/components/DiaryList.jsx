@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BookOpen, Plus, Trash2, RotateCcw, Archive, ChevronRight } from 'lucide-react';
+import { BookOpen, Plus, Trash2, RotateCcw, Archive, ChevronRight, ChevronDown } from 'lucide-react';
 import { formatDateTime, formatTime } from '../utils/dates';
 
 export default function DiaryList({
@@ -8,6 +8,9 @@ export default function DiaryList({
 }) {
   const [trashOpen, setTrashOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+
+  const toggleExpand = (id) => setExpandedId(prev => (prev === id ? null : id));
 
   if (loading) {
     return <div className="empty-state fade-in"><p>Loading your entries...</p></div>;
@@ -29,26 +32,26 @@ export default function DiaryList({
           <p style={{ fontSize: 14, marginTop: 4 }}>Start writing your first entry!</p>
         </div>
       ) : (
-        entries.map(entry => (
-          <div key={entry.id} className="card" style={{ cursor: 'default' }}>
-            <div className="entry-card">
-              <span className="entry-mood">📝</span>
-              <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => onView(entry)}>
-                <h3 className="entry-title">{entry.title || 'Untitled'}</h3>
-                <p className="entry-date">
-                  {formatDateTime(entry.createdAt)} · {formatTime(entry.createdAt)}
-                </p>
-                <p className="entry-preview">{entry.content}</p>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
-                <button
-                  className="btn-icon"
-                  title="Read entry"
-                  onClick={() => onView(entry)}
-                  style={{ color: '#8B6914' }}
-                >
-                  <ChevronRight size={18} />
-                </button>
+        entries.map(entry => {
+          const isExpanded = expandedId === entry.id;
+          return (
+            <div key={entry.id} className="card" style={{ cursor: 'default', padding: 0, overflow: 'hidden' }}>
+              {/* ── Header row (always visible) ── */}
+              <div
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '14px 16px', cursor: 'pointer',
+                }}
+                onClick={() => toggleExpand(entry.id)}
+              >
+                <span style={{ fontSize: 20, flexShrink: 0 }}>📝</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <h3 className="entry-title" style={{ margin: 0 }}>{entry.title || 'Untitled'}</h3>
+                  <p className="entry-date" style={{ margin: 0 }}>
+                    {formatDateTime(entry.createdAt)} · {formatTime(entry.createdAt)}
+                  </p>
+                </div>
+                {/* Archive button */}
                 <button
                   className="btn-icon"
                   title="Archive this entry"
@@ -58,13 +61,51 @@ export default function DiaryList({
                       onArchive(entry.id);
                     }
                   }}
+                  style={{ flexShrink: 0 }}
                 >
                   <Archive size={16} />
                 </button>
+                {/* Expand/collapse chevron */}
+                <button
+                  className="btn-icon"
+                  title={isExpanded ? 'Collapse' : 'Expand'}
+                  onClick={(e) => { e.stopPropagation(); toggleExpand(entry.id); }}
+                  style={{ color: '#8B6914', flexShrink: 0 }}
+                >
+                  {isExpanded ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                </button>
               </div>
+
+              {/* ── Expanded content ── */}
+              {isExpanded && (
+                <div style={{
+                  borderTop: '1px solid #f0e6d2',
+                  padding: '12px 16px 16px',
+                  background: '#fffdf8',
+                }}>
+                  <p style={{
+                    fontFamily: 'var(--font-body)',
+                    fontSize: 15,
+                    lineHeight: 1.8,
+                    color: '#4a3728',
+                    whiteSpace: 'pre-wrap',
+                    margin: 0,
+                    marginBottom: 14,
+                  }}>
+                    {entry.content || <em style={{ color: '#b5a898' }}>No content</em>}
+                  </p>
+                  <button
+                    className="btn btn-sm btn-outline"
+                    onClick={() => onView(entry)}
+                    style={{ fontSize: 13 }}
+                  >
+                    <ChevronRight size={14} /> Open Full Entry
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
-        ))
+          );
+        })
       )}
 
       {/* ── Archived Entries ─────────────────────────────────────────── */}

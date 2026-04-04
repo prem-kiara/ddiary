@@ -92,37 +92,36 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onUpdate,
           }}
           onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleAdd(); }}
         />
-        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-          <div style={{ flex: '1 1 160px' }}>
+        {/* Due Date + Priority side by side — same control type so heights match on iOS */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+          <div>
             <label className="label">Due Date</label>
             <input
               className="input"
               type="date"
               value={newDue}
               onChange={e => setNewDue(e.target.value)}
-              style={{ width: '100%', boxSizing: 'border-box', height: 44 }}
+              style={{ width: '100%' }}
             />
           </div>
-          <div style={{ flex: '1 1 130px' }}>
+          <div>
             <label className="label">Priority</label>
             <select
               className="select"
               value={newPriority}
               onChange={e => setNewPriority(e.target.value)}
-              style={{ width: '100%', boxSizing: 'border-box', height: 44 }}
+              style={{ width: '100%' }}
             >
               <option value="low">Low</option>
               <option value="medium">Medium</option>
               <option value="high">High</option>
             </select>
           </div>
-          <div style={{ flex: '1 1 110px' }}>
-            <label className="label" style={{ visibility: 'hidden' }}>Add</label>
-            <button className="btn btn-gold" onClick={handleAdd} style={{ width: '100%', justifyContent: 'center', height: 44, display: 'flex', alignItems: 'center' }}>
-              <Plus size={16} /> Add
-            </button>
-          </div>
         </div>
+        {/* Add button — full width, separate row */}
+        <button className="btn btn-gold" onClick={handleAdd} style={{ width: '100%', justifyContent: 'center' }}>
+          <Plus size={16} /> Add Task
+        </button>
       </div>
 
       {/* Stats */}
