@@ -118,8 +118,6 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
         <div style={{
           borderTop: '1px solid #e8d5b7',
           paddingTop: 16,
-          backgroundImage: 'repeating-linear-gradient(transparent, transparent 31px, #e8d5b7 31px, #e8d5b7 32px)',
-          backgroundPosition: '0 4px',
           paddingBottom: 8,
         }}>
           {renderContent(entry.content)}

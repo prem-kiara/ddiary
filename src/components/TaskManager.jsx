@@ -92,8 +92,8 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onUpdate,
           }}
           onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleAdd(); }}
         />
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, alignItems: 'end', minWidth: 0 }}>
-          <div style={{ minWidth: 0, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div style={{ flex: '1 1 160px' }}>
             <label className="label">Due Date</label>
             <input
               className="input"
@@ -103,7 +103,7 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onUpdate,
               style={{ width: '100%', boxSizing: 'border-box' }}
             />
           </div>
-          <div style={{ minWidth: 0 }}>
+          <div style={{ flex: '1 1 130px' }}>
             <label className="label">Priority</label>
             <select
               className="select"
@@ -116,9 +116,8 @@ export default function TaskManager({ tasks, loading, onAdd, onToggle, onUpdate,
               <option value="high">High</option>
             </select>
           </div>
-          <div style={{ minWidth: 0 }}>
-            <label className="label" style={{ visibility: 'hidden' }}>Add</label>
-            <button className="btn btn-gold" onClick={handleAdd} style={{ width: '100%', justifyContent: 'center', boxSizing: 'border-box' }}>
+          <div style={{ flex: '1 1 110px' }}>
+            <button className="btn btn-gold" onClick={handleAdd} style={{ width: '100%', justifyContent: 'center' }}>
               <Plus size={16} /> Add
             </button>
           </div>
