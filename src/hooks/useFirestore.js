@@ -245,18 +245,20 @@ export function useAssignedTasks() {
 
     // Query directly on the owner's task collection — no collection-group index needed.
     // assigneeEmail is set by the owner in Reminders and has always been reliable.
+    // No orderBy here to avoid requiring a composite index; we sort client-side instead.
     const q = query(
       collection(db, 'users', ownerUid, 'tasks'),
-      where('assigneeEmail', '==', user.email),
-      orderBy('createdAt', 'desc')
+      where('assigneeEmail', '==', user.email.toLowerCase())
     );
 
     const unsub = onSnapshot(q, (snap) => {
-      const data = snap.docs.map(d => ({
-        id:        d.id,
-        _ownerUid: ownerUid,
-        ...d.data(),
-      }));
+      const data = snap.docs
+        .map(d => ({ id: d.id, _ownerUid: ownerUid, ...d.data() }))
+        .sort((a, b) => {
+          const aTime = a.createdAt?.toMillis?.() ?? 0;
+          const bTime = b.createdAt?.toMillis?.() ?? 0;
+          return bTime - aTime;
+        });
       setTasks(data);
       setLoading(false);
       setError(null);

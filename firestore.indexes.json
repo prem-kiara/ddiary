@@ -33,14 +33,6 @@
       ]
     },
     {
-      "collectionGroup": "tasks",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "assigneeEmail", "order": "ASCENDING" },
-        { "fieldPath": "createdAt",     "order": "DESCENDING" }
-      ]
-    },
-    {
       "collectionGroup": "userDirectory",
       "queryScope": "COLLECTION",
       "fields": [

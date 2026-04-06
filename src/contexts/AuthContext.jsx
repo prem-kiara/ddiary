@@ -31,9 +31,11 @@ export function AuthProvider({ children }) {
         const profileSnap = await getDoc(profileRef).catch(() => null);
         setUser({
           uid:         firebaseUser.uid,
-          email:       firebaseUser.email,
           displayName: firebaseUser.displayName,
           ...(profileSnap?.exists() ? profileSnap.data() : {}),
+          // Always override with auth-provided email — Firebase Auth guarantees lowercase,
+          // but the Firestore profile might have been saved with mixed-case.
+          email: firebaseUser.email,
         });
       } else {
         setUser(null);
