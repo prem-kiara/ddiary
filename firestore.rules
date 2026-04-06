@@ -2,39 +2,96 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Users can only access their own data
+    // ─── User profiles & all subcollections ───────────────────────────────
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
 
-      // Diary entries — only the owner
+      // Diary entries — owner only
       match /entries/{entryId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
 
-      // Tasks — only the owner
+      // Tasks — owner full control; assignee can read & update status/fields.
+      // We match on EITHER assigneeUid (linked) OR assigneeEmail (always set).
+      // This means task visibility works from the moment the owner types an email —
+      // no UID-linking step required.
       match /tasks/{taskId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read: if request.auth != null
+                   && (request.auth.uid == userId
+                       || request.auth.uid == resource.data.assigneeUid
+                       || request.auth.token.email == resource.data.assigneeEmail);
+        allow create: if request.auth != null && request.auth.uid == userId;
+        allow update: if request.auth != null
+                     && (request.auth.uid == userId
+                         // Assignee may update status/comments but cannot change ownership
+                         || ((request.auth.uid == resource.data.assigneeUid
+                              || request.auth.token.email == resource.data.assigneeEmail)
+                             && request.resource.data.ownerId     == resource.data.ownerId
+                             && request.resource.data.assigneeEmail == resource.data.assigneeEmail));
+        allow delete: if request.auth != null && request.auth.uid == userId;
+
+        // Comments — owner & assignee (by uid or email) can read/create; author edits own
+        match /comments/{commentId} {
+          allow read, create: if request.auth != null
+                             && (request.auth.uid == userId
+                                 || request.auth.token.email == get(/databases/$(database)/documents/users/$(userId)/tasks/$(taskId)).data.assigneeEmail
+                                 || request.auth.uid == get(/databases/$(database)/documents/users/$(userId)/tasks/$(taskId)).data.assigneeUid);
+          allow update, delete: if request.auth != null
+                                && request.auth.uid == resource.data.authorUid;
+        }
+
+        // Activity log — append-only; no edits or deletes ever
+        match /activity/{activityId} {
+          allow read, create: if request.auth != null
+                             && (request.auth.uid == userId
+                                 || request.auth.token.email == get(/databases/$(database)/documents/users/$(userId)/tasks/$(taskId)).data.assigneeEmail
+                                 || request.auth.uid == get(/databases/$(database)/documents/users/$(userId)/tasks/$(taskId)).data.assigneeUid);
+          allow update, delete: if false;
+        }
       }
 
-      // Team members — only the owner
+      // Team members — owner only
       match /teamMembers/{memberId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
 
-      // Error logs — owner can create only; never readable from the client
+      // Error logs — create-only
       match /errorLogs/{logId} {
         allow create: if request.auth != null && request.auth.uid == userId;
         allow read, update, delete: if false;
       }
     }
 
-    // Anonymous error logs written before auth is established — create only
+    // ─── Collection-group: lets assignees query all their tasks ──────────
+    // (tasks live at users/{ownerUid}/tasks/{taskId})
+    match /{path=**}/tasks/{taskId} {
+      allow read: if request.auth != null
+                 && resource.data.assigneeUid == request.auth.uid;
+      // Assignee updates: status / comments OK; ownership fields locked
+      allow update: if request.auth != null
+                   && resource.data.assigneeUid == request.auth.uid
+                   && request.resource.data.ownerId    == resource.data.ownerId
+                   && request.resource.data.assigneeUid == resource.data.assigneeUid;
+    }
+
+    // ─── User directory — lets the owner discover who has signed up ───────
+    // Each entry: { uid, email, displayName, invitedBy (ownerUid), createdAt }
+    match /userDirectory/{uid} {
+      // Users write their own entry
+      allow create, update: if request.auth != null && request.auth.uid == uid;
+      allow delete: if request.auth != null && request.auth.uid == uid;
+      // Owner reads entries where invitedBy == their uid (enforced client-side;
+      // full query access kept open so the owner can do a where() filter)
+      allow read: if request.auth != null;
+    }
+
+    // ─── Anonymous error logs (pre-auth) ─────────────────────────────────
     match /errorLogs/{logId} {
       allow create: if request.auth != null;
       allow read, update, delete: if false;
     }
 
-    // Deny all other access
+    // ─── Deny everything else ─────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;
     }

@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
-import { Bell, Mail, Calendar, CheckCircle, Clock, UserPlus, Send, X, Edit2, MessageCircle, ChevronDown, ChevronRight } from 'lucide-react';
+import { Bell, Mail, Calendar, CheckCircle, Clock, UserPlus, Send, X, Edit2, MessageCircle, ChevronDown, ChevronRight, Link } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useUserDirectory } from '../hooks/useFirestore';
+import { StatusBadge } from './TaskCollabPanel';
 
 const formatDate = (d) => {
   if (!d) return '';
@@ -99,6 +101,9 @@ function SectionHeader({ open, onToggle, icon, label, count, color }) {
 
 export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate, showToast }) {
   const { user } = useAuth();
+  // userDirectory gives us the real Firebase UIDs for anyone who has signed up,
+  // even if the auto-link in TeamMembers hasn't run yet.
+  const { directory } = useUserDirectory(user?.uid);
   const [assigningTaskId, setAssigningTaskId] = useState(null);
   const [assigneeName, setAssigneeName] = useState('');
   const [assigneeEmail, setAssigneeEmail] = useState('');
@@ -109,6 +114,14 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
   const [overdueOpen, setOverdueOpen] = useState(true);
   const [pendingOpen, setPendingOpen] = useState(true);
   const [helpOpen, setHelpOpen] = useState(false);
+
+  // Per-task expand/collapse — stores a Set of expanded task IDs
+  const [expandedTaskIds, setExpandedTaskIds] = useState(new Set());
+  const toggleTask = (id) => setExpandedTaskIds(prev => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
 
   const pendingTasks = tasks.filter(t => !t.completed);
   const overdueTasks = pendingTasks.filter(t => isOverdue(t.dueDate));
@@ -125,9 +138,14 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
   const closeAssignForm = () => {
     setAssigningTaskId(null);
     setAssigneeName(''); setAssigneeEmail(''); setAssigneePhone(''); setScheduleTime('');
+    setSelectedMember(null);
   };
 
+  // Track which team member object was selected (to get their uid if linked)
+  const [selectedMember, setSelectedMember] = useState(null);
+
   const handleMemberSelect = (member) => {
+    setSelectedMember(member);
     setAssigneeName(member.name);
     setAssigneeEmail(member.email || '');
     setAssigneePhone(member.phone || '');
@@ -138,15 +156,32 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
       showToast('Please enter an email or phone number.', 'warning');
       return;
     }
+    // Resolve the assignee's Firebase UID. Check in order:
+    //   1. The member object explicitly selected from the autocomplete
+    //   2. The teamMembers list (may already have uid if auto-linked)
+    //   3. The userDirectory (real-time, has uid the moment they sign up — no tab-visit required)
+    const emailKey = assigneeEmail.trim().toLowerCase();
+    const linkedMember = selectedMember
+      || teamMembers.find(m => m.email && m.email.toLowerCase() === emailKey);
+    const dirEntry = directory.find(d => d.email && d.email.toLowerCase() === emailKey);
+    const assigneeUid = linkedMember?.uid || dirEntry?.uid || null;
+
     try {
       await onUpdate(taskId, {
-        assigneeName: assigneeName.trim(),
-        assigneeEmail: assigneeEmail.trim(),
-        assigneePhone: assigneePhone.trim(),
+        assigneeName:       assigneeName.trim(),
+        assigneeEmail:      assigneeEmail.trim().toLowerCase(),   // always lowercase
+        assigneePhone:      assigneePhone.trim(),
         scheduledEmailTime: scheduleTime || null,
+        assigneeUid,
       });
-      showToast('Assignment saved!', 'success');
+      showToast(
+        assigneeUid
+          ? 'Assignment saved! Task is now collaborative — your team member will see it in their dashboard.'
+          : 'Assignment saved!',
+        'success',
+      );
       closeAssignForm();
+      setSelectedMember(null);
     } catch {
       showToast('Failed to save assignment.', 'warning');
     }
@@ -209,21 +244,71 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
     const overdue = !task.completed && isOverdue(task.dueDate);
     const isAssigning = assigningTaskId === task.id;
     const hasAssignee = task.assigneeEmail || task.assigneePhone;
+    const isExpanded = expandedTaskIds.has(task.id);
 
     return (
-      <div key={task.id} style={{ borderBottom: '1px solid #f0e6d2', paddingBottom: 14, marginBottom: 14 }}>
-        {/* Task text — full width */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 6 }}>
-          <Bell size={16} color={overdue ? '#c0392b' : '#c9a96e'} style={{ flexShrink: 0, marginTop: 3 }} />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 600, fontSize: 15, lineHeight: 1.5 }}>{task.text}</div>
-            {task.dueDate && (
-              <div className={`task-due ${overdue ? 'overdue' : ''}`} style={{ marginTop: 4 }}>
-                <Calendar size={12} /> {overdue ? 'Was due:' : 'Due:'} {formatDate(task.dueDate)}
-              </div>
-            )}
+      <div key={task.id} style={{
+        borderBottom: '1px solid #f0e6d2',
+        marginBottom: 8,
+        borderRadius: 8,
+        overflow: 'hidden',
+        border: '1px solid #f0e6d2',
+      }}>
+        {/* ── Collapsed header row (always visible, clickable) ── */}
+        <div
+          onClick={() => toggleTask(task.id)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '11px 12px', cursor: 'pointer',
+            background: isExpanded ? '#fffdf5' : 'transparent',
+            userSelect: 'none',
+          }}
+        >
+          <Bell size={15} color={overdue ? '#c0392b' : '#c9a96e'} style={{ flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: 600, fontSize: 14, lineHeight: 1.4, color: overdue ? '#c0392b' : '#4a3728' }}>
+                {task.text}
+              </span>
+              {task.status && task.status !== 'open' && <StatusBadge status={task.status} />}
+              {task.assigneeUid && (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                  background: '#e8f8f5', color: '#2a9d8f',
+                  fontSize: 10, fontWeight: 700,
+                  padding: '2px 7px', borderRadius: 10,
+                  border: '1px solid #2a9d8f44',
+                }}>
+                  <Link size={9} /> Collaborative
+                </span>
+              )}
+            </div>
+            {/* Compact summary line — due date + assignee name when collapsed */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 2 }}>
+              {task.dueDate && (
+                <span className={`task-due ${overdue ? 'overdue' : ''}`} style={{ fontSize: 12, margin: 0 }}>
+                  <Calendar size={11} /> {overdue ? 'Was due:' : 'Due:'} {formatDate(task.dueDate)}
+                </span>
+              )}
+              {hasAssignee && task.assigneeName && (
+                <span style={{ fontSize: 12, color: '#2a9d8f', display: 'flex', alignItems: 'center', gap: 3 }}>
+                  <UserPlus size={11} /> {task.assigneeName}
+                </span>
+              )}
+            </div>
+          </div>
+          {/* Chevron */}
+          <span style={{ color: '#8B6914', flexShrink: 0 }}>
+            {isExpanded ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
+          </span>
+        </div>
+
+        {/* ── Expanded detail section ── */}
+        {isExpanded && (
+          <div style={{ borderTop: '1px solid #f0e6d2', padding: '12px 12px 14px', background: '#fffdf8' }}>
+            {/* Full assignee details */}
             {hasAssignee && (
-              <div style={{ fontSize: 12, color: '#2a9d8f', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 12, color: '#2a9d8f', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
                 <UserPlus size={11} />
                 {task.assigneeName && <span style={{ fontWeight: 600 }}>{task.assigneeName}</span>}
                 {task.assigneeEmail && <span style={{ color: '#8a7a6a' }}>· {task.assigneeEmail}</span>}
@@ -233,105 +318,108 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
                 )}
               </div>
             )}
-          </div>
-        </div>
 
-        {/* Action buttons — below task text, full row */}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', paddingLeft: 26 }}>
-          {hasAssignee && task.assigneeEmail && (
-            <button className="btn btn-sm btn-blue" onClick={() => sendEmailNow(task)}>
-              <Mail size={13} /> Email Now
-            </button>
-          )}
-          {hasAssignee && task.assigneePhone && (
-            <button
-              className="btn btn-sm"
-              style={{ background: '#25D366', color: '#fff' }}
-              onClick={() => sendWhatsApp(task)}
-            >
-              <MessageCircle size={13} /> WhatsApp
-            </button>
-          )}
-          <button
-            className="btn btn-sm btn-outline"
-            onClick={() => isAssigning ? closeAssignForm() : openAssignForm(task)}
-          >
-            {hasAssignee ? <Edit2 size={13} /> : <UserPlus size={13} />}
-            {hasAssignee ? 'Edit Assign' : 'Assign'}
-          </button>
-          <button className="btn btn-sm btn-teal" onClick={() => onToggle(task.id, false)}>
-            <CheckCircle size={13} /> Done
-          </button>
-        </div>
-
-        {/* Inline assign form */}
-        {isAssigning && (
-          <div style={{
-            background: '#f5f0e5', borderRadius: 8, padding: 16,
-            marginTop: 12, border: '1px solid #e8d5b7',
-          }}>
-            <div style={{ fontWeight: 600, fontSize: 14, color: '#4a3728', marginBottom: 12 }}>
-              Assign Task — type a name to search your team
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
-              <div>
-                <label className="label">Name</label>
-                <MemberAutocomplete
-                  value={assigneeName}
-                  onChange={setAssigneeName}
-                  onSelect={handleMemberSelect}
-                  members={teamMembers}
-                  placeholder="Type to search..."
-                />
-              </div>
-              <div>
-                <label className="label">Email</label>
-                <input
-                  className="input"
-                  style={{ padding: '10px 12px', fontSize: 14 }}
-                  type="email"
-                  placeholder="email@company.com"
-                  value={assigneeEmail}
-                  onChange={e => setAssigneeEmail(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="label">WhatsApp</label>
-                <input
-                  className="input"
-                  style={{ padding: '10px 12px', fontSize: 14 }}
-                  placeholder="e.g. 7305013582"
-                  value={assigneePhone}
-                  onChange={e => setAssigneePhone(e.target.value)}
-                />
-              </div>
-            </div>
-            <div style={{ marginBottom: 12 }}>
-              <label className="label">Schedule Send Time (optional)</label>
-              <input
-                type="datetime-local"
-                value={scheduleTime}
-                onChange={e => setScheduleTime(e.target.value)}
-                style={{
-                  WebkitAppearance: 'none', appearance: 'none',
-                  width: '100%', boxSizing: 'border-box', height: 44,
-                  padding: '0 12px', border: '1px solid #d4c5a9', borderRadius: 8,
-                  fontSize: 14, fontFamily: 'var(--font-body)', background: '#fffdf5',
-                  color: '#4a3728', outline: 'none',
-                }}
-              />
-              <p style={{ fontSize: 12, color: '#8a7a6a', marginTop: 4 }}>
-                Save a scheduled time and use the Email Now / WhatsApp buttons to send when the time comes.
-              </p>
-            </div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-              <button className="btn btn-sm btn-outline" onClick={closeAssignForm}>
-                <X size={13} /> Cancel
+            {/* Action buttons */}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {hasAssignee && task.assigneeEmail && (
+                <button className="btn btn-sm btn-blue" onClick={e => { e.stopPropagation(); sendEmailNow(task); }}>
+                  <Mail size={13} /> Email Now
+                </button>
+              )}
+              {hasAssignee && task.assigneePhone && (
+                <button
+                  className="btn btn-sm"
+                  style={{ background: '#25D366', color: '#fff' }}
+                  onClick={e => { e.stopPropagation(); sendWhatsApp(task); }}
+                >
+                  <MessageCircle size={13} /> WhatsApp
+                </button>
+              )}
+              <button
+                className="btn btn-sm btn-outline"
+                onClick={e => { e.stopPropagation(); isAssigning ? closeAssignForm() : openAssignForm(task); }}
+              >
+                {hasAssignee ? <Edit2 size={13} /> : <UserPlus size={13} />}
+                {hasAssignee ? 'Edit Assign' : 'Assign'}
               </button>
-              <button className="btn btn-sm btn-teal" onClick={() => handleSaveAssignment(assigningTaskId)}>
-                Save Assignment
+              <button
+                className="btn btn-sm btn-teal"
+                onClick={e => { e.stopPropagation(); onToggle(task.id, false); }}
+              >
+                <CheckCircle size={13} /> Done
               </button>
             </div>
+
+            {/* Inline assign form */}
+            {isAssigning && (
+              <div style={{
+                background: '#f5f0e5', borderRadius: 8, padding: 16,
+                marginTop: 12, border: '1px solid #e8d5b7',
+              }}>
+                <div style={{ fontWeight: 600, fontSize: 14, color: '#4a3728', marginBottom: 12 }}>
+                  Assign Task — type a name to search your team
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
+                  <div>
+                    <label className="label">Name</label>
+                    <MemberAutocomplete
+                      value={assigneeName}
+                      onChange={setAssigneeName}
+                      onSelect={handleMemberSelect}
+                      members={teamMembers}
+                      placeholder="Type to search..."
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Email</label>
+                    <input
+                      className="input"
+                      style={{ padding: '10px 12px', fontSize: 14 }}
+                      type="email"
+                      placeholder="email@company.com"
+                      value={assigneeEmail}
+                      onChange={e => setAssigneeEmail(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="label">WhatsApp</label>
+                    <input
+                      className="input"
+                      style={{ padding: '10px 12px', fontSize: 14 }}
+                      placeholder="e.g. 7305013582"
+                      value={assigneePhone}
+                      onChange={e => setAssigneePhone(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <label className="label">Schedule Send Time (optional)</label>
+                  <input
+                    type="datetime-local"
+                    value={scheduleTime}
+                    onChange={e => setScheduleTime(e.target.value)}
+                    style={{
+                      WebkitAppearance: 'none', appearance: 'none',
+                      width: '100%', boxSizing: 'border-box', height: 44,
+                      padding: '0 12px', border: '1px solid #d4c5a9', borderRadius: 8,
+                      fontSize: 14, fontFamily: 'var(--font-body)', background: '#fffdf5',
+                      color: '#4a3728', outline: 'none',
+                    }}
+                  />
+                  <p style={{ fontSize: 12, color: '#8a7a6a', marginTop: 4 }}>
+                    Save a scheduled time and use the Email Now / WhatsApp buttons to send when the time comes.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                  <button className="btn btn-sm btn-outline" onClick={closeAssignForm}>
+                    <X size={13} /> Cancel
+                  </button>
+                  <button className="btn btn-sm btn-teal" onClick={() => handleSaveAssignment(assigningTaskId)}>
+                    Save Assignment
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
