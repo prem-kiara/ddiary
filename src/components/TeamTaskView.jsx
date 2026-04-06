@@ -130,6 +130,14 @@ export default function TeamTaskView() {
           <p style={{ color: '#8a7a6a', fontSize: 14, lineHeight: 1.7 }}>
             Your account is not linked to a team yet. Please sign out and sign up again using your manager's join link.
           </p>
+          {/* Debug info */}
+          <div style={{ marginTop: 12, padding: 10, background: '#fff3cd', borderRadius: 6, fontSize: 12, fontFamily: 'monospace', color: '#856404' }}>
+            <strong>Debug info:</strong><br />
+            UID: {user?.uid || 'none'}<br />
+            Email: {user?.email || 'none'}<br />
+            Role: {user?.role || 'none'}<br />
+            invitedBy: {user?.invitedBy || '⚠️ NOT SET'}
+          </div>
         </div>
       </div>
     );
@@ -191,6 +199,11 @@ export default function TeamTaskView() {
           <strong>Could not load tasks:</strong> {error}
         </div>
       )}
+
+      {/* Debug panel — always visible so we can diagnose query issues */}
+      <div style={{ margin: '8px 0', padding: 10, background: '#f0f4ff', border: '1px solid #b0c4ff', borderRadius: 6, fontSize: 11, fontFamily: 'monospace', color: '#334' }}>
+        <strong>Query debug:</strong> email=<em>{user?.email}</em> · invitedBy=<em>{user?.invitedBy}</em> · tasks found=<em>{tasks.length}</em> · {loading ? 'loading…' : error ? '❌ ' + error : '✅ ok'}
+      </div>
 
       {!loading && !error && tasks.length === 0 && <Empty user={user} />}
 
