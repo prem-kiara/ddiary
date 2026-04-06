@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Bell, Mail, Calendar, CheckCircle, Clock, UserPlus, Send, X, Edit2, MessageCircle } from 'lucide-react';
+import { Bell, Mail, Calendar, CheckCircle, Clock, UserPlus, Send, X, Edit2, MessageCircle, ChevronDown, ChevronRight } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const formatDate = (d) => {
@@ -70,6 +70,33 @@ function MemberAutocomplete({ value, onChange, onSelect, members, placeholder })
   );
 }
 
+// Collapse-section header — matches the DiaryList archived/deleted toggle style
+function SectionHeader({ open, onToggle, icon, label, count, color }) {
+  return (
+    <button
+      onClick={onToggle}
+      style={{
+        background: 'none', border: 'none', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+        padding: '10px 16px', borderRadius: 0,
+      }}
+    >
+      <span style={{ color: color || '#c9a96e', display: 'flex', alignItems: 'center' }}>{icon}</span>
+      <span style={{ fontWeight: 600, fontSize: 15, color: color || '#4a3728', flex: 1, textAlign: 'left' }}>
+        {label}
+        {count !== undefined && (
+          <span style={{ fontWeight: 400, fontSize: 13, color: '#8a7a6a', marginLeft: 6 }}>
+            ({count})
+          </span>
+        )}
+      </span>
+      <span style={{ color: '#8a7a6a' }}>
+        {open ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+      </span>
+    </button>
+  );
+}
+
 export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate, showToast }) {
   const { user } = useAuth();
   const [assigningTaskId, setAssigningTaskId] = useState(null);
@@ -77,6 +104,11 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
   const [assigneeEmail, setAssigneeEmail] = useState('');
   const [assigneePhone, setAssigneePhone] = useState('');
   const [scheduleTime, setScheduleTime] = useState('');
+
+  // Collapsible section state — overdue starts open (urgent), others also open by default
+  const [overdueOpen, setOverdueOpen] = useState(true);
+  const [pendingOpen, setPendingOpen] = useState(true);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const pendingTasks = tasks.filter(t => !t.completed);
   const overdueTasks = pendingTasks.filter(t => isOverdue(t.dueDate));
@@ -120,18 +152,45 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
     }
   };
 
-  // Opens native email app / Outlook pre-filled
+  // Opens Outlook if available, falls back to the device's default email app
   const sendEmailNow = (task) => {
     const recipient = task.assigneeEmail;
     if (!recipient) { showToast('No email set for this task.', 'warning'); return; }
+
     const greeting = task.assigneeName ? `Hi ${task.assigneeName},` : 'Hi,';
     const due = task.dueDate ? `\nDue: ${formatDate(task.dueDate)}` : '';
     const priority = task.priority ? `\nPriority: ${task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}` : '';
     const from = user?.displayName || 'Suren';
     const subject = `Task: ${task.text}`;
     const body = `${greeting}\n\nYou have been assigned the following task:\n\n📋 ${task.text}${due}${priority}\n\nPlease action this at your earliest convenience.\n\nRegards,\n${from}`;
-    window.location.href = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    showToast('Opening your email app...', 'success');
+
+    const mailtoUrl = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    // ms-outlook:// is the registered URL scheme for Microsoft Outlook on Windows/Mac
+    const outlookUrl = `ms-outlook://compose?to=${encodeURIComponent(recipient)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+    // Detect if Outlook opened by listening for the window losing focus
+    let outlookHandled = false;
+    const onBlur = () => { outlookHandled = true; };
+    window.addEventListener('blur', onBlur, { once: true });
+
+    // Trigger Outlook via a hidden link (silently ignored if scheme not registered)
+    const a = document.createElement('a');
+    a.href = outlookUrl;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    // After a short window, if Outlook didn't open, fall back to mailto:
+    setTimeout(() => {
+      window.removeEventListener('blur', onBlur);
+      if (!outlookHandled) {
+        window.location.href = mailtoUrl;
+        showToast('Opening your email app...', 'success');
+      }
+    }, 750);
+
+    showToast('Opening Outlook...', 'success');
   };
 
   const sendWhatsApp = (task) => {
@@ -254,19 +313,11 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
                 value={scheduleTime}
                 onChange={e => setScheduleTime(e.target.value)}
                 style={{
-                  WebkitAppearance: 'none',
-                  appearance: 'none',
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  height: 44,
-                  padding: '0 12px',
-                  border: '1px solid #d4c5a9',
-                  borderRadius: 8,
-                  fontSize: 14,
-                  fontFamily: 'var(--font-body)',
-                  background: '#fffdf5',
-                  color: '#4a3728',
-                  outline: 'none',
+                  WebkitAppearance: 'none', appearance: 'none',
+                  width: '100%', boxSizing: 'border-box', height: 44,
+                  padding: '0 12px', border: '1px solid #d4c5a9', borderRadius: 8,
+                  fontSize: 14, fontFamily: 'var(--font-body)', background: '#fffdf5',
+                  color: '#4a3728', outline: 'none',
                 }}
               />
               <p style={{ fontSize: 12, color: '#8a7a6a', marginTop: 4 }}>
@@ -291,38 +342,69 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
     <div className="fade-in">
       <h2 className="section-title">Reminders</h2>
 
+      {/* ── Overdue Tasks ─────────────────────────────────────────────── */}
       {overdueTasks.length > 0 && (
-        <div className="card" style={{ borderLeft: '4px solid #c0392b' }}>
-          <h3 style={{ color: '#c0392b', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Clock size={20} /> Overdue Tasks
-          </h3>
-          {overdueTasks.map(renderTask)}
+        <div className="card" style={{ padding: 0, overflow: 'hidden', borderLeft: '4px solid #c0392b' }}>
+          <SectionHeader
+            open={overdueOpen}
+            onToggle={() => setOverdueOpen(o => !o)}
+            icon={<Clock size={18} />}
+            label="Overdue Tasks"
+            count={overdueTasks.length}
+            color="#c0392b"
+          />
+          {overdueOpen && (
+            <div style={{ padding: '0 16px 16px', borderTop: '1px solid #f0e6d2' }}>
+              <div style={{ marginTop: 14 }}>
+                {overdueTasks.map(renderTask)}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      <div className="card">
-        <h3 style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8, color: '#4a3728' }}>
-          <Bell size={20} color="#c9a96e" /> Pending Tasks
-        </h3>
-        {pendingTasks.length === 0 ? (
-          <div className="empty-state" style={{ padding: 24 }}>
-            <CheckCircle size={36} color="#27ae60" />
-            <p>All caught up! No pending tasks.</p>
+      {/* ── Pending Tasks ─────────────────────────────────────────────── */}
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <SectionHeader
+          open={pendingOpen}
+          onToggle={() => setPendingOpen(o => !o)}
+          icon={<Bell size={18} />}
+          label="Pending Tasks"
+          count={pendingTasks.length}
+        />
+        {pendingOpen && (
+          <div style={{ padding: '0 16px 16px', borderTop: '1px solid #f0e6d2' }}>
+            {pendingTasks.length === 0 ? (
+              <div className="empty-state" style={{ padding: 24 }}>
+                <CheckCircle size={36} color="#27ae60" />
+                <p>All caught up! No pending tasks.</p>
+              </div>
+            ) : (
+              <div style={{ marginTop: 14 }}>
+                {upcomingTasks.map(renderTask)}
+              </div>
+            )}
           </div>
-        ) : (
-          upcomingTasks.map(renderTask)
         )}
       </div>
 
-      <div className="card" style={{ background: '#f5f0e5', border: '1px dashed #c9a96e' }}>
-        <h3 style={{ marginBottom: 8, color: '#4a3728', fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Send size={16} /> How Notifications Work
-        </h3>
-        <p style={{ color: '#8a7a6a', lineHeight: 1.7, fontSize: 13 }}>
-          Click <strong>Assign</strong> on any task, type a name to search team members, and their email/phone fills automatically.
-          <strong> Email Now</strong> opens Outlook or your device mail app pre-filled and ready to send.
-          <strong> WhatsApp</strong> opens a pre-written message in WhatsApp. Add team members via the <strong>Team</strong> tab.
-        </p>
+      {/* ── How Notifications Work ────────────────────────────────────── */}
+      <div className="card" style={{ padding: 0, overflow: 'hidden', background: '#f5f0e5', border: '1px dashed #c9a96e' }}>
+        <SectionHeader
+          open={helpOpen}
+          onToggle={() => setHelpOpen(o => !o)}
+          icon={<Send size={16} />}
+          label="How Notifications Work"
+        />
+        {helpOpen && (
+          <div style={{ padding: '0 16px 16px', borderTop: '1px solid #e8d5b7' }}>
+            <p style={{ color: '#8a7a6a', lineHeight: 1.7, fontSize: 13, marginTop: 12 }}>
+              Click <strong>Assign</strong> on any task, type a name to search team members, and their email/phone fills automatically.
+              <strong> Email Now</strong> opens Outlook (or your device mail app if Outlook isn't installed) pre-filled and ready to send.
+              <strong> WhatsApp</strong> opens a pre-written message in WhatsApp. Add team members via the <strong>Team</strong> tab.
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
