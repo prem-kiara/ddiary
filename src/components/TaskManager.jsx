@@ -195,7 +195,7 @@ function TaskCard({
         scheduledEmailTime: scheduleTime || null,
         assigneeUid,
       });
-      showToast(assigneeUid ? 'Assigned! They'll see this in their dashboard.' : 'Assignment saved!', 'success');
+      showToast(assigneeUid ? "Assigned! They'll see this in their dashboard." : 'Assignment saved!', 'success');
       setPanel(null);
     } catch { showToast('Failed to save assignment.', 'warning'); }
     setAssignSaving(false);

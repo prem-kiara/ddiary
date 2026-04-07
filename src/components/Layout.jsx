@@ -1,4 +1,4 @@
-import { BookOpen, Home, PenTool, Settings, LogOut, Users, List } from 'lucide-react';
+import { BookOpen, Home, PenTool, CheckSquare, Settings, LogOut, Users, List, Kanban } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const formatDate = (d) => new Date(d).toLocaleDateString('en-US', {
