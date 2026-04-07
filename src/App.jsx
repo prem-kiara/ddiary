@@ -9,7 +9,6 @@ import Toast from './components/Toast';
 import DiaryList from './components/DiaryList';
 import DiaryView from './components/DiaryView';
 import DiaryEditor from './components/DiaryEditor';
-import Reminders from './components/Reminders';
 import TeamMembers from './components/TeamMembers';
 import TeamTaskView from './components/TeamTaskView';
 import SettingsPage from './components/SettingsPage';
@@ -242,17 +241,6 @@ function DiaryApp() {
             onClearCompleted={clearCompleted}
             showToast={showToast}
             onWorkspaceCreated={setWorkspaceId}
-          />
-        )}
-
-        {/* Reminders */}
-        {page === 'reminders' && (
-          <Reminders
-            tasks={tasks}
-            teamMembers={members}
-            onToggle={toggleTask}
-            onUpdate={updateTask}
-            showToast={showToast}
           />
         )}
 
