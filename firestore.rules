@@ -91,6 +91,38 @@ service cloud.firestore {
       allow read, update, delete: if false;
     }
 
+    // ─── Workspaces — shared Kanban boards ───────────────────────────────
+    match /workspaces/{workspaceId} {
+      function isWorkspaceMember() {
+        return request.auth != null &&
+          exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid));
+      }
+
+      allow read:             if isWorkspaceMember();
+      allow create:           if request.auth != null;  // any auth'd user can create
+      allow update, delete:   if isWorkspaceMember();
+
+      match /members/{uid} {
+        allow read:           if isWorkspaceMember() || request.auth.uid == uid;
+        allow create, update: if request.auth != null;  // joining workspace
+        allow delete:         if isWorkspaceMember();
+      }
+
+      match /tasks/{taskId} {
+        allow read, write:    if isWorkspaceMember();
+
+        match /comments/{commentId} {
+          allow read, create: if isWorkspaceMember();
+          allow update, delete: if request.auth != null && request.auth.uid == resource.data.authorUid;
+        }
+
+        match /activity/{activityId} {
+          allow read, create: if isWorkspaceMember();
+          allow update, delete: if false;
+        }
+      }
+    }
+
     // ─── Deny everything else ─────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

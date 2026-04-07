@@ -1,28 +1,33 @@
 import { useState, useEffect } from 'react';
-import { BookOpen, Mail, Lock, User, Users } from 'lucide-react';
+import { BookOpen, Mail, Lock, User, Users, Layout } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Auth() {
-  const { login, signup, signupAsMember, linkToTeam, resetPassword, error, setError } = useAuth();
+  const {
+    login, signup, signupAsMember, signupAsCollaborator,
+    linkToTeam, joinWorkspace,
+    resetPassword, error, setError,
+  } = useAuth();
 
-  // Detect ?join=OWNER_UID in the URL — if present this is a team-member signup
-  // Keep joinParam in state so it survives the URL cleanup
-  const [joinParam] = useState(() => new URLSearchParams(window.location.search).get('join'));
-  const isMemberSignup = !!joinParam;
+  // Read URL params once at mount and keep in state
+  const [joinParam]      = useState(() => new URLSearchParams(window.location.search).get('join'));
+  const [workspaceParam] = useState(() => new URLSearchParams(window.location.search).get('workspace'));
 
-  const [mode,       setMode]       = useState(isMemberSignup ? 'signup' : 'login');
-  const [email,      setEmail]      = useState('');
-  const [password,   setPassword]   = useState('');
-  const [name,       setName]       = useState('');
-  const [loading,    setLoading]    = useState(false);
-  const [resetSent,  setResetSent]  = useState(false);
+  const isMemberSignup      = !!joinParam;
+  const isCollaboratorSignup = !!workspaceParam;
+  const isInviteFlow         = isMemberSignup || isCollaboratorSignup;
 
-  // Keep URL clean after reading the param
+  const [mode,      setMode]      = useState(isInviteFlow ? 'signup' : 'login');
+  const [email,     setEmail]     = useState('');
+  const [password,  setPassword]  = useState('');
+  const [name,      setName]      = useState('');
+  const [loading,   setLoading]   = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+
+  // Clean URL after reading params
   useEffect(() => {
-    if (joinParam) {
-      window.history.replaceState({}, '', window.location.pathname);
-    }
-  }, [joinParam]);
+    if (isInviteFlow) window.history.replaceState({}, '', window.location.pathname);
+  }, [isInviteFlow]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -31,23 +36,17 @@ export default function Auth() {
     try {
       if (mode === 'login') {
         await login(email, password);
-        // If logging in via a join link, patch their profile to link them to the team
-        if (joinParam) {
-          await linkToTeam(joinParam);
-        }
+        if (joinParam)      await linkToTeam(joinParam);
+        if (workspaceParam) await joinWorkspace(workspaceParam);
       } else if (mode === 'signup') {
-        if (isMemberSignup) {
-          await signupAsMember(email, password, name, joinParam);
-        } else {
-          await signup(email, password, name);
-        }
+        if (isMemberSignup)       await signupAsMember(email, password, name, joinParam);
+        else if (isCollaboratorSignup) await signupAsCollaborator(email, password, name, workspaceParam);
+        else                           await signup(email, password, name);
       } else {
         await resetPassword(email);
         setResetSent(true);
       }
-    } catch {
-      // error is set in context
-    }
+    } catch { /* error set in context */ }
     setLoading(false);
   };
 
@@ -61,20 +60,22 @@ export default function Auth() {
     <div className="auth-container">
       <div className="auth-card fade-in">
         <div style={{ textAlign: 'center', marginBottom: 8 }}>
-          {isMemberSignup
-            ? <Users size={40} color="#2a9d8f" />
-            : <BookOpen size={40} color="#8B6914" />}
+          {isCollaboratorSignup
+            ? <Layout size={40} color="#8e44ad" />
+            : isMemberSignup
+              ? <Users size={40} color="#2a9d8f" />
+              : <BookOpen size={40} color="#8B6914" />}
         </div>
 
         <h1 className="auth-title">
-          {isMemberSignup ? 'Join the Team' : 'My Digital Diary'}
+          {isCollaboratorSignup ? 'Join Workspace' : isMemberSignup ? 'Join the Team' : 'My Digital Diary'}
         </h1>
 
         <p className="auth-subtitle">
           {mode === 'login'  && 'Welcome back. Sign in to continue.'}
-          {mode === 'signup' && (isMemberSignup
-            ? "You've been invited to collaborate on tasks. Create your account below."
-            : 'Create your personal diary account.')}
+          {mode === 'signup' && isCollaboratorSignup && "You've been invited to a shared workspace. Create your account to start collaborating."}
+          {mode === 'signup' && isMemberSignup       && "You've been invited to collaborate on tasks. Create your account below."}
+          {mode === 'signup' && !isInviteFlow        && 'Create your personal diary account.'}
           {mode === 'reset'  && 'Reset your password.'}
         </p>
 
@@ -128,7 +129,7 @@ export default function Auth() {
           )}
 
           <button
-            className={`btn ${isMemberSignup ? 'btn-teal' : 'btn-gold'}`}
+            className={`btn ${isCollaboratorSignup ? 'btn-purple' : isMemberSignup ? 'btn-teal' : 'btn-gold'}`}
             type="submit" disabled={loading}
             style={{ width: '100%', justifyContent: 'center', marginTop: 8, fontSize: 16, padding: 14 }}
           >
@@ -162,7 +163,7 @@ export default function Auth() {
           <div className="auth-divider">
             Already have an account?{' '}
             <button className="auth-link" onClick={() => switchMode('login')}>
-              {isMemberSignup ? 'Sign in to link your account' : 'Sign In'}
+              {isInviteFlow ? 'Sign in to link your account' : 'Sign In'}
             </button>
           </div>
         )}

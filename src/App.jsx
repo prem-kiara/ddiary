@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useEntries, useTasks, useTeamMembers, useUserDirectory } from './hooks/useFirestore';
+import KanbanBoard from './components/KanbanBoard';
 import Auth from './components/Auth';
 import Layout from './components/Layout';
 import Toast from './components/Toast';
@@ -15,7 +16,7 @@ import SettingsPage from './components/SettingsPage';
 import './styles/diary.css';
 
 function DiaryApp() {
-  const { user, loading: authLoading, isMember } = useAuth();
+  const { user, loading: authLoading, isMember, isCollaborator, setWorkspaceId } = useAuth();
   const {
     entries, trashedEntries, archivedEntries, loading: entriesLoading,
     addEntry, updateEntry, deleteEntry, restoreEntry, purgeEntry,
@@ -153,6 +154,19 @@ function DiaryApp() {
 
   if (!user) return <Auth />;
 
+  // ─── Collaborator view (role: 'collaborator') — workspace Kanban only ──
+  if (isCollaborator) {
+    return (
+      <>
+        {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+        <Layout currentPage={page} onNavigate={navigate} pendingCount={0} collaboratorMode>
+          {page !== 'settings' && <KanbanBoard onWorkspaceCreated={setWorkspaceId} />}
+          {page === 'settings' && <SettingsPage showToast={showToast} />}
+        </Layout>
+      </>
+    );
+  }
+
   // ─── Team-member view (role: 'member') ───────────────────────────────
   // Members only see their assigned tasks + settings.
   if (isMember) {
@@ -252,6 +266,11 @@ function DiaryApp() {
             onDelete={deleteMember}
             showToast={showToast}
           />
+        )}
+
+        {/* Collaborate — shared Kanban board */}
+        {page === 'collaborate' && (
+          <KanbanBoard onWorkspaceCreated={setWorkspaceId} />
         )}
 
         {/* Settings */}

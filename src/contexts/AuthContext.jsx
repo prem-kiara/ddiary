@@ -8,6 +8,7 @@ import {
   sendPasswordResetEmail,
 } from 'firebase/auth';
 import { doc, setDoc, getDoc, updateDoc, writeBatch } from 'firebase/firestore';
+import { addWorkspaceMember } from '../hooks/useWorkspace';
 import { auth, db } from '../firebase';
 import { writeUserDirectory } from '../hooks/useFirestore';
 
@@ -119,16 +120,50 @@ export function AuthProvider({ children }) {
   };
 
   // Patch an existing user's profile to link them to a team.
-  // Called when an existing user logs in via a ?join=OWNER_UID link.
   const linkToTeam = async (ownerUid) => {
     if (!auth.currentUser) return;
     const uid = auth.currentUser.uid;
     const email = auth.currentUser.email;
     const displayName = auth.currentUser.displayName;
-    const ref = doc(db, 'users', uid);
-    await setDoc(ref, { role: 'member', invitedBy: ownerUid }, { merge: true });
+    await setDoc(doc(db, 'users', uid), { role: 'member', invitedBy: ownerUid }, { merge: true });
     await writeUserDirectory(uid, { email, displayName, invitedBy: ownerUid });
     setUser(prev => ({ ...prev, role: 'member', invitedBy: ownerUid }));
+  };
+
+  // Sign up a new collaborator (via ?workspace= link) — gets their own workspace access
+  const signupAsCollaborator = async (email, password, displayName, workspaceId) => {
+    setError(null);
+    try {
+      const cred = await createUserWithEmailAndPassword(auth, email, password);
+      await updateProfile(cred.user, { displayName });
+      await setDoc(doc(db, 'users', cred.user.uid), {
+        email, displayName,
+        role: 'collaborator',
+        workspaceId,
+        createdAt: new Date().toISOString(),
+        settings: { theme: 'warm' },
+      });
+      await addWorkspaceMember(workspaceId, {
+        uid: cred.user.uid, email, displayName, role: 'member',
+      });
+      return cred.user;
+    } catch (err) { setError(err.message); throw err; }
+  };
+
+  // Existing user joins a workspace via ?workspace= link
+  const joinWorkspace = async (workspaceId) => {
+    if (!auth.currentUser) return;
+    const { uid, email, displayName } = auth.currentUser;
+    await setDoc(doc(db, 'users', uid), { workspaceId }, { merge: true });
+    await addWorkspaceMember(workspaceId, { uid, email, displayName, role: 'member' });
+    setUser(prev => ({ ...prev, workspaceId }));
+  };
+
+  // Called after owner creates a workspace — updates their profile with workspaceId
+  const setWorkspaceId = async (workspaceId) => {
+    if (!auth.currentUser) return;
+    await setDoc(doc(db, 'users', auth.currentUser.uid), { workspaceId }, { merge: true });
+    setUser(prev => ({ ...prev, workspaceId }));
   };
 
   const logout = () => signOut(auth);
@@ -151,14 +186,17 @@ export function AuthProvider({ children }) {
   };
 
   // Convenience booleans derived from role
-  const isOwner  = !user?.role || user.role === 'owner';
-  const isMember = user?.role === 'member';
+  const isOwner        = !user?.role || user.role === 'owner';
+  const isMember       = user?.role === 'member';
+  const isCollaborator = user?.role === 'collaborator';
 
   return (
     <AuthContext.Provider value={{
       user, loading, error,
-      signup, signupAsMember, login, linkToTeam, logout, resetPassword, updateSettings,
-      setError, isOwner, isMember,
+      signup, signupAsMember, signupAsCollaborator,
+      login, linkToTeam, joinWorkspace, setWorkspaceId,
+      logout, resetPassword, updateSettings,
+      setError, isOwner, isMember, isCollaborator,
     }}>
       {children}
     </AuthContext.Provider>
