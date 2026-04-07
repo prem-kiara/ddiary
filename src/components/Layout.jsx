@@ -1,4 +1,4 @@
-import { BookOpen, Home, PenTool, CheckSquare, Bell, Settings, LogOut, Users, Kanban } from 'lucide-react';
+import { BookOpen, Home, PenTool, CheckSquare, Bell, Settings, LogOut, Users, Kanban, List } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 const formatDate = (d) => new Date(d).toLocaleDateString('en-US', {
@@ -9,13 +9,12 @@ export default function Layout({ children, currentPage, onNavigate, pendingCount
   const { user, logout } = useAuth();
 
   const ownerNavItems = [
-    { id: 'home',        icon: Home,        label: 'Diary'       },
-    { id: 'write',       icon: PenTool,     label: 'Write'       },
-    { id: 'tasks',       icon: CheckSquare, label: 'Tasks'       },
-    { id: 'reminders',   icon: Bell,        label: 'Reminders'   },
-    { id: 'team',        icon: Users,       label: 'Team'        },
-    { id: 'collaborate', icon: Kanban,      label: 'Collaborate' },
-    { id: 'settings',    icon: Settings,    label: 'Settings'    },
+    { id: 'home',      icon: Home,        label: 'Diary'     },
+    { id: 'write',     icon: PenTool,     label: 'Write'     },
+    { id: 'tasks',     icon: List,        label: 'Tasks'     },
+    { id: 'reminders', icon: Bell,        label: 'Reminders' },
+    { id: 'team',      icon: Users,       label: 'Team'      },
+    { id: 'settings',  icon: Settings,    label: 'Settings'  },
   ];
 
   // Team members (subordinates) see only their assigned tasks + settings

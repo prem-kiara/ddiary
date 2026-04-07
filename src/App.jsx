@@ -2,13 +2,13 @@ import { useState, useCallback, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useEntries, useTasks, useTeamMembers, useUserDirectory } from './hooks/useFirestore';
 import KanbanBoard from './components/KanbanBoard';
+import TasksPage from './components/TasksPage';
 import Auth from './components/Auth';
 import Layout from './components/Layout';
 import Toast from './components/Toast';
 import DiaryList from './components/DiaryList';
 import DiaryView from './components/DiaryView';
 import DiaryEditor from './components/DiaryEditor';
-import TaskManager from './components/TaskManager';
 import Reminders from './components/Reminders';
 import TeamMembers from './components/TeamMembers';
 import TeamTaskView from './components/TeamTaskView';
@@ -229,9 +229,9 @@ function DiaryApp() {
           />
         )}
 
-        {/* Tasks */}
+        {/* Tasks — unified My Tasks + Team Board */}
         {page === 'tasks' && (
-          <TaskManager
+          <TasksPage
             tasks={tasks}
             members={members}
             loading={tasksLoading}
@@ -241,6 +241,7 @@ function DiaryApp() {
             onDelete={deleteTask}
             onClearCompleted={clearCompleted}
             showToast={showToast}
+            onWorkspaceCreated={setWorkspaceId}
           />
         )}
 
@@ -266,11 +267,6 @@ function DiaryApp() {
             onDelete={deleteMember}
             showToast={showToast}
           />
-        )}
-
-        {/* Collaborate — shared Kanban board */}
-        {page === 'collaborate' && (
-          <KanbanBoard onWorkspaceCreated={setWorkspaceId} />
         )}
 
         {/* Settings */}
