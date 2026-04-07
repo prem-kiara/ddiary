@@ -5,6 +5,9 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import {
+  notifyTaskAssigned, notifyStatusChanged, notifyCommentAdded,
+} from '../utils/emailNotifications';
 
 // ─── Workspace metadata + members ────────────────────────────────────────────
 export function useMyWorkspace() {
@@ -117,27 +120,42 @@ export async function addWorkspaceMember(workspaceId, { uid, email, displayName,
 }
 
 export async function addWorkspaceTask(workspaceId, task, actor) {
+  const assigneeEmail = task.assigneeEmail?.toLowerCase() || null;
   const ref = await addDoc(collection(db, 'workspaces', workspaceId, 'tasks'), {
-    text:          task.text?.trim() || '',
-    status:        task.status   || 'open',
-    priority:      task.priority || 'medium',
-    dueDate:       task.dueDate  || null,
-    assigneeUid:   task.assigneeUid   || null,
-    assigneeEmail: task.assigneeEmail?.toLowerCase() || null,
-    assigneeName:  task.assigneeName  || null,
-    createdBy:     actor.uid,
-    createdByName: actor.displayName || actor.email,
-    createdAt:     serverTimestamp(),
-    updatedAt:     serverTimestamp(),
+    text:           task.text?.trim() || '',
+    status:         task.status   || 'open',
+    priority:       task.priority || 'medium',
+    dueDate:        task.dueDate  || null,
+    assigneeUid:    task.assigneeUid   || null,
+    assigneeEmail,
+    assigneeName:   task.assigneeName  || null,
+    createdBy:      actor.uid,
+    createdByEmail: actor.email,
+    createdByName:  actor.displayName || actor.email,
+    createdAt:      serverTimestamp(),
+    updatedAt:      serverTimestamp(),
   });
   await _logWorkspaceActivity(workspaceId, ref.id, {
     actorUid: actor.uid, actorName: actor.displayName || actor.email,
     action: 'created', detail: task.text,
   });
+  // Notify assignee
+  if (assigneeEmail) {
+    notifyTaskAssigned({
+      toEmail:        assigneeEmail,
+      toName:         task.assigneeName,
+      taskText:       task.text,
+      priority:       task.priority,
+      dueDate:        task.dueDate,
+      assignedBy:     actor.displayName || actor.email,
+      assignedByEmail: actor.email,
+    });
+  }
   return ref;
 }
 
-export async function updateWorkspaceTask(workspaceId, taskId, updates, actor) {
+// task = full current task object (needed to get creator/assignee emails for notifications)
+export async function updateWorkspaceTask(workspaceId, taskId, updates, actor, task = null) {
   await updateDoc(doc(db, 'workspaces', workspaceId, 'tasks', taskId), {
     ...updates, updatedAt: serverTimestamp(),
   });
@@ -147,6 +165,29 @@ export async function updateWorkspaceTask(workspaceId, taskId, updates, actor) {
       actorUid: actor.uid, actorName: actor.displayName || actor.email,
       action: 'status_changed', detail: `→ ${labels[updates.status] || updates.status}`,
     });
+    // Notify task creator of status change (if different from actor)
+    if (task?.createdByEmail) {
+      notifyStatusChanged({
+        toEmail:        task.createdByEmail,
+        toName:         task.createdByName,
+        taskText:       task.text,
+        newStatus:      updates.status,
+        changedBy:      actor.displayName || actor.email,
+        changedByEmail: actor.email,
+      });
+    }
+  }
+  // If assignee changed, notify the new assignee
+  if (updates.assigneeEmail && task) {
+    notifyTaskAssigned({
+      toEmail:         updates.assigneeEmail,
+      toName:          updates.assigneeName || null,
+      taskText:        task.text,
+      priority:        task.priority,
+      dueDate:         updates.dueDate || task.dueDate,
+      assignedBy:      actor.displayName || actor.email,
+      assignedByEmail: actor.email,
+    });
   }
 }
 
@@ -154,7 +195,8 @@ export async function deleteWorkspaceTask(workspaceId, taskId) {
   await deleteDoc(doc(db, 'workspaces', workspaceId, 'tasks', taskId));
 }
 
-export async function addWorkspaceComment(workspaceId, taskId, { authorUid, authorName, text }) {
+// task = full current task object (needed to route comment notification to the right party)
+export async function addWorkspaceComment(workspaceId, taskId, { authorUid, authorName, authorEmail, text }, task = null) {
   await addDoc(collection(db, 'workspaces', workspaceId, 'tasks', taskId, 'comments'), {
     authorUid, authorName, text,
     createdAt: serverTimestamp(),
@@ -163,6 +205,19 @@ export async function addWorkspaceComment(workspaceId, taskId, { authorUid, auth
     actorUid: authorUid, actorName: authorName,
     action: 'commented', detail: text,
   });
+  // Notify the other party
+  if (task) {
+    notifyCommentAdded({
+      commenterEmail: authorEmail,
+      commenterName:  authorName,
+      commentText:    text,
+      creatorEmail:   task.createdByEmail,
+      creatorName:    task.createdByName,
+      assigneeEmail:  task.assigneeEmail,
+      assigneeName:   task.assigneeName,
+      taskText:       task.text,
+    });
+  }
 }
 
 async function _logWorkspaceActivity(workspaceId, taskId, { actorUid, actorName, action, detail }) {

@@ -47,10 +47,11 @@ function WorkspaceCollabPanel({ workspaceId, task, onClose }) {
     setSending(true);
     try {
       await addWorkspaceComment(workspaceId, task.id, {
-        authorUid:  user.uid,
-        authorName: user.displayName || user.email,
+        authorUid:   user.uid,
+        authorName:  user.displayName || user.email,
+        authorEmail: user.email,
         text: t,
-      });
+      }, task);
       setCommentText('');
     } catch (e) { console.error(e); }
     setSending(false);
@@ -60,7 +61,7 @@ function WorkspaceCollabPanel({ workspaceId, task, onClose }) {
     if (newStatus === task.status) return;
     setStatusSaving(true);
     try {
-      await updateWorkspaceTask(workspaceId, task.id, { status: newStatus }, user);
+      await updateWorkspaceTask(workspaceId, task.id, { status: newStatus }, user, task);
     } catch (e) { console.error(e); }
     setStatusSaving(false);
   };
