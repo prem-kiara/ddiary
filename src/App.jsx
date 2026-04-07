@@ -1,7 +1,6 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useEntries, useTasks, useTeamMembers, useUserDirectory } from './hooks/useFirestore';
-import { checkAndSendDueReminders } from './utils/emailNotifications';
 import KanbanBoard from './components/KanbanBoard';
 import Auth from './components/Auth';
 import Layout from './components/Layout';
@@ -60,14 +59,6 @@ function DiaryApp() {
       });
     });
   }, [directory, tasks, members]);
-
-  // Due-date reminder check — runs once after tasks load, once per session
-  const reminderChecked = useRef(false);
-  useEffect(() => {
-    if (reminderChecked.current || !tasks.length) return;
-    reminderChecked.current = true;
-    checkAndSendDueReminders(tasks);
-  }, [tasks]);
 
   const [page, setPage] = useState('home');
   const [viewingEntry, setViewingEntry] = useState(null);

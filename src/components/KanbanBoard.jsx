@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  Plus, X, ChevronDown, ChevronRight, User, Calendar, Send,
+  Plus, X, ChevronDown, ChevronRight, User, Calendar, Send, Mail,
   Circle, Clock, Eye, CheckCircle, Trash2, Link, Copy, Check as CheckIcon,
   MessageCircle, Activity as ActivityIcon, Users,
 } from 'lucide-react';
@@ -40,6 +40,26 @@ function WorkspaceCollabPanel({ workspaceId, task, onClose }) {
   const [commentText,   setCommentText]  = useState('');
   const [sending,       setSending]      = useState(false);
   const [statusSaving,  setStatusSaving] = useState(false);
+  const [emailSent,     setEmailSent]    = useState(false);
+
+  const handleSendEmail = () => {
+    const statusLabel = { open: 'Open', in_progress: 'In Progress', review: 'Review', done: 'Done' }[task.status || 'open'] || task.status;
+    const due = task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'No due date';
+    const subject = encodeURIComponent(`[Task Update] ${task.text}`);
+    const body = encodeURIComponent(
+      `Hi ${task.assigneeName || task.assigneeEmail?.split('@')[0] || 'there'},\n\n` +
+      `Here's a quick update on your task:\n\n` +
+      `📋 Task: ${task.text}\n` +
+      `📊 Status: ${statusLabel}\n` +
+      `📅 Due: ${due}\n` +
+      `🔴 Priority: ${(task.priority || 'medium').charAt(0).toUpperCase() + (task.priority || 'medium').slice(1)}\n\n` +
+      `Please let me know if you have any questions.\n\n` +
+      `Thanks,\n${user.displayName || user.email}`
+    );
+    window.location.href = `mailto:${task.assigneeEmail}?subject=${subject}&body=${body}`;
+    setEmailSent(true);
+    setTimeout(() => setEmailSent(false), 3000);
+  };
 
   const handleSend = async () => {
     const t = commentText.trim();
@@ -93,6 +113,26 @@ function WorkspaceCollabPanel({ workspaceId, task, onClose }) {
           })}
         </div>
       </div>
+
+      {/* Manual email button — only shown when task has an assignee */}
+      {task.assigneeEmail && (
+        <div style={{ marginBottom: 14 }}>
+          <button
+            onClick={handleSendEmail}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+              cursor: 'pointer', border: '1px solid #2980b944',
+              background: emailSent ? '#eafaf1' : '#eaf4fb',
+              color: emailSent ? '#27ae60' : '#2980b9',
+              transition: 'all 0.2s',
+            }}
+          >
+            {emailSent ? <><CheckIcon size={13} /> Email opened!</> : <><Mail size={13} /> Email {task.assigneeName || task.assigneeEmail}</>}
+          </button>
+          <span style={{ fontSize: 11, color: '#b5a898', marginLeft: 8 }}>Opens your email app with task details pre-filled</span>
+        </div>
+      )}
 
       {/* Tab bar */}
       <div style={{ display: 'flex', borderBottom: '1px solid #e8d5b7', marginBottom: 12 }}>

@@ -5,9 +5,6 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import {
-  notifyTaskAssigned, notifyStatusChanged, notifyCommentAdded,
-} from '../utils/emailNotifications';
 
 // ─── Workspace metadata + members ────────────────────────────────────────────
 export function useMyWorkspace() {
@@ -139,18 +136,6 @@ export async function addWorkspaceTask(workspaceId, task, actor) {
     actorUid: actor.uid, actorName: actor.displayName || actor.email,
     action: 'created', detail: task.text,
   });
-  // Notify assignee
-  if (assigneeEmail) {
-    notifyTaskAssigned({
-      toEmail:        assigneeEmail,
-      toName:         task.assigneeName,
-      taskText:       task.text,
-      priority:       task.priority,
-      dueDate:        task.dueDate,
-      assignedBy:     actor.displayName || actor.email,
-      assignedByEmail: actor.email,
-    });
-  }
   return ref;
 }
 
@@ -164,29 +149,6 @@ export async function updateWorkspaceTask(workspaceId, taskId, updates, actor, t
     await _logWorkspaceActivity(workspaceId, taskId, {
       actorUid: actor.uid, actorName: actor.displayName || actor.email,
       action: 'status_changed', detail: `→ ${labels[updates.status] || updates.status}`,
-    });
-    // Notify task creator of status change (if different from actor)
-    if (task?.createdByEmail) {
-      notifyStatusChanged({
-        toEmail:        task.createdByEmail,
-        toName:         task.createdByName,
-        taskText:       task.text,
-        newStatus:      updates.status,
-        changedBy:      actor.displayName || actor.email,
-        changedByEmail: actor.email,
-      });
-    }
-  }
-  // If assignee changed, notify the new assignee
-  if (updates.assigneeEmail && task) {
-    notifyTaskAssigned({
-      toEmail:         updates.assigneeEmail,
-      toName:          updates.assigneeName || null,
-      taskText:        task.text,
-      priority:        task.priority,
-      dueDate:         updates.dueDate || task.dueDate,
-      assignedBy:      actor.displayName || actor.email,
-      assignedByEmail: actor.email,
     });
   }
 }
@@ -205,19 +167,6 @@ export async function addWorkspaceComment(workspaceId, taskId, { authorUid, auth
     actorUid: authorUid, actorName: authorName,
     action: 'commented', detail: text,
   });
-  // Notify the other party
-  if (task) {
-    notifyCommentAdded({
-      commenterEmail: authorEmail,
-      commenterName:  authorName,
-      commentText:    text,
-      creatorEmail:   task.createdByEmail,
-      creatorName:    task.createdByName,
-      assigneeEmail:  task.assigneeEmail,
-      assigneeName:   task.assigneeName,
-      taskText:       task.text,
-    });
-  }
 }
 
 async function _logWorkspaceActivity(workspaceId, taskId, { actorUid, actorName, action, detail }) {
