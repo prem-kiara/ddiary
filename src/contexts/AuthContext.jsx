@@ -118,6 +118,19 @@ export function AuthProvider({ children }) {
     }
   };
 
+  // Patch an existing user's profile to link them to a team.
+  // Called when an existing user logs in via a ?join=OWNER_UID link.
+  const linkToTeam = async (ownerUid) => {
+    if (!auth.currentUser) return;
+    const uid = auth.currentUser.uid;
+    const email = auth.currentUser.email;
+    const displayName = auth.currentUser.displayName;
+    const ref = doc(db, 'users', uid);
+    await setDoc(ref, { role: 'member', invitedBy: ownerUid }, { merge: true });
+    await writeUserDirectory(uid, { email, displayName, invitedBy: ownerUid });
+    setUser(prev => ({ ...prev, role: 'member', invitedBy: ownerUid }));
+  };
+
   const logout = () => signOut(auth);
 
   const resetPassword = async (email) => {
@@ -144,7 +157,7 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       user, loading, error,
-      signup, signupAsMember, login, logout, resetPassword, updateSettings,
+      signup, signupAsMember, login, linkToTeam, logout, resetPassword, updateSettings,
       setError, isOwner, isMember,
     }}>
       {children}

@@ -3,10 +3,11 @@ import { BookOpen, Mail, Lock, User, Users } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Auth() {
-  const { login, signup, signupAsMember, resetPassword, error, setError } = useAuth();
+  const { login, signup, signupAsMember, linkToTeam, resetPassword, error, setError } = useAuth();
 
   // Detect ?join=OWNER_UID in the URL — if present this is a team-member signup
-  const joinParam  = new URLSearchParams(window.location.search).get('join');
+  // Keep joinParam in state so it survives the URL cleanup
+  const [joinParam] = useState(() => new URLSearchParams(window.location.search).get('join'));
   const isMemberSignup = !!joinParam;
 
   const [mode,       setMode]       = useState(isMemberSignup ? 'signup' : 'login');
@@ -19,8 +20,7 @@ export default function Auth() {
   // Keep URL clean after reading the param
   useEffect(() => {
     if (joinParam) {
-      const clean = window.location.pathname;
-      window.history.replaceState({}, '', clean);
+      window.history.replaceState({}, '', window.location.pathname);
     }
   }, [joinParam]);
 
@@ -31,6 +31,10 @@ export default function Auth() {
     try {
       if (mode === 'login') {
         await login(email, password);
+        // If logging in via a join link, patch their profile to link them to the team
+        if (joinParam) {
+          await linkToTeam(joinParam);
+        }
       } else if (mode === 'signup') {
         if (isMemberSignup) {
           await signupAsMember(email, password, name, joinParam);
@@ -157,7 +161,9 @@ export default function Auth() {
         {mode === 'signup' && (
           <div className="auth-divider">
             Already have an account?{' '}
-            <button className="auth-link" onClick={() => switchMode('login')}>Sign In</button>
+            <button className="auth-link" onClick={() => switchMode('login')}>
+              {isMemberSignup ? 'Sign in to link your account' : 'Sign In'}
+            </button>
           </div>
         )}
 

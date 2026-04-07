@@ -187,7 +187,7 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
     }
   };
 
-  // Opens Outlook if available, falls back to the device's default email app
+  // Opens the device's default email app (Outlook, Gmail, Mail — whatever is set as default)
   const sendEmailNow = (task) => {
     const recipient = task.assigneeEmail;
     if (!recipient) { showToast('No email set for this task.', 'warning'); return; }
@@ -195,37 +195,14 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
     const greeting = task.assigneeName ? `Hi ${task.assigneeName},` : 'Hi,';
     const due = task.dueDate ? `\nDue: ${formatDate(task.dueDate)}` : '';
     const priority = task.priority ? `\nPriority: ${task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}` : '';
-    const from = user?.displayName || 'Suren';
+    const from = user?.displayName || user?.email || 'Your manager';
     const subject = `Task: ${task.text}`;
     const body = `${greeting}\n\nYou have been assigned the following task:\n\n📋 ${task.text}${due}${priority}\n\nPlease action this at your earliest convenience.\n\nRegards,\n${from}`;
 
+    // mailto: works on all devices and opens whatever the default email app is
     const mailtoUrl = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    // ms-outlook:// is the registered URL scheme for Microsoft Outlook on Windows/Mac
-    const outlookUrl = `ms-outlook://compose?to=${encodeURIComponent(recipient)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-
-    // Detect if Outlook opened by listening for the window losing focus
-    let outlookHandled = false;
-    const onBlur = () => { outlookHandled = true; };
-    window.addEventListener('blur', onBlur, { once: true });
-
-    // Trigger Outlook via a hidden link (silently ignored if scheme not registered)
-    const a = document.createElement('a');
-    a.href = outlookUrl;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-    // After a short window, if Outlook didn't open, fall back to mailto:
-    setTimeout(() => {
-      window.removeEventListener('blur', onBlur);
-      if (!outlookHandled) {
-        window.location.href = mailtoUrl;
-        showToast('Opening your email app...', 'success');
-      }
-    }, 750);
-
-    showToast('Opening Outlook...', 'success');
+    window.location.href = mailtoUrl;
+    showToast('Opening email app...', 'success');
   };
 
   const sendWhatsApp = (task) => {
