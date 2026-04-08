@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import {
   Plus, Bell, Calendar, CheckSquare, Edit2, Check, X,
   ChevronDown, ChevronRight, User, Link, Mail, MessageCircle,
-  Clock, CheckCircle, UserPlus, Send, AlertCircle,
+  Clock, CheckCircle, UserPlus, Send, AlertCircle, ArrowUpRight,
 } from 'lucide-react';
 import { formatDate, isOverdue, isDueToday, toDateInputValue } from '../utils/dates';
 import { useAuth } from '../contexts/AuthContext';
@@ -387,7 +387,7 @@ function TaskCard({
                   title="Move this task to the Team Board"
                   style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
                 >
-                  🏗️ Team Board
+                  <ArrowUpRight size={12} /> Team Board
                 </button>
               )}
               <button
@@ -508,7 +508,7 @@ function TaskCard({
               <div style={{ height: 1, background: '#f0e6d2', marginBottom: 12 }} />
               <div style={{ background: '#eaf4fb', border: '1px solid #2980b944', borderRadius: 10, padding: '14px 16px' }}>
                 <div style={{ fontWeight: 700, fontSize: 13, color: '#2980b9', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  🏗️ Move to Team Board
+                  <ArrowUpRight size={14} /> Move to Team Board
                 </div>
                 <p style={{ fontSize: 12, color: '#4a3728', marginBottom: 12, lineHeight: 1.5 }}>
                   This task will be removed from My Tasks and added to the Team Board Kanban.
@@ -553,7 +553,7 @@ function TaskCard({
                     onClick={handleMoveToBoard}
                     disabled={moveSaving}
                   >
-                    {moveSaving ? 'Moving…' : '🏗️ Move to Team Board'}
+                    {moveSaving ? 'Moving…' : <><ArrowUpRight size={13} /> Move to Team Board</>}
                   </button>
                 </div>
               </div>

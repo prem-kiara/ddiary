@@ -2,13 +2,13 @@ import { useState } from 'react';
 import {
   Plus, X, ChevronDown, ChevronRight, User, Calendar, Send, Mail,
   Circle, Clock, Eye, CheckCircle, Trash2, Link, Copy, Check as CheckIcon,
-  MessageCircle, Activity as ActivityIcon, Users,
+  MessageCircle, Activity as ActivityIcon, Users, Edit2,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import {
   useMyWorkspace, useWorkspaceTasks, useWorkspaceComments, useWorkspaceActivity,
   addWorkspaceTask, updateWorkspaceTask, deleteWorkspaceTask,
-  addWorkspaceComment, createWorkspace,
+  addWorkspaceComment, createWorkspace, renameWorkspace,
 } from '../hooks/useWorkspace';
 
 // ── Status config ─────────────────────────────────────────────────────────────
@@ -447,6 +447,20 @@ export default function KanbanBoard({ onWorkspaceCreated }) {
   const [copied,          setCopied]          = useState(false);
   const [filterAssignee,  setFilterAssignee]  = useState('all');
 
+  // Workspace rename
+  const [renaming,     setRenaming]     = useState(false);
+  const [renameText,   setRenameText]   = useState('');
+  const [renameSaving, setRenameSaving] = useState(false);
+
+  const startRename = () => { setRenameText(workspace.name); setRenaming(true); };
+  const handleRename = async () => {
+    if (!renameText.trim() || renameText.trim() === workspace.name) { setRenaming(false); return; }
+    setRenameSaving(true);
+    try { await renameWorkspace(workspaceId, renameText.trim()); } catch (e) { console.error(e); }
+    setRenaming(false);
+    setRenameSaving(false);
+  };
+
   if (wsLoading) return <div className="empty-state fade-in"><p>Loading workspace…</p></div>;
   if (!workspaceId || !workspace) return <WorkspaceSetup onCreated={onWorkspaceCreated} />;
 
@@ -491,7 +505,41 @@ export default function KanbanBoard({ onWorkspaceCreated }) {
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
         <div>
-          <h2 className="section-title" style={{ marginBottom: 6 }}>🏗️ {workspace.name}</h2>
+          {/* Workspace title + inline rename */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <Users size={20} color="#c9a96e" />
+            {renaming ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input
+                  autoFocus
+                  value={renameText}
+                  onChange={e => setRenameText(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') setRenaming(false); }}
+                  style={{
+                    fontSize: 18, fontWeight: 700, fontFamily: 'var(--font-body)',
+                    color: '#4a3728', border: 'none', borderBottom: '2px solid #c9a96e',
+                    background: 'transparent', outline: 'none', width: 220,
+                  }}
+                />
+                <button onClick={handleRename} disabled={renameSaving}
+                  style={{ background: '#2a9d8f', color: '#fff', border: 'none', borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}>
+                  {renameSaving ? '…' : 'Save'}
+                </button>
+                <button onClick={() => setRenaming(false)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8a7a6a' }}>
+                  <X size={14} />
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <h2 className="section-title" style={{ margin: 0 }}>{workspace.name}</h2>
+                <button onClick={startRename} title="Rename workspace"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c9a96e', padding: 2, display: 'flex' }}>
+                  <Edit2 size={13} />
+                </button>
+              </div>
+            )}
+          </div>
           {/* Member chips */}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             {members.map(m => (

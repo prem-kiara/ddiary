@@ -109,6 +109,10 @@ export async function createWorkspace(uid, email, displayName, name) {
   return ref.id;
 }
 
+export async function renameWorkspace(workspaceId, name) {
+  await updateDoc(doc(db, 'workspaces', workspaceId), { name });
+}
+
 export async function addWorkspaceMember(workspaceId, { uid, email, displayName, role = 'member' }) {
   await setDoc(doc(db, 'workspaces', workspaceId, 'members', uid), {
     uid, email, displayName, role,
