@@ -200,6 +200,17 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
       return;
     }
 
+    if (action === 'list-numbered' || action === 'list-bullet') {
+      const prefix     = action === 'list-numbered' ? '1. ' : '- ';
+      const lineStart  = liveText.lastIndexOf('\n', pos - 1) + 1;
+      const linePrefix = liveText.substring(lineStart, pos);
+      // If the current line is empty, insert prefix here; otherwise start a new line
+      const insert     = linePrefix.trim() === '' ? prefix : '\n' + prefix;
+      const newText    = liveText.substring(0, pos) + insert + liveText.substring(selEnd);
+      applyText(ta, newText, pos + insert.length);
+      return;
+    }
+
     // Regular character (space, etc.)
     applyText(ta, liveText.substring(0, pos) + action + liveText.substring(selEnd), pos + action.length);
   }, [applyText, handleEnterForList]);
@@ -287,6 +298,21 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
                 title="Enter / new line"
                 style={quickKeyStyle}
               >↵</button>
+
+              {/* Divider */}
+              <div style={{ width: '70%', height: 1, background: 'var(--paper-line)', margin: '2px 0' }} />
+
+              <button
+                onMouseDown={e => { e.preventDefault(); insertAtCursor('list-numbered'); }}
+                title="Start numbered list (auto-continues on Enter)"
+                style={{ ...quickKeyStyle, fontSize: 13, fontFamily: 'var(--font-body)', fontWeight: 700 }}
+              >1.</button>
+
+              <button
+                onMouseDown={e => { e.preventDefault(); insertAtCursor('list-bullet'); }}
+                title="Start bullet list (auto-continues on Enter)"
+                style={{ ...quickKeyStyle, fontSize: 18 }}
+              >•</button>
             </div>
           ) : (
             /* Re-open — tiny button aligned to top of textarea */
