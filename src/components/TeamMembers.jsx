@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Users, Plus, Trash2, Upload, Phone, Mail, User, Edit2, Check, X, Link, Copy, CheckCircle } from 'lucide-react';
+import { Users, Plus, Trash2, Upload, Phone, Mail, User, Edit2, Check, X, Link, Copy, CheckCircle, Building2, RefreshCw, Briefcase } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserDirectory } from '../hooks/useFirestore';
 
@@ -36,6 +36,57 @@ export default function TeamMembers({ members, loading, onAdd, onAddBulk, onUpda
   const [editName,     setEditName]     = useState('');
   const [editEmail,    setEditEmail]    = useState('');
   const [editPhone,    setEditPhone]    = useState('');
+
+  // ── M365 Org Directory ─────────────────────────────────────────────────
+  const [orgUsers, setOrgUsers]       = useState([]);
+  const [orgLoading, setOrgLoading]   = useState(false);
+  const [orgError, setOrgError]       = useState(null);
+
+  useEffect(() => {
+    loadOrgUsers();
+  }, []);
+
+  const loadOrgUsers = async () => {
+    setOrgLoading(true);
+    setOrgError(null);
+    try {
+      const { fetchAllOrgUsers } = await import('../utils/graphPeopleSearch');
+      const users = await fetchAllOrgUsers();
+      setOrgUsers(users);
+      if (users.length === 0) setOrgError('No users found — you may need to sign in again to refresh your Microsoft token.');
+    } catch {
+      setOrgError('Failed to load organization directory');
+    }
+    setOrgLoading(false);
+  };
+
+  // Quick-add an org user as a team member
+  const handleAddFromOrg = async (orgUser) => {
+    // Check if already in team
+    if (members.find(m => m.email?.toLowerCase() === orgUser.email?.toLowerCase())) {
+      showToast(`${orgUser.displayName} is already on your team`, 'info');
+      return;
+    }
+    try {
+      await onAdd({ name: orgUser.displayName, email: orgUser.email, phone: orgUser.phone || '' });
+      showToast(`${orgUser.displayName} added to team!`, 'success');
+    } catch {
+      showToast('Failed to add member', 'warning');
+    }
+  };
+
+  // Add all org users at once
+  const handleAddAllFromOrg = async () => {
+    const existingEmails = new Set(members.map(m => m.email?.toLowerCase()));
+    const newUsers = orgUsers.filter(u => u.email && !existingEmails.has(u.email.toLowerCase()));
+    if (newUsers.length === 0) { showToast('All org members are already on your team!', 'info'); return; }
+    try {
+      await onAddBulk(newUsers.map(u => ({ name: u.displayName, email: u.email, phone: u.phone || '' })));
+      showToast(`${newUsers.length} members added from organization!`, 'success');
+    } catch {
+      showToast('Failed to add members', 'warning');
+    }
+  };
 
   const fileRef = useRef();
 
@@ -140,6 +191,94 @@ export default function TeamMembers({ members, loading, onAdd, onAddBulk, onUpda
         </div>
       </div>
 
+      {/* ── M365 Organization Directory ─────────────────────────────────── */}
+      <div className="card">
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+          <h3 style={{ color: '#4a3728', display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+            <Building2 size={18} color="#2a6cb8" /> Organization Directory
+          </h3>
+          <div style={{ display: 'flex', gap: 8 }}>
+            {orgUsers.length > 0 && (
+              <button className="btn btn-sm btn-teal" onClick={handleAddAllFromOrg}>
+                <Plus size={13} /> Add All to Team
+              </button>
+            )}
+            <button className="btn btn-sm btn-outline" onClick={loadOrgUsers} disabled={orgLoading}>
+              <RefreshCw size={13} className={orgLoading ? 'spin' : ''} /> Refresh
+            </button>
+          </div>
+        </div>
+
+        {orgLoading && (
+          <p style={{ color: '#8a7a6a', fontSize: 13, textAlign: 'center', padding: '16px 0' }}>
+            Loading organization directory...
+          </p>
+        )}
+
+        {orgError && !orgLoading && (
+          <p style={{ color: '#c0392b', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>
+            {orgError}
+          </p>
+        )}
+
+        {!orgLoading && orgUsers.length > 0 && (
+          <div style={{ maxHeight: 360, overflowY: 'auto' }}>
+            {orgUsers.map(u => {
+              const alreadyAdded = members.some(m => m.email?.toLowerCase() === u.email?.toLowerCase());
+              return (
+                <div key={u.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px',
+                  borderBottom: '1px solid #f0e6d2',
+                }}>
+                  {/* Avatar */}
+                  <div style={{
+                    width: 36, height: 36, borderRadius: '50%',
+                    background: alreadyAdded ? '#e8f8f5' : '#e8f0fe',
+                    border: `1px solid ${alreadyAdded ? '#2a9d8f55' : '#2a6cb844'}`,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontFamily: 'var(--font-handwriting)', fontSize: 18,
+                    color: alreadyAdded ? '#2a9d8f' : '#2a6cb8',
+                    flexShrink: 0,
+                  }}>
+                    {(u.displayName || '?').charAt(0).toUpperCase()}
+                  </div>
+
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <span style={{ fontWeight: 600, fontSize: 14, color: '#4a3728' }}>{u.displayName}</span>
+                      {alreadyAdded && (
+                        <span style={{
+                          background: '#e8f8f5', color: '#2a9d8f', fontSize: 11, fontWeight: 600,
+                          padding: '2px 8px', borderRadius: 10, border: '1px solid #2a9d8f44',
+                          display: 'flex', alignItems: 'center', gap: 3,
+                        }}>
+                          <CheckCircle size={10} /> On Team
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: '#8a7a6a', display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 2 }}>
+                      {u.email && <span><Mail size={11} style={{ display: 'inline', marginRight: 3 }} />{u.email}</span>}
+                      {u.jobTitle && <span><Briefcase size={11} style={{ display: 'inline', marginRight: 3 }} />{u.jobTitle}</span>}
+                    </div>
+                  </div>
+
+                  {!alreadyAdded && (
+                    <button
+                      className="btn btn-sm btn-gold"
+                      onClick={() => handleAddFromOrg(u)}
+                      title="Add to team"
+                      style={{ flexShrink: 0 }}
+                    >
+                      <Plus size={13} /> Add
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       {/* ── Add individual member ──────────────────────────────────────── */}
       <div className="card">
         <h3 style={{ marginBottom: 14, color: '#4a3728', display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -222,7 +361,7 @@ export default function TeamMembers({ members, loading, onAdd, onAddBulk, onUpda
                   color: m.uid ? '#2a9d8f' : 'var(--gold)',
                   flexShrink: 0,
                 }}>
-                  {m.name.charAt(0).toUpperCase()}
+                  {(m.name || '?').charAt(0).toUpperCase()}
                 </div>
 
                 <div style={{ flex: 1 }}>
@@ -249,7 +388,7 @@ export default function TeamMembers({ members, loading, onAdd, onAddBulk, onUpda
 
                 <button className="btn-icon" onClick={() => startEdit(m)} title="Edit"><Edit2 size={15} /></button>
                 <button className="btn-icon" onClick={() => {
-                  if (window.confirm(`Remove ${m.name} from your team?`)) onDelete(m.id);
+                  if (window.confirm(`Remove ${m.name || 'this member'} from your team?`)) onDelete(m.id);
                 }} title="Remove"><Trash2 size={15} color="#c0392b" /></button>
               </div>
             )}

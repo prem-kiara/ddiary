@@ -7,23 +7,83 @@ import {
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { createLogger } from '../utils/errorLogger';
+import {
+  notifyInApp_TaskAssigned,
+  notifyInApp_StatusChanged,
+  notifyInApp_Comment,
+  notifyInApp_Reassigned,
+} from '../utils/writeNotification';
 
-// ─── Cloudinary upload ────────────────────────────────────────────────────
-const CLOUDINARY_CLOUD  = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME;
-const CLOUDINARY_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET;
+// ─── SharePoint upload (Dhanam Repository → DDiary folder) ───────────────
+const SP_DRIVE_ID = import.meta.env.VITE_SHAREPOINT_DRIVE_ID;
+const MS_TOKEN_KEY = 'ddiary_ms_access_token';
 
-async function uploadToCloudinary(dataUrl) {
-  const res = await fetch(
-    `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`,
+/**
+ * Upload a data URL (base64 image) to SharePoint.
+ * Files go to: Dhanam Repository / Shared Documents / DDiary / drawings / {userEmail} /
+ * Returns the SharePoint web URL for the uploaded file.
+ */
+async function uploadToSharePoint(dataUrl, userEmail) {
+  const msToken = sessionStorage.getItem(MS_TOKEN_KEY);
+  if (!msToken) throw new Error('Microsoft token not available — please sign in again');
+  if (!SP_DRIVE_ID) throw new Error('SharePoint Drive ID not configured');
+
+  // Convert data URL to Blob
+  const response = await fetch(dataUrl);
+  const blob = await response.blob();
+
+  // Build a unique filename
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const randomId = Math.random().toString(36).slice(2, 8);
+  const ext = blob.type === 'image/png' ? 'png' : 'jpg';
+  const safeEmail = (userEmail || 'unknown').replace(/[^a-zA-Z0-9@._-]/g, '_');
+  const filePath = `DDiary/drawings/${safeEmail}/drawing_${timestamp}_${randomId}.${ext}`;
+
+  // Upload via Graph API — PUT /drives/{driveId}/root:/{path}:/content
+  const uploadRes = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${SP_DRIVE_ID}/root:/${filePath}:/content`,
     {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ file: dataUrl, upload_preset: CLOUDINARY_PRESET }),
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${msToken}`,
+        'Content-Type': blob.type,
+      },
+      body: blob,
     }
   );
-  if (!res.ok) throw new Error(`Cloudinary upload failed: ${res.status}`);
-  const data = await res.json();
-  return data.secure_url;
+
+  if (uploadRes.status === 401) {
+    throw new Error('Microsoft token expired — please sign out and sign in again');
+  }
+  if (!uploadRes.ok) {
+    const errData = await uploadRes.json().catch(() => ({}));
+    throw new Error(`SharePoint upload failed: ${uploadRes.status} — ${errData?.error?.message || 'Unknown error'}`);
+  }
+
+  const data = await uploadRes.json();
+
+  // Create a sharing link so the image is viewable without auth
+  try {
+    const shareRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${SP_DRIVE_ID}/items/${data.id}/createLink`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${msToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ type: 'view', scope: 'organization' }),
+      }
+    );
+    if (shareRes.ok) {
+      const shareData = await shareRes.json();
+      return shareData.link?.webUrl || data.webUrl;
+    }
+  } catch {
+    // Fall back to direct webUrl if sharing link fails
+  }
+
+  return data.webUrl;
 }
 
 // ─── Diary Entries Hook ───────────────────────────────────────────────────
@@ -61,7 +121,7 @@ export function useEntries() {
     const drawingUrls = [];
     if (entry.drawings?.length) {
       for (let i = 0; i < entry.drawings.length; i++) {
-        try { drawingUrls.push(await uploadToCloudinary(entry.drawings[i])); }
+        try { drawingUrls.push(await uploadToSharePoint(entry.drawings[i], user.email)); }
         catch (err) { log(err, { action: 'uploadDrawing', index: i }); }
       }
     }
@@ -76,7 +136,7 @@ export function useEntries() {
       const drawingUrls = [];
       for (const drawing of updates.drawings) {
         if (drawing.startsWith('data:')) {
-          try { drawingUrls.push(await uploadToCloudinary(drawing)); }
+          try { drawingUrls.push(await uploadToSharePoint(drawing, user.email)); }
           catch (err) { log(err, { action: 'uploadDrawing' }); }
         } else { drawingUrls.push(drawing); }
       }
@@ -172,6 +232,31 @@ export function useTasks() {
         ? `Task created and assigned to ${assigneeName}`
         : 'Task created',
     });
+
+    // Send email + in-app notification to assignee (fire-and-forget)
+    if (assigneeEmail) {
+      import('../utils/emailNotifications').then(({ notifyTaskAssigned }) => {
+        notifyTaskAssigned({
+          assigneeEmail,
+          assigneeName,
+          taskText: task.text?.trim() || '',
+          dueDate: task.dueDate || null,
+          priority: task.priority || 'medium',
+          ownerName: user.displayName || user.email,
+          ownerUid: user.uid,
+        }).catch(() => {});
+      });
+
+      notifyInApp_TaskAssigned({
+        assigneeEmail,
+        assigneeName,
+        taskText: task.text?.trim() || '',
+        ownerName: user.displayName || user.email,
+        ownerUid: user.uid,
+        taskId: ref.id,
+      }).catch(() => {});
+    }
+
     return ref;
   }, [user]);
 
@@ -182,19 +267,64 @@ export function useTasks() {
     if (sanitized.assigneeEmail !== undefined) {
       sanitized.assigneeEmail = sanitized.assigneeEmail?.trim().toLowerCase() || null;
     }
-    return updateDoc(doc(db, 'users', user.uid, 'tasks', id), {
+
+    // Check if the assignee changed so we can send a notification
+    let previousAssigneeEmail = null;
+    if (sanitized.assigneeEmail) {
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid, 'tasks', id));
+        if (snap.exists()) {
+          previousAssigneeEmail = snap.data().assigneeEmail || null;
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    await updateDoc(doc(db, 'users', user.uid, 'tasks', id), {
       ...sanitized,
       updatedAt: serverTimestamp(),
     });
+
+    // If assignee was set or changed, email the new assignee (fire-and-forget)
+    const newAssignee = sanitized.assigneeEmail;
+    if (newAssignee && newAssignee !== previousAssigneeEmail) {
+      await _logActivity(user.uid, id, {
+        actorUid:  user.uid,
+        actorName: user.displayName || user.email,
+        action:    'reassigned',
+        detail:    `Task assigned to ${sanitized.assigneeName || newAssignee}`,
+      });
+
+      import('../utils/emailNotifications').then(({ notifyTaskAssigned }) => {
+        notifyTaskAssigned({
+          assigneeEmail: newAssignee,
+          assigneeName:  sanitized.assigneeName || null,
+          taskText:      sanitized.text || '',
+          dueDate:       sanitized.dueDate || null,
+          priority:      sanitized.priority || 'medium',
+          ownerName:     user.displayName || user.email,
+          ownerUid:      user.uid,
+        }).catch(() => {});
+      });
+
+      notifyInApp_Reassigned({
+        assigneeEmail: newAssignee,
+        assigneeName:  sanitized.assigneeName || null,
+        taskText:      sanitized.text || '',
+        ownerName:     user.displayName || user.email,
+        ownerUid:      user.uid,
+        taskId:        id,
+      }).catch(() => {});
+    }
   }, [user]);
 
   const toggleTask = useCallback(async (id, currentState) => {
     if (!user) return;
     const newCompleted = !currentState;
+    const completedAt = newCompleted ? new Date().toISOString() : null;
     await updateDoc(doc(db, 'users', user.uid, 'tasks', id), {
       completed:   newCompleted,
       status:      newCompleted ? 'done' : 'open',
-      completedAt: newCompleted ? new Date().toISOString() : null,
+      completedAt,
       updatedAt:   serverTimestamp(),
     });
     await _logActivity(user.uid, id, {
@@ -203,6 +333,36 @@ export function useTasks() {
       action:    newCompleted ? 'completed' : 'reopened',
       detail:    newCompleted ? 'Marked as done' : 'Reopened',
     });
+
+    // Notify assignee when owner toggles their task (fire-and-forget)
+    try {
+      const snap = await getDoc(doc(db, 'users', user.uid, 'tasks', id));
+      if (snap.exists()) {
+        const task = snap.data();
+        if (task.assigneeEmail) {
+          const notifStatus = newCompleted ? 'done' : 'open';
+          import('../utils/emailNotifications').then(({ notifyStatusChanged }) => {
+            notifyStatusChanged({
+              ownerEmail: task.assigneeEmail,
+              ownerName: task.assigneeName || task.assigneeEmail,
+              assigneeName: user.displayName || user.email,
+              taskText: task.text || 'A task',
+              newStatus: notifStatus,
+            }).catch(() => {});
+          });
+
+          notifyInApp_StatusChanged({
+            recipientEmail: task.assigneeEmail,
+            recipientName: task.assigneeName,
+            assigneeName: user.displayName || user.email,
+            taskText: task.text || 'A task',
+            newStatus: notifStatus,
+            taskId: id,
+            ownerUid: user.uid,
+          }).catch(() => {});
+        }
+      }
+    } catch { /* non-fatal */ }
   }, [user]);
 
   const deleteTask = useCallback(async (id) => {
@@ -222,11 +382,10 @@ export function useTasks() {
   return { tasks, loading, addTask, updateTask, toggleTask, deleteTask, clearCompleted };
 }
 
-// ─── Assigned Tasks Hook (team member view) ───────────────────────────────
-// Queries the specific owner's task collection by assigneeEmail.
-// This is reliable from day one — no UID-linking step required, and no
-// collection-group index dependency.
-// user.invitedBy (set during member signup) tells us whose task list to read.
+// ─── Assigned Tasks Hook (tasks assigned to me by ANYONE) ────────────────
+// Uses a collection-group query across all users' task collections.
+// Finds every task where assigneeEmail matches the current user's email,
+// then filters out tasks the user created themselves (those are in useTasks).
 export function useAssignedTasks() {
   const { user } = useAuth();
   const [tasks,   setTasks]   = useState([]);
@@ -234,32 +393,22 @@ export function useAssignedTasks() {
   const [error,   setError]   = useState(null);
 
   useEffect(() => {
-    if (!user) { setTasks([]); setLoading(false); return; }
+    if (!user?.email) { setTasks([]); setLoading(false); return; }
 
-    // invitedBy is the owner's UID, stored on the member's profile at signup
-    const ownerUid = user.invitedBy;
-    if (!ownerUid || !user.email) {
-      console.warn('useAssignedTasks: user.invitedBy or user.email not set', user);
-      setTasks([]); setLoading(false); return;
-    }
-
-    // Query directly on the owner's task collection — no collection-group index needed.
-    // assigneeEmail is set by the owner in Reminders and has always been reliable.
-    // No orderBy here to avoid requiring a composite index; we sort client-side instead.
     const q = query(
-      collection(db, 'users', ownerUid, 'tasks'),
-      where('assigneeEmail', '==', user.email.toLowerCase())
+      collectionGroup(db, 'tasks'),
+      where('assigneeEmail', '==', user.email.toLowerCase()),
+      orderBy('createdAt', 'desc')
     );
 
     const unsub = onSnapshot(q, (snap) => {
-      const data = snap.docs
-        .map(d => ({ id: d.id, _ownerUid: ownerUid, ...d.data() }))
-        .sort((a, b) => {
-          const aTime = a.createdAt?.toMillis?.() ?? 0;
-          const bTime = b.createdAt?.toMillis?.() ?? 0;
-          return bTime - aTime;
-        });
-      setTasks(data);
+      const data = snap.docs.map(d => ({
+        id:        d.id,
+        _ownerUid: d.ref.parent.parent?.id || null,
+        ...d.data(),
+      }));
+      // Exclude tasks the current user created (those show in their own task list)
+      setTasks(data.filter(t => t.ownerId !== user.uid));
       setLoading(false);
       setError(null);
     }, (err) => {
@@ -269,7 +418,7 @@ export function useAssignedTasks() {
     });
 
     return unsub;
-  }, [user]);
+  }, [user?.email, user?.uid]);
 
   return { tasks, loading, error };
 }
@@ -343,8 +492,8 @@ export function useUserDirectory(ownerUid) {
 
 // ─── Standalone helpers (callable outside hooks) ─────────────────────────
 
-/** Add a comment to a task. */
-export async function addComment(ownerUid, taskId, { authorUid, authorName, text }) {
+/** Add a comment to a task. Also emails the other party. */
+export async function addComment(ownerUid, taskId, { authorUid, authorName, text, taskText, recipientEmail, recipientName }) {
   await addDoc(
     collection(db, 'users', ownerUid, 'tasks', taskId, 'comments'),
     { authorUid, authorName, text, createdAt: serverTimestamp() }
@@ -354,15 +503,38 @@ export async function addComment(ownerUid, taskId, { authorUid, authorName, text
     actorUid: authorUid, actorName: authorName,
     action: 'commented', detail: text,
   });
+
+  // Email + in-app notification for new comment (fire-and-forget)
+  if (recipientEmail) {
+    import('../utils/emailNotifications').then(({ notifyNewComment }) => {
+      notifyNewComment({
+        recipientEmail,
+        recipientName: recipientName || '',
+        commenterName: authorName,
+        taskText: taskText || 'A task',
+        commentText: text,
+      }).catch(() => {});
+    });
+
+    notifyInApp_Comment({
+      recipientEmail,
+      commenterName: authorName,
+      taskText: taskText || 'A task',
+      commentText: text,
+      taskId,
+      ownerUid,
+    }).catch(() => {});
+  }
 }
 
-/** Update a task's status and log the change. */
-export async function updateTaskStatus(ownerUid, taskId, { status, actorUid, actorName }) {
+/** Update a task's status and log the change. Also sends email notifications. */
+export async function updateTaskStatus(ownerUid, taskId, { status, actorUid, actorName, taskText, ownerEmail, ownerName, assigneeName }) {
   const label = { open: 'Open', in_progress: 'In Progress', review: 'Review', done: 'Done' };
+  const completedAt = status === 'done' ? new Date().toISOString() : null;
   await updateDoc(doc(db, 'users', ownerUid, 'tasks', taskId), {
     status,
     completed:   status === 'done',
-    completedAt: status === 'done' ? new Date().toISOString() : null,
+    completedAt,
     updatedAt:   serverTimestamp(),
   });
   await _logActivity(ownerUid, taskId, {
@@ -370,6 +542,41 @@ export async function updateTaskStatus(ownerUid, taskId, { status, actorUid, act
     action: 'status_changed',
     detail: `Status → ${label[status] || status}`,
   });
+
+  // Email + in-app notification to task owner (fire-and-forget)
+  if (ownerEmail && actorUid !== ownerUid) {
+    if (status === 'done') {
+      import('../utils/emailNotifications').then(({ notifyTaskCompleted }) => {
+        notifyTaskCompleted({
+          ownerEmail,
+          ownerName: ownerName || '',
+          assigneeName: assigneeName || actorName,
+          taskText: taskText || 'A task',
+          completedAt,
+        }).catch(() => {});
+      });
+    } else {
+      import('../utils/emailNotifications').then(({ notifyStatusChanged }) => {
+        notifyStatusChanged({
+          ownerEmail,
+          ownerName: ownerName || '',
+          assigneeName: assigneeName || actorName,
+          taskText: taskText || 'A task',
+          newStatus: status,
+        }).catch(() => {});
+      });
+    }
+
+    notifyInApp_StatusChanged({
+      recipientEmail: ownerEmail,
+      recipientName: ownerName,
+      assigneeName: assigneeName || actorName,
+      taskText: taskText || 'A task',
+      newStatus: status,
+      taskId,
+      ownerUid,
+    }).catch(() => {});
+  }
 }
 
 /** Log an activity event (internal helper, also exported for external use). */
@@ -406,7 +613,7 @@ export function useTeamMembers() {
       collection(db, 'users', user.uid, 'teamMembers'),
       (snap) => {
         const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        data.sort((a, b) => a.name.localeCompare(b.name));
+        data.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
         setMembers(data);
         setLoading(false);
       },

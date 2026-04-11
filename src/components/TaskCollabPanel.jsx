@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   MessageCircle, Activity, ChevronDown, ChevronUp, Send,
   Circle, Clock, Eye, CheckCircle, User,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTaskComments, useTaskActivity, addComment, updateTaskStatus } from '../hooks/useFirestore';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 /* ── Status config ────────────────────────────────────────────────────────── */
 const STATUSES = [
@@ -53,6 +55,16 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
   const [commentText, setCommentText] = useState('');
   const [sending,    setSending]    = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [ownerEmail, setOwnerEmail] = useState(null);
+
+  // Fetch owner's email for notifications (when assignee changes status/comments)
+  useEffect(() => {
+    if (ownerUid && user.uid !== ownerUid) {
+      getDoc(doc(db, 'users', ownerUid)).then(snap => {
+        if (snap.exists()) setOwnerEmail(snap.data().email);
+      }).catch(() => {});
+    }
+  }, [ownerUid, user.uid]);
 
   /* ── Post a comment ─────────────────────────────────────────────────── */
   const handleSend = async () => {
@@ -60,10 +72,15 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
     if (!text) return;
     setSending(true);
     try {
+      const isOwner = user.uid === ownerUid;
+
       await addComment(ownerUid, task.id, {
         authorUid:  user.uid,
         authorName: user.displayName || user.email,
         text,
+        taskText:       task.text,
+        recipientEmail: isOwner ? task.assigneeEmail : ownerEmail,
+        recipientName:  isOwner ? task.assigneeName : task.ownerName,
       });
       setCommentText('');
     } catch (err) {
@@ -78,9 +95,13 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
     setStatusSaving(true);
     try {
       await updateTaskStatus(ownerUid, task.id, {
-        status:    newStatus,
-        actorUid:  user.uid,
-        actorName: user.displayName || user.email,
+        status:       newStatus,
+        actorUid:     user.uid,
+        actorName:    user.displayName || user.email,
+        taskText:     task.text,
+        ownerEmail:   ownerEmail,
+        ownerName:    task.ownerName,
+        assigneeName: task.assigneeName,
       });
     } catch (err) {
       console.error('updateTaskStatus error', err);

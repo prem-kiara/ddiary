@@ -1,178 +1,83 @@
 import { useState, useEffect } from 'react';
-import { BookOpen, Mail, Lock, User, Users, Layout } from 'lucide-react';
+import { BookOpen, Users } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Auth() {
-  const {
-    login, signup, signupAsMember, signupAsCollaborator,
-    linkToTeam, joinWorkspace,
-    resetPassword, error, setError,
-  } = useAuth();
+  const { loginWithMicrosoft, error, setError } = useAuth();
 
-  // Read URL params once at mount and keep in state
-  const [joinParam]      = useState(() => new URLSearchParams(window.location.search).get('join'));
-  const [workspaceParam] = useState(() => new URLSearchParams(window.location.search).get('workspace'));
+  // Detect ?join=OWNER_UID in the URL — if present this is a team-member signup
+  const joinParam = new URLSearchParams(window.location.search).get('join');
+  const isMemberSignup = !!joinParam;
 
-  const isMemberSignup      = !!joinParam;
-  const isCollaboratorSignup = !!workspaceParam;
-  const isInviteFlow         = isMemberSignup || isCollaboratorSignup;
+  const [loading, setLoading] = useState(false);
 
-  const [mode,      setMode]      = useState(isInviteFlow ? 'signup' : 'login');
-  const [email,     setEmail]     = useState('');
-  const [password,  setPassword]  = useState('');
-  const [name,      setName]      = useState('');
-  const [loading,   setLoading]   = useState(false);
-  const [resetSent, setResetSent] = useState(false);
-
-  // Clean URL after reading params
+  // Keep URL clean after reading the param
   useEffect(() => {
-    if (isInviteFlow) window.history.replaceState({}, '', window.location.pathname);
-  }, [isInviteFlow]);
+    if (joinParam) {
+      const clean = window.location.pathname;
+      window.history.replaceState({}, '', clean);
+    }
+  }, [joinParam]);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleMicrosoftLogin = async () => {
     setLoading(true);
     setError(null);
     try {
-      if (mode === 'login') {
-        await login(email, password);
-        if (joinParam)      await linkToTeam(joinParam);
-        if (workspaceParam) await joinWorkspace(workspaceParam);
-      } else if (mode === 'signup') {
-        if (isMemberSignup)       await signupAsMember(email, password, name, joinParam);
-        else if (isCollaboratorSignup) await signupAsCollaborator(email, password, name, workspaceParam);
-        else                           await signup(email, password, name);
-      } else {
-        await resetPassword(email);
-        setResetSent(true);
-      }
-    } catch { /* error set in context */ }
+      await loginWithMicrosoft(isMemberSignup ? joinParam : null);
+    } catch {
+      // error is set in context
+    }
     setLoading(false);
-  };
-
-  const switchMode = (newMode) => {
-    setMode(newMode);
-    setError(null);
-    setResetSent(false);
   };
 
   return (
     <div className="auth-container">
       <div className="auth-card fade-in">
         <div style={{ textAlign: 'center', marginBottom: 8 }}>
-          {isCollaboratorSignup
-            ? <Layout size={40} color="#8e44ad" />
-            : isMemberSignup
-              ? <Users size={40} color="#2a9d8f" />
-              : <BookOpen size={40} color="#8B6914" />}
+          {isMemberSignup
+            ? <Users size={40} color="#2a9d8f" />
+            : <BookOpen size={40} color="#8B6914" />}
         </div>
 
         <h1 className="auth-title">
-          {isCollaboratorSignup ? 'Join Workspace' : isMemberSignup ? 'Join the Team' : 'My Digital Diary'}
+          {isMemberSignup ? 'Join the Team' : 'My Digital Diary'}
         </h1>
 
         <p className="auth-subtitle">
-          {mode === 'login'  && 'Welcome back. Sign in to continue.'}
-          {mode === 'signup' && isCollaboratorSignup && "You've been invited to a shared workspace. Create your account to start collaborating."}
-          {mode === 'signup' && isMemberSignup       && "You've been invited to collaborate on tasks. Create your account below."}
-          {mode === 'signup' && !isInviteFlow        && 'Create your personal diary account.'}
-          {mode === 'reset'  && 'Reset your password.'}
+          {isMemberSignup
+            ? "You've been invited to collaborate on tasks. Sign in with your Microsoft account."
+            : 'Sign in with your organization Microsoft account.'}
         </p>
 
         {error && <div className="auth-error">{error}</div>}
-        {resetSent && (
-          <div className="card" style={{ background: '#d4edda', color: '#27ae60', textAlign: 'center', marginBottom: 16 }}>
-            Password reset email sent! Check your inbox.
-          </div>
-        )}
 
-        <form onSubmit={handleSubmit}>
-          {mode === 'signup' && (
-            <div className="form-group">
-              <label className="label">Your Name</label>
-              <div style={{ position: 'relative' }}>
-                <User size={18} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: '#b5a898' }} />
-                <input
-                  className="input" style={{ paddingLeft: 42 }}
-                  type="text" placeholder="Jane Doe"
-                  value={name} onChange={e => setName(e.target.value)} required
-                />
-              </div>
-            </div>
-          )}
+        <button
+          className={`btn ${isMemberSignup ? 'btn-teal' : 'btn-gold'}`}
+          onClick={handleMicrosoftLogin}
+          disabled={loading}
+          style={{
+            width: '100%',
+            justifyContent: 'center',
+            marginTop: 16,
+            fontSize: 16,
+            padding: 14,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+          }}
+        >
+          <svg width="20" height="20" viewBox="0 0 21 21" fill="none">
+            <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
+            <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
+            <rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
+            <rect x="11" y="11" width="9" height="9" fill="#FFB900"/>
+          </svg>
+          {loading ? 'Signing in...' : 'Sign in with Microsoft'}
+        </button>
 
-          <div className="form-group">
-            <label className="label">Email Address</label>
-            <div style={{ position: 'relative' }}>
-              <Mail size={18} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: '#b5a898' }} />
-              <input
-                className="input" style={{ paddingLeft: 42 }}
-                type="email" placeholder="you@example.com"
-                value={email} onChange={e => setEmail(e.target.value)} required
-              />
-            </div>
-          </div>
-
-          {mode !== 'reset' && (
-            <div className="form-group">
-              <label className="label">Password</label>
-              <div style={{ position: 'relative' }}>
-                <Lock size={18} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: '#b5a898' }} />
-                <input
-                  className="input" style={{ paddingLeft: 42 }}
-                  type="password" placeholder="••••••••"
-                  value={password} onChange={e => setPassword(e.target.value)}
-                  required minLength={6}
-                />
-              </div>
-            </div>
-          )}
-
-          <button
-            className={`btn ${isCollaboratorSignup ? 'btn-purple' : isMemberSignup ? 'btn-teal' : 'btn-gold'}`}
-            type="submit" disabled={loading}
-            style={{ width: '100%', justifyContent: 'center', marginTop: 8, fontSize: 16, padding: 14 }}
-          >
-            {loading
-              ? 'Please wait...'
-              : mode === 'login'  ? 'Sign In'
-              : mode === 'signup' ? (isMemberSignup ? 'Create Team Account' : 'Create Account')
-              : 'Send Reset Link'}
-          </button>
-        </form>
-
-        {mode === 'login' && (
-          <>
-            <div style={{ textAlign: 'right', marginTop: 10 }}>
-              <button className="auth-link" onClick={() => switchMode('reset')} style={{ fontSize: 13 }}>
-                Forgot password?
-              </button>
-            </div>
-            {!isMemberSignup && (
-              <>
-                <div className="auth-divider">Don't have an account?</div>
-                <button className="btn btn-outline" onClick={() => switchMode('signup')} style={{ width: '100%', justifyContent: 'center' }}>
-                  Create Account
-                </button>
-              </>
-            )}
-          </>
-        )}
-
-        {mode === 'signup' && (
-          <div className="auth-divider">
-            Already have an account?{' '}
-            <button className="auth-link" onClick={() => switchMode('login')}>
-              {isInviteFlow ? 'Sign in to link your account' : 'Sign In'}
-            </button>
-          </div>
-        )}
-
-        {mode === 'reset' && (
-          <div className="auth-divider">
-            <button className="auth-link" onClick={() => switchMode('login')}>Back to Sign In</button>
-          </div>
-        )}
+        <p style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#999' }}>
+          Uses your organization's Microsoft 365 account
+        </p>
       </div>
     </div>
   );

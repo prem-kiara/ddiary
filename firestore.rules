@@ -13,8 +13,6 @@ service cloud.firestore {
 
       // Tasks — owner full control; assignee can read & update status/fields.
       // We match on EITHER assigneeUid (linked) OR assigneeEmail (always set).
-      // This means task visibility works from the moment the owner types an email —
-      // no UID-linking step required.
       match /tasks/{taskId} {
         allow read: if request.auth != null
                    && (request.auth.uid == userId
@@ -23,7 +21,6 @@ service cloud.firestore {
         allow create: if request.auth != null && request.auth.uid == userId;
         allow update: if request.auth != null
                      && (request.auth.uid == userId
-                         // Assignee may update status/comments but cannot change ownership
                          || ((request.auth.uid == resource.data.assigneeUid
                               || request.auth.token.email == resource.data.assigneeEmail)
                              && request.resource.data.ownerId     == resource.data.ownerId
@@ -63,26 +60,34 @@ service cloud.firestore {
     }
 
     // ─── Collection-group: lets assignees query all their tasks ──────────
-    // (tasks live at users/{ownerUid}/tasks/{taskId})
+    // Supports lookup by UID or email so tasks are visible immediately.
     match /{path=**}/tasks/{taskId} {
       allow read: if request.auth != null
-                 && resource.data.assigneeUid == request.auth.uid;
-      // Assignee updates: status / comments OK; ownership fields locked
+                 && (resource.data.assigneeUid == request.auth.uid
+                     || resource.data.assigneeEmail == request.auth.token.email);
       allow update: if request.auth != null
-                   && resource.data.assigneeUid == request.auth.uid
-                   && request.resource.data.ownerId    == resource.data.ownerId
-                   && request.resource.data.assigneeUid == resource.data.assigneeUid;
+                   && (resource.data.assigneeUid == request.auth.uid
+                       || resource.data.assigneeEmail == request.auth.token.email)
+                   && request.resource.data.ownerId       == resource.data.ownerId
+                   && request.resource.data.assigneeEmail  == resource.data.assigneeEmail;
     }
 
     // ─── User directory — lets the owner discover who has signed up ───────
-    // Each entry: { uid, email, displayName, invitedBy (ownerUid), createdAt }
     match /userDirectory/{uid} {
-      // Users write their own entry
       allow create, update: if request.auth != null && request.auth.uid == uid;
       allow delete: if request.auth != null && request.auth.uid == uid;
-      // Owner reads entries where invitedBy == their uid (enforced client-side;
-      // full query access kept open so the owner can do a where() filter)
       allow read: if request.auth != null;
+    }
+
+    // ─── In-app notifications (real-time, live) ──────────────────────────
+    match /notifications/{notifId} {
+      allow create: if request.auth != null;
+      allow read:   if request.auth != null
+                   && resource.data.recipientEmail == request.auth.token.email;
+      allow update: if request.auth != null
+                   && resource.data.recipientEmail == request.auth.token.email;
+      allow delete: if request.auth != null
+                   && resource.data.recipientEmail == request.auth.token.email;
     }
 
     // ─── Anonymous error logs (pre-auth) ─────────────────────────────────
@@ -99,12 +104,12 @@ service cloud.firestore {
       }
 
       allow read:             if isWorkspaceMember();
-      allow create:           if request.auth != null;  // any auth'd user can create
+      allow create:           if request.auth != null;
       allow update, delete:   if isWorkspaceMember();
 
       match /members/{uid} {
         allow read:           if isWorkspaceMember() || request.auth.uid == uid;
-        allow create, update: if request.auth != null;  // joining workspace
+        allow create, update: if request.auth != null;
         allow delete:         if isWorkspaceMember();
       }
 

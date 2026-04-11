@@ -1,19 +1,24 @@
 import { BookOpen, Home, PenTool, CheckSquare, Settings, LogOut, Users, List, Kanban } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import NotificationBell from './NotificationBell';
 
 const formatDate = (d) => new Date(d).toLocaleDateString('en-US', {
   weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
 });
 
-export default function Layout({ children, currentPage, onNavigate, pendingCount, memberMode = false, collaboratorMode = false }) {
+export default function Layout({
+  children, currentPage, onNavigate, pendingCount,
+  memberMode = false, collaboratorMode = false,
+  notifications = [], unreadCount = 0, onMarkRead, onMarkAllRead,
+}) {
   const { user, logout } = useAuth();
 
   const ownerNavItems = [
-    { id: 'home',     icon: Home,     label: 'Diary'    },
-    { id: 'write',    icon: PenTool,  label: 'Write'    },
-    { id: 'tasks',    icon: List,     label: 'Tasks'    },
-    { id: 'team',     icon: Users,    label: 'Team'     },
-    { id: 'settings', icon: Settings, label: 'Settings' },
+    { id: 'home',     icon: Home,        label: 'Diary'    },
+    { id: 'write',    icon: PenTool,     label: 'Write'    },
+    { id: 'tasks',    icon: List,        label: 'Tasks'    },
+    { id: 'team',     icon: Users,       label: 'Team'     },
+    { id: 'settings', icon: Settings,    label: 'Settings' },
   ];
 
   // Team members (subordinates) see only their assigned tasks + settings
@@ -52,6 +57,13 @@ export default function Layout({ children, currentPage, onNavigate, pendingCount
             <span className="header-date" style={{ fontSize: 13 }}>{user.displayName}</span>
           )}
           <span className="header-date">{formatDate(Date.now())}</span>
+          <NotificationBell
+            notifications={notifications}
+            unreadCount={unreadCount}
+            onMarkRead={onMarkRead || (() => {})}
+            onMarkAllRead={onMarkAllRead || (() => {})}
+            onNavigateToTasks={() => onNavigate('tasks')}
+          />
           <button className="btn-icon" onClick={logout} title="Sign Out" style={{ color: 'rgba(254,249,239,0.7)' }}>
             <LogOut size={18} />
           </button>

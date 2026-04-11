@@ -1,7 +1,13 @@
 {
   "projects": {
-    "prod": "ddiary-9e9ac"
+    "prod": "ddiary-a72ca"
   },
-  "targets": {},
+  "targets": {
+    "ddiary-a72ca": {
+      "hosting": {
+        "prod": ["dhanamdiary"]
+      }
+    }
+  },
   "etags": {}
 }

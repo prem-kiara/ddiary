@@ -116,79 +116,22 @@ function TaskCard({ task }) {
   );
 }
 
-/* ── TeamTaskView ────────────────────────────────────────────────────────── */
+/* ── TeamTaskView — shows tasks assigned to me by others ─────────────────── */
 export default function TeamTaskView() {
   const { user } = useAuth();
   const { tasks, loading, error } = useAssignedTasks();
-
-  // Warn if invitedBy is missing — this means we can't query the right owner's tasks
-  if (!user?.invitedBy) {
-    return (
-      <div className="fade-in">
-        <h2 className="section-title">My Tasks</h2>
-        <div className="card" style={{ background: '#fef9ef', border: '1px solid #c9a96e44', padding: 20 }}>
-          <p style={{ color: '#8a7a6a', fontSize: 14, lineHeight: 1.7 }}>
-            Your account is not linked to a team yet. Please sign out and sign up again using your manager's join link.
-          </p>
-          {/* Debug info */}
-          <div style={{ marginTop: 12, padding: 10, background: '#fff3cd', borderRadius: 6, fontSize: 12, fontFamily: 'monospace', color: '#856404' }}>
-            <strong>Debug info:</strong><br />
-            UID: {user?.uid || 'none'}<br />
-            Email: {user?.email || 'none'}<br />
-            Role: {user?.role || 'none'}<br />
-            invitedBy: {user?.invitedBy || '⚠️ NOT SET'}
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   const pending    = tasks.filter(t => (t.status || 'open') !== 'done' && !t.completed);
   const completed  = tasks.filter(t => (t.status === 'done') || t.completed);
 
   const [showDone, setShowDone] = useState(false);
 
+  // Don't render anything if there are no assigned tasks and we're not loading
+  if (!loading && tasks.length === 0 && !error) return null;
+
   return (
-    <div className="fade-in">
-      <h2 className="section-title">My Tasks</h2>
-
-      {/* Welcome strip */}
-      <div className="card" style={{ background: '#eaf4fb', border: '1px solid #2980b944', padding: '14px 18px', marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 40, height: 40, borderRadius: '50%',
-            background: '#2a9d8f22', color: '#2a9d8f',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 700, fontSize: 18, flexShrink: 0,
-          }}>
-            {(user?.displayName || user?.email || '?').charAt(0).toUpperCase()}
-          </div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 15, color: '#2a9d8f' }}>
-              {user?.displayName || user?.email}
-            </div>
-            <div style={{ fontSize: 13, color: '#8a7a6a' }}>
-              {pending.length} pending · {completed.length} completed
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Stats */}
-      <div className="stats-row" style={{ marginBottom: 16 }}>
-        <div className="stat-card pending">
-          <div className="stat-number">{pending.length}</div>
-          <div className="stat-label">Pending</div>
-        </div>
-        <div className="stat-card completed">
-          <div className="stat-number">{completed.length}</div>
-          <div className="stat-label">Done</div>
-        </div>
-        <div className="stat-card overdue">
-          <div className="stat-number">{pending.filter(t => isOverdue(t.dueDate)).length}</div>
-          <div className="stat-label">Overdue</div>
-        </div>
-      </div>
+    <div className="fade-in" style={{ marginTop: 24 }}>
+      <h2 className="section-title">Assigned to Me</h2>
 
       {loading && (
         <div className="empty-state"><p>Loading your tasks…</p></div>
@@ -199,11 +142,6 @@ export default function TeamTaskView() {
           <strong>Could not load tasks:</strong> {error}
         </div>
       )}
-
-      {/* Debug panel — always visible so we can diagnose query issues */}
-      <div style={{ margin: '8px 0', padding: 10, background: '#f0f4ff', border: '1px solid #b0c4ff', borderRadius: 6, fontSize: 11, fontFamily: 'monospace', color: '#334' }}>
-        <strong>Query debug:</strong> email=<em>{user?.email}</em> · invitedBy=<em>{user?.invitedBy}</em> · tasks found=<em>{tasks.length}</em> · {loading ? 'loading…' : error ? '❌ ' + error : '✅ ok'}
-      </div>
 
       {!loading && !error && tasks.length === 0 && <Empty user={user} />}
 

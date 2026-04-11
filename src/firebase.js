@@ -1,11 +1,9 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, connectAuthEmulator } from 'firebase/auth';
+import { getAuth, connectAuthEmulator, OAuthProvider } from 'firebase/auth';
 import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
-import { getStorage, connectStorageEmulator } from 'firebase/storage';
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 🔧 REPLACE THIS WITH YOUR FIREBASE PROJECT CONFIG
-// Get it from: Firebase Console → Project Settings → General → Your Apps
+// Firebase Configuration — DDiary (Prem's project)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "YOUR_API_KEY",
@@ -20,13 +18,25 @@ const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
 export const db = getFirestore(app);
-export const storage = getStorage(app);
+
+// ─── Microsoft OAuth Provider ────────────────────────────────────────────────
+// Used for "Sign in with Microsoft" — scopes grant access to SharePoint files.
+export const microsoftProvider = new OAuthProvider('microsoft.com');
+microsoftProvider.setCustomParameters({
+  tenant: import.meta.env.VITE_AZURE_TENANT_ID || 'common',
+});
+microsoftProvider.addScope('openid');
+microsoftProvider.addScope('profile');
+microsoftProvider.addScope('email');
+microsoftProvider.addScope('Sites.ReadWrite.All');
+microsoftProvider.addScope('User.Read.All');
+microsoftProvider.addScope('Mail.Send');
+microsoftProvider.addScope('ChannelMessage.Send');
 
 // Uncomment for local development with Firebase emulators:
 // if (window.location.hostname === 'localhost') {
 //   connectAuthEmulator(auth, 'http://localhost:9099');
 //   connectFirestoreEmulator(db, 'localhost', 8080);
-//   connectStorageEmulator(storage, 'localhost', 9199);
 // }
 
 export default app;

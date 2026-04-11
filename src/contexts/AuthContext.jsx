@@ -1,16 +1,15 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   onAuthStateChanged,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
+  signInWithPopup,
   signOut,
-  updateProfile,
-  sendPasswordResetEmail,
+  getAdditionalUserInfo,
+  OAuthProvider,
 } from 'firebase/auth';
-import { doc, setDoc, getDoc, updateDoc, writeBatch } from 'firebase/firestore';
-import { addWorkspaceMember } from '../hooks/useWorkspace';
-import { auth, db } from '../firebase';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { auth, db, microsoftProvider } from '../firebase';
 import { writeUserDirectory } from '../hooks/useFirestore';
+import { addWorkspaceMember } from '../hooks/useWorkspace';
 
 const AuthContext = createContext(null);
 
@@ -20,10 +19,22 @@ export function useAuth() {
   return ctx;
 }
 
+// ─── Key for persisting the Microsoft access token across page reloads ───────
+const MS_TOKEN_KEY = 'ddiary_ms_access_token';
+
 export function AuthProvider({ children }) {
   const [user,    setUser]    = useState(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
+
+  // Microsoft access token for Graph API (SharePoint uploads)
+  const [msToken, setMsToken] = useState(() => sessionStorage.getItem(MS_TOKEN_KEY));
+
+  const saveMsToken = useCallback((token) => {
+    setMsToken(token);
+    if (token) sessionStorage.setItem(MS_TOKEN_KEY, token);
+    else       sessionStorage.removeItem(MS_TOKEN_KEY);
+  }, []);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -32,122 +43,83 @@ export function AuthProvider({ children }) {
         const profileSnap = await getDoc(profileRef).catch(() => null);
         setUser({
           uid:         firebaseUser.uid,
+          email:       firebaseUser.email,
           displayName: firebaseUser.displayName,
           ...(profileSnap?.exists() ? profileSnap.data() : {}),
-          // Always override with auth-provided email — Firebase Auth guarantees lowercase,
-          // but the Firestore profile might have been saved with mixed-case.
-          email: firebaseUser.email,
         });
       } else {
         setUser(null);
+        saveMsToken(null);
       }
       setLoading(false);
     });
     return unsub;
-  }, []);
+  }, [saveMsToken]);
 
-  // ── Owner signup (original flow) ────────────────────────────────────────
-  const signup = async (email, password, displayName) => {
+  // ── Sign in with Microsoft (works for both owner & member) ────────────────
+  const loginWithMicrosoft = async (ownerUid = null) => {
     setError(null);
     try {
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(cred.user, { displayName });
-      await setDoc(doc(db, 'users', cred.user.uid), {
-        email,
-        displayName,
-        role:      'owner',
-        createdAt: new Date().toISOString(),
-        settings: {
-          reminderEmail:         email,
-          reminderTime:          '09:00',
-          timezone:              Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-          emailRemindersEnabled: true,
-          theme:                 'warm',
-        },
-      });
-      return cred.user;
+      const result = await signInWithPopup(auth, microsoftProvider);
+      const credential = OAuthProvider.credentialFromResult(result);
+
+      // Persist the Microsoft access token for Graph API calls (SharePoint)
+      const accessToken = result._tokenResponse?.oauthAccessToken
+                       || credential?.accessToken;
+      if (accessToken) saveMsToken(accessToken);
+
+      const firebaseUser = result.user;
+      const additionalInfo = getAdditionalUserInfo(result);
+      const isNewUser = additionalInfo?.isNewUser;
+
+      if (isNewUser) {
+        // First time this Microsoft user signs in — create their Firestore profile
+        // Everyone gets full 'owner' access (their own diary, tasks, etc.)
+        const role = 'owner';
+        const profileData = {
+          email:       firebaseUser.email,
+          displayName: firebaseUser.displayName,
+          role,
+          ...(ownerUid ? { invitedBy: ownerUid } : {}),
+          createdAt:   new Date().toISOString(),
+          settings: {
+            reminderEmail:         firebaseUser.email,
+            reminderTime:          '09:00',
+            timezone:              Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+            emailRemindersEnabled: role === 'owner',
+            theme:                 'warm',
+          },
+        };
+
+        await setDoc(doc(db, 'users', firebaseUser.uid), profileData);
+
+        // If joining as member, write to userDirectory so owner can discover them
+        if (ownerUid) {
+          await writeUserDirectory(firebaseUser.uid, {
+            email:       firebaseUser.email,
+            displayName: firebaseUser.displayName,
+            invitedBy:   ownerUid,
+          });
+        }
+      }
+
+      return firebaseUser;
     } catch (err) {
       setError(err.message);
       throw err;
     }
   };
 
-  // ── Team-member signup (via join link ?join=OWNER_UID) ──────────────────
-  const signupAsMember = async (email, password, displayName, ownerUid) => {
-    setError(null);
-    try {
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(cred.user, { displayName });
-
-      // Create the member's own user profile
-      await setDoc(doc(db, 'users', cred.user.uid), {
-        email,
-        displayName,
-        role:      'member',
-        invitedBy: ownerUid,
-        createdAt: new Date().toISOString(),
-        settings: {
-          reminderEmail:         email,
-          reminderTime:          '09:00',
-          timezone:              Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-          emailRemindersEnabled: false,
-          theme:                 'warm',
-        },
-      });
-
-      // Write to userDirectory so the owner can discover and link this member
-      await writeUserDirectory(cred.user.uid, { email, displayName, invitedBy: ownerUid });
-
-      // Auto-link: if the owner has a teamMembers record with this email, set its uid
-      await _autoLinkMember(ownerUid, cred.user.uid, email);
-
-      return cred.user;
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    }
+  const logout = async () => {
+    saveMsToken(null);
+    await signOut(auth);
   };
 
-  const login = async (email, password) => {
-    setError(null);
-    try {
-      const cred = await signInWithEmailAndPassword(auth, email, password);
-      return cred.user;
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    }
-  };
-
-  // Patch an existing user's profile to link them to a team.
-  const linkToTeam = async (ownerUid) => {
-    if (!auth.currentUser) return;
-    const uid = auth.currentUser.uid;
-    const email = auth.currentUser.email;
-    const displayName = auth.currentUser.displayName;
-    await setDoc(doc(db, 'users', uid), { role: 'member', invitedBy: ownerUid }, { merge: true });
-    await writeUserDirectory(uid, { email, displayName, invitedBy: ownerUid });
-    setUser(prev => ({ ...prev, role: 'member', invitedBy: ownerUid }));
-  };
-
-  // Sign up a new collaborator (via ?workspace= link) — gets their own workspace access
-  const signupAsCollaborator = async (email, password, displayName, workspaceId) => {
-    setError(null);
-    try {
-      const cred = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(cred.user, { displayName });
-      await setDoc(doc(db, 'users', cred.user.uid), {
-        email, displayName,
-        role: 'collaborator',
-        workspaceId,
-        createdAt: new Date().toISOString(),
-        settings: { theme: 'warm' },
-      });
-      await addWorkspaceMember(workspaceId, {
-        uid: cred.user.uid, email, displayName, role: 'member',
-      });
-      return cred.user;
-    } catch (err) { setError(err.message); throw err; }
+  const updateSettings = async (settings) => {
+    if (!user) return;
+    const ref = doc(db, 'users', user.uid);
+    await setDoc(ref, { settings }, { merge: true });
+    setUser(prev => ({ ...prev, settings }));
   };
 
   // Existing user joins a workspace via ?workspace= link
@@ -166,25 +138,6 @@ export function AuthProvider({ children }) {
     setUser(prev => ({ ...prev, workspaceId }));
   };
 
-  const logout = () => signOut(auth);
-
-  const resetPassword = async (email) => {
-    setError(null);
-    try {
-      await sendPasswordResetEmail(auth, email);
-    } catch (err) {
-      setError(err.message);
-      throw err;
-    }
-  };
-
-  const updateSettings = async (settings) => {
-    if (!user) return;
-    const ref = doc(db, 'users', user.uid);
-    await setDoc(ref, { settings }, { merge: true });
-    setUser(prev => ({ ...prev, settings }));
-  };
-
   // Convenience booleans derived from role
   const isOwner        = !user?.role || user.role === 'owner';
   const isMember       = user?.role === 'member';
@@ -192,27 +145,12 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      user, loading, error,
-      signup, signupAsMember, signupAsCollaborator,
-      login, linkToTeam, joinWorkspace, setWorkspaceId,
-      logout, resetPassword, updateSettings,
+      user, loading, error, msToken,
+      loginWithMicrosoft, logout, updateSettings,
+      joinWorkspace, setWorkspaceId,
       setError, isOwner, isMember, isCollaborator,
     }}>
       {children}
     </AuthContext.Provider>
   );
-}
-
-// ─── Internal: link the new member to the owner's teamMembers record ─────
-async function _autoLinkMember(ownerUid, memberUid, memberEmail) {
-  try {
-    // We can't query teamMembers from here (no access), so we write a
-    // "linkRequest" entry that the owner's Team page will pick up and process.
-    // This is handled in useUserDirectory → TeamMembers component.
-    // Nothing to do here — the directory entry written above is enough.
-    // (The owner's app subscribes to userDirectory and auto-links on their side.)
-    void ownerUid; void memberUid; void memberEmail;
-  } catch {
-    // Non-fatal — linking happens lazily in the Team tab
-  }
 }

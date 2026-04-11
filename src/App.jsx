@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { useEntries, useTasks, useTeamMembers, useUserDirectory } from './hooks/useFirestore';
+import { useEntries, useTasks, useAssignedTasks, useTeamMembers, useUserDirectory } from './hooks/useFirestore';
+import { useNotifications } from './hooks/useNotifications';
 import KanbanBoard from './components/KanbanBoard';
 import TasksPage from './components/TasksPage';
 import Auth from './components/Auth';
@@ -15,7 +16,7 @@ import SettingsPage from './components/SettingsPage';
 import './styles/diary.css';
 
 function DiaryApp() {
-  const { user, loading: authLoading, isMember, isCollaborator, setWorkspaceId } = useAuth();
+  const { user, loading: authLoading, isCollaborator, setWorkspaceId } = useAuth();
   const {
     entries, trashedEntries, archivedEntries, loading: entriesLoading,
     addEntry, updateEntry, deleteEntry, restoreEntry, purgeEntry,
@@ -23,14 +24,11 @@ function DiaryApp() {
   } = useEntries();
   const { tasks, loading: tasksLoading, addTask, updateTask, toggleTask, deleteTask, clearCompleted } = useTasks();
   const { members, loading: membersLoading, addMember, addMembersBulk, updateMember, deleteMember } = useTeamMembers();
+  const { tasks: assignedTasks } = useAssignedTasks();
   const { directory } = useUserDirectory(user?.uid);
 
   // ─── Retroactive task & member patch ────────────────────────────────────
-  // Runs on load and whenever tasks or the userDirectory changes.
-  // 1. Lowercases any assigneeEmail that was saved with mixed case (old data).
-  // 2. Links assigneeUid and teamMember.uid for any member who has signed up.
   useEffect(() => {
-    // Fix mixed-case emails on existing tasks (no directory entry needed)
     tasks.forEach(task => {
       if (task.assigneeEmail && task.assigneeEmail !== task.assigneeEmail.toLowerCase()) {
         updateTask(task.id, { assigneeEmail: task.assigneeEmail.toLowerCase() }).catch(() => {});
@@ -38,19 +36,28 @@ function DiaryApp() {
     });
   }, [tasks]);
 
+  // Track which emails we've already auto-added to avoid duplicate writes
+  const autoAddedRef = useRef(new Set());
+
   useEffect(() => {
     if (!directory.length) return;
     directory.forEach(async (dirEntry) => {
       const emailKey = dirEntry.email?.toLowerCase();
       if (!emailKey || !dirEntry.uid) return;
 
-      // Link teamMembers record
-      const memberRecord = members.find(m => m.email?.toLowerCase() === emailKey && !m.uid);
-      if (memberRecord) {
+      const memberRecord = members.find(m => m.email?.toLowerCase() === emailKey);
+
+      if (memberRecord && !memberRecord.uid) {
         updateMember(memberRecord.id, { uid: dirEntry.uid }).catch(() => {});
+      } else if (!memberRecord && !autoAddedRef.current.has(emailKey)) {
+        autoAddedRef.current.add(emailKey);
+        addMember({
+          name: dirEntry.displayName || dirEntry.email,
+          email: dirEntry.email,
+          phone: '',
+        }).catch(() => {});
       }
 
-      // Link assigneeUid on any task assigned to this email
       tasks.forEach(task => {
         if (task.assigneeEmail?.toLowerCase() === emailKey && !task.assigneeUid) {
           updateTask(task.id, { assigneeUid: dirEntry.uid }).catch(() => {});
@@ -68,6 +75,44 @@ function DiaryApp() {
     setToast({ message, type });
   }, []);
 
+  // ─── Real-time notifications ────────────────────────────────────────────
+  const permissionRequested = useRef(false);
+  useEffect(() => {
+    if (user && !permissionRequested.current && 'Notification' in window && Notification.permission === 'default') {
+      permissionRequested.current = true;
+      Notification.requestPermission().catch(() => {});
+    }
+  }, [user]);
+
+  const handleNewNotification = useCallback((n) => {
+    showToast(n.body || n.title, 'info');
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification(n.title || 'DDiary', {
+          body: n.body || '',
+          icon: '/icons/icon-192x192.png',
+          badge: '/icons/icon-72x72.png',
+          tag: n.id,
+        });
+      } catch { /* some browsers don't support Notification constructor */ }
+    }
+  }, [showToast]);
+
+  const {
+    notifications, unreadCount, markRead, markAllRead,
+  } = useNotifications({ onNewNotification: handleNewNotification });
+
+  // Update PWA app icon badge count
+  useEffect(() => {
+    if ('setAppBadge' in navigator) {
+      if (unreadCount > 0) {
+        navigator.setAppBadge(unreadCount).catch(() => {});
+      } else {
+        navigator.clearAppBadge().catch(() => {});
+      }
+    }
+  }, [unreadCount]);
+
   const pendingCount = tasks.filter(t => !t.completed).length;
 
   // ─── Navigation helpers ──────────────────────────────────────────────
@@ -77,63 +122,24 @@ function DiaryApp() {
     if (p === 'write' && !editingEntry) setEditingEntry(null);
   };
 
-  const goToNewEntry = () => {
-    setEditingEntry(null);
-    setPage('write');
-  };
-
-  const goToEditEntry = (entry) => {
-    setEditingEntry(entry);
-    setPage('write');
-  };
-
-  const handleViewEntry = (entry) => {
-    setViewingEntry(entry);
-  };
+  const goToNewEntry = () => { setEditingEntry(null); setPage('write'); };
+  const goToEditEntry = (entry) => { setEditingEntry(entry); setPage('write'); };
+  const handleViewEntry = (entry) => { setViewingEntry(entry); };
 
   // ─── Entry handlers ──────────────────────────────────────────────────
   const handleSaveEntry = async (entryData) => {
-    if (editingEntry) {
-      await updateEntry(editingEntry.id, entryData);
-    } else {
-      await addEntry(entryData);
-    }
+    if (editingEntry) await updateEntry(editingEntry.id, entryData);
+    else await addEntry(entryData);
     setEditingEntry(null);
     setPage('home');
   };
 
-  const handleDeleteEntry = async (id) => {
-    await deleteEntry(id);
-    setViewingEntry(null);
-    showToast('Entry moved to trash', 'success');
-  };
-
-  const handleArchiveEntry = async (id) => {
-    await archiveEntry(id);
-    setViewingEntry(null);
-    showToast('Entry archived', 'success');
-  };
-
-  const handleUnarchiveEntry = async (id) => {
-    await unarchiveEntry(id);
-    setViewingEntry(null);
-    showToast('Entry restored to diary', 'success');
-  };
-
-  const handleRestoreEntry = async (id) => {
-    await restoreEntry(id);
-    showToast('Entry restored', 'success');
-  };
-
-  const handlePurgeEntry = async (id) => {
-    await purgeEntry(id);
-    showToast('Entry permanently deleted', 'success');
-  };
-
-  const handleCancelEdit = () => {
-    setEditingEntry(null);
-    setPage('home');
-  };
+  const handleDeleteEntry = async (id) => { await deleteEntry(id); setViewingEntry(null); showToast('Entry moved to trash', 'success'); };
+  const handleArchiveEntry = async (id) => { await archiveEntry(id); setViewingEntry(null); showToast('Entry archived', 'success'); };
+  const handleUnarchiveEntry = async (id) => { await unarchiveEntry(id); setViewingEntry(null); showToast('Entry restored to diary', 'success'); };
+  const handleRestoreEntry = async (id) => { await restoreEntry(id); showToast('Entry restored', 'success'); };
+  const handlePurgeEntry = async (id) => { await purgeEntry(id); showToast('Entry permanently deleted', 'success'); };
+  const handleCancelEdit = () => { setEditingEntry(null); setPage('home'); };
 
   // ─── Auth gate ───────────────────────────────────────────────────────
   if (authLoading) {
@@ -158,7 +164,11 @@ function DiaryApp() {
     return (
       <>
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
-        <Layout currentPage={page} onNavigate={navigate} pendingCount={0} collaboratorMode>
+        <Layout
+          currentPage={page} onNavigate={navigate} pendingCount={0} collaboratorMode
+          notifications={notifications} unreadCount={unreadCount}
+          onMarkRead={markRead} onMarkAllRead={markAllRead}
+        >
           {page !== 'settings' && <KanbanBoard onWorkspaceCreated={setWorkspaceId} />}
           {page === 'settings' && <SettingsPage showToast={showToast} />}
         </Layout>
@@ -166,30 +176,18 @@ function DiaryApp() {
     );
   }
 
-  // ─── Team-member view (role: 'member') ───────────────────────────────
-  // Members only see their assigned tasks + settings.
-  if (isMember) {
-    return (
-      <>
-        {toast && (
-          <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
-        )}
-        <Layout currentPage={page} onNavigate={navigate} pendingCount={0} memberMode>
-          {page !== 'settings' && <TeamTaskView />}
-          {page === 'settings' && <SettingsPage showToast={showToast} />}
-        </Layout>
-      </>
-    );
-  }
-
-  // ─── Owner / full app ────────────────────────────────────────────────
+  // ─── Full app — everyone gets the same experience ───────────────────
   return (
     <>
       {toast && (
         <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
       )}
 
-      <Layout currentPage={page} onNavigate={navigate} pendingCount={pendingCount}>
+      <Layout
+        currentPage={page} onNavigate={navigate} pendingCount={pendingCount}
+        notifications={notifications} unreadCount={unreadCount}
+        onMarkRead={markRead} onMarkAllRead={markAllRead}
+      >
         {/* Diary Home / List */}
         {page === 'home' && !viewingEntry && (
           <DiaryList
@@ -228,20 +226,24 @@ function DiaryApp() {
           />
         )}
 
-        {/* Tasks — unified My Tasks + Team Board */}
+        {/* Tasks — unified My Tasks + Team Board (Suren's TasksPage) */}
         {page === 'tasks' && (
-          <TasksPage
-            tasks={tasks}
-            members={members}
-            loading={tasksLoading}
-            onAdd={addTask}
-            onUpdate={updateTask}
-            onToggle={toggleTask}
-            onDelete={deleteTask}
-            onClearCompleted={clearCompleted}
-            showToast={showToast}
-            onWorkspaceCreated={setWorkspaceId}
-          />
+          <>
+            <TasksPage
+              tasks={tasks}
+              members={members}
+              loading={tasksLoading}
+              onAdd={addTask}
+              onUpdate={updateTask}
+              onToggle={toggleTask}
+              onDelete={deleteTask}
+              onClearCompleted={clearCompleted}
+              showToast={showToast}
+              onWorkspaceCreated={setWorkspaceId}
+            />
+            {/* Show tasks assigned to me by others */}
+            {assignedTasks.length > 0 && <TeamTaskView />}
+          </>
         )}
 
         {/* Team Members */}
