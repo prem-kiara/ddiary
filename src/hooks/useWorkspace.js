@@ -34,6 +34,8 @@ export function useMyWorkspaces() {
       // Tear down previous workspace listeners before setting up new ones
       cleanupInner();
 
+      console.log('[useMyWorkspaces] members query returned', snap.docs.length, 'docs');
+
       const memberDocs = snap.docs.map(d => ({
         workspaceId: d.ref.parent.parent?.id,
         role: d.data().role,
@@ -51,6 +53,7 @@ export function useMyWorkspaces() {
       const total = memberDocs.length;
 
       const flush = () => {
+        console.log('[useMyWorkspaces] flushing', wsMap.size, 'workspaces');
         setWorkspaces(Array.from(wsMap.values()));
         setLoading(false);
       };
@@ -60,17 +63,21 @@ export function useMyWorkspaces() {
           if (wsSnap.exists()) {
             wsMap.set(workspaceId, { id: workspaceId, role, ...wsSnap.data() });
           } else {
+            console.warn('[useMyWorkspaces] workspace doc missing:', workspaceId);
             wsMap.delete(workspaceId);
           }
           loaded++;
-          // Initial load: wait for all; after that, every change flushes immediately
           if (loaded >= total) flush();
-        }, () => {
+        }, (err) => {
+          console.error('[useMyWorkspaces] workspace doc error:', workspaceId, err.message);
           loaded++;
           if (loaded >= total) flush();
         });
       });
-    }, () => { setLoading(false); });
+    }, (err) => {
+      console.error('[useMyWorkspaces] collection-group query FAILED:', err.message, err.code);
+      setLoading(false);
+    });
 
     return () => {
       unsub();
