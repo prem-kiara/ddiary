@@ -126,16 +126,13 @@ export function AuthProvider({ children }) {
   const joinWorkspace = async (workspaceId) => {
     if (!auth.currentUser) return;
     const { uid, email, displayName } = auth.currentUser;
-    await setDoc(doc(db, 'users', uid), { workspaceId }, { merge: true });
     await addWorkspaceMember(workspaceId, { uid, email, displayName, role: 'member' });
-    setUser(prev => ({ ...prev, workspaceId }));
   };
 
-  // Called after owner creates a workspace — updates their profile with workspaceId
+  // Called after owner creates a workspace (kept for backward compat)
   const setWorkspaceId = async (workspaceId) => {
-    if (!auth.currentUser) return;
-    await setDoc(doc(db, 'users', auth.currentUser.uid), { workspaceId }, { merge: true });
-    setUser(prev => ({ ...prev, workspaceId }));
+    // No-op now — workspaces are discovered via collection-group query on members
+    // The creator is already added as a member in createWorkspace()
   };
 
   // Convenience booleans derived from role

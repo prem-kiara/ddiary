@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  useMyWorkspace, useWorkspaceTasks, useWorkspaceComments, useWorkspaceActivity,
+  useMyWorkspaces, useWorkspace, useWorkspaceTasks, useWorkspaceComments, useWorkspaceActivity,
   addWorkspaceTask, updateWorkspaceTask, deleteWorkspaceTask,
   addWorkspaceComment, createWorkspace, renameWorkspace,
 } from '../hooks/useWorkspace';
@@ -437,8 +437,24 @@ function WorkspaceSetup({ onCreated }) {
 // ── Main KanbanBoard ──────────────────────────────────────────────────────────
 export default function KanbanBoard({ onWorkspaceCreated }) {
   const { user } = useAuth();
-  const { workspace, members, loading: wsLoading } = useMyWorkspace();
-  const workspaceId = user?.workspaceId;
+  const { workspaces, loading: wsListLoading } = useMyWorkspaces();
+
+  // Active workspace selection — persisted in localStorage
+  const [activeWsId, setActiveWsId] = useState(
+    () => localStorage.getItem('ddiary_active_workspace') || null
+  );
+  const switchWorkspace = (id) => {
+    setActiveWsId(id);
+    try { localStorage.setItem('ddiary_active_workspace', id); } catch {}
+    setFilterAssignee('all');
+  };
+
+  // If stored workspace isn't in the list, pick the first one
+  const workspaceId = workspaces.find(w => w.id === activeWsId)?.id
+                   || workspaces[0]?.id
+                   || null;
+
+  const { workspace, members, loading: wsLoading } = useWorkspace(workspaceId);
   const { tasks, loading: tasksLoading, error } = useWorkspaceTasks(workspaceId);
 
   const [showAddTask,     setShowAddTask]     = useState(false);
@@ -461,8 +477,8 @@ export default function KanbanBoard({ onWorkspaceCreated }) {
     setRenameSaving(false);
   };
 
-  if (wsLoading) return <div className="empty-state fade-in"><p>Loading workspace…</p></div>;
-  if (!workspaceId || !workspace) return <WorkspaceSetup onCreated={onWorkspaceCreated} />;
+  if (wsListLoading || wsLoading) return <div className="empty-state fade-in"><p>Loading workspace…</p></div>;
+  if (!workspaces.length || !workspace) return <WorkspaceSetup onCreated={async (id) => { switchWorkspace(id); if (onWorkspaceCreated) await onWorkspaceCreated(id); }} />;
 
   const inviteUrl = `${window.location.origin}?workspace=${workspaceId}`;
 
@@ -501,6 +517,28 @@ export default function KanbanBoard({ onWorkspaceCreated }) {
 
   return (
     <div className="fade-in">
+
+      {/* ── Workspace tabs (when user has multiple) ────────────────────────── */}
+      {workspaces.length > 1 && (
+        <div style={{ display: 'flex', gap: 4, marginBottom: 14, background: '#f0e8d8', borderRadius: 14, padding: 4, overflowX: 'auto' }}>
+          {workspaces.map(ws => (
+            <button
+              key={ws.id}
+              onClick={() => switchWorkspace(ws.id)}
+              style={{
+                padding: '7px 16px', borderRadius: 10, fontSize: 13, fontWeight: 700,
+                cursor: 'pointer', border: 'none', whiteSpace: 'nowrap',
+                background: ws.id === workspaceId ? '#fff' : 'transparent',
+                color: ws.id === workspaceId ? '#4a3728' : '#8a7a6a',
+                boxShadow: ws.id === workspaceId ? '0 1px 6px rgba(0,0,0,0.12)' : 'none',
+                transition: 'all 0.18s',
+              }}
+            >
+              {ws.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>

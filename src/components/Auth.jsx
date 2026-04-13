@@ -1,29 +1,36 @@
 import { useState, useEffect } from 'react';
-import { BookOpen, Users } from 'lucide-react';
+import { BookOpen, Users, Layout } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Auth() {
-  const { loginWithMicrosoft, error, setError } = useAuth();
+  const { loginWithMicrosoft, joinWorkspace, error, setError } = useAuth();
 
-  // Detect ?join=OWNER_UID in the URL — if present this is a team-member signup
-  const joinParam = new URLSearchParams(window.location.search).get('join');
-  const isMemberSignup = !!joinParam;
+  // Detect invite params from URL
+  const [joinParam]      = useState(() => new URLSearchParams(window.location.search).get('join'));
+  const [workspaceParam] = useState(() => new URLSearchParams(window.location.search).get('workspace'));
+
+  const isMemberSignup      = !!joinParam;
+  const isWorkspaceInvite   = !!workspaceParam;
+  const isInviteFlow        = isMemberSignup || isWorkspaceInvite;
 
   const [loading, setLoading] = useState(false);
 
-  // Keep URL clean after reading the param
+  // Keep URL clean after reading the params
   useEffect(() => {
-    if (joinParam) {
-      const clean = window.location.pathname;
-      window.history.replaceState({}, '', clean);
+    if (isInviteFlow) {
+      window.history.replaceState({}, '', window.location.pathname);
     }
-  }, [joinParam]);
+  }, [isInviteFlow]);
 
   const handleMicrosoftLogin = async () => {
     setLoading(true);
     setError(null);
     try {
       await loginWithMicrosoft(isMemberSignup ? joinParam : null);
+      // After login, if workspace invite, join that workspace
+      if (workspaceParam) {
+        await joinWorkspace(workspaceParam);
+      }
     } catch {
       // error is set in context
     }
@@ -34,25 +41,29 @@ export default function Auth() {
     <div className="auth-container">
       <div className="auth-card fade-in">
         <div style={{ textAlign: 'center', marginBottom: 8 }}>
-          {isMemberSignup
-            ? <Users size={40} color="#2a9d8f" />
-            : <BookOpen size={40} color="#8B6914" />}
+          {isWorkspaceInvite
+            ? <Layout size={40} color="#8e44ad" />
+            : isMemberSignup
+              ? <Users size={40} color="#2a9d8f" />
+              : <BookOpen size={40} color="#8B6914" />}
         </div>
 
         <h1 className="auth-title">
-          {isMemberSignup ? 'Join the Team' : 'My Digital Diary'}
+          {isWorkspaceInvite ? 'Join Workspace' : isMemberSignup ? 'Join the Team' : 'My Digital Diary'}
         </h1>
 
         <p className="auth-subtitle">
-          {isMemberSignup
-            ? "You've been invited to collaborate on tasks. Sign in with your Microsoft account."
-            : 'Sign in with your organization Microsoft account.'}
+          {isWorkspaceInvite
+            ? "You've been invited to a shared workspace. Sign in with your Microsoft account to start collaborating."
+            : isMemberSignup
+              ? "You've been invited to collaborate on tasks. Sign in with your Microsoft account."
+              : 'Sign in with your organization Microsoft account.'}
         </p>
 
         {error && <div className="auth-error">{error}</div>}
 
         <button
-          className={`btn ${isMemberSignup ? 'btn-teal' : 'btn-gold'}`}
+          className={`btn ${isWorkspaceInvite ? 'btn-purple' : isMemberSignup ? 'btn-teal' : 'btn-gold'}`}
           onClick={handleMicrosoftLogin}
           disabled={loading}
           style={{

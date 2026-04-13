@@ -246,17 +246,9 @@ function DiaryApp() {
           </>
         )}
 
-        {/* Team Members */}
+        {/* Workspaces (Team) */}
         {page === 'team' && (
-          <TeamMembers
-            members={members}
-            loading={membersLoading}
-            onAdd={addMember}
-            onAddBulk={addMembersBulk}
-            onUpdate={updateMember}
-            onDelete={deleteMember}
-            showToast={showToast}
-          />
+          <TeamMembers showToast={showToast} />
         )}
 
         {/* Settings */}

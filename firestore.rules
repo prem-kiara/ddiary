@@ -128,6 +128,11 @@ service cloud.firestore {
       }
     }
 
+    // ─── Collection-group: lets users discover which workspaces they belong to
+    match /{path=**}/members/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+    }
+
     // ─── Deny everything else ─────────────────────────────────────────────
     match /{document=**} {
       allow read, write: if false;

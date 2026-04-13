@@ -9,7 +9,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useUserDirectory } from '../hooks/useFirestore';
 import TaskCollabPanel, { StatusBadge } from './TaskCollabPanel';
 import { useTaskComments } from '../hooks/useFirestore';
-import { useMyWorkspace, addWorkspaceTask } from '../hooks/useWorkspace';
+import { useMyWorkspaces, useWorkspace, addWorkspaceTask } from '../hooks/useWorkspace';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const priorityColors = { high: '#c0392b', medium: '#e67e22', low: '#27ae60' };
@@ -105,12 +105,117 @@ function SectionHeader({ open, onToggle, icon, label, count, color, accentColor 
   );
 }
 
+// ── Move-to-Board sub-panel (needs its own hook for workspace members) ────────
+function MoveToBoard({ task, workspaces, onDelete, showToast, onClose, user }) {
+  const [selectedWsId, setSelectedWsId] = useState(workspaces[0]?.id || '');
+  const { members: wsMembers } = useWorkspace(selectedWsId);
+  const [moveStatus, setMoveStatus] = useState('open');
+  const [moveAssignee, setMoveAssignee] = useState('');
+  const [moveSaving, setMoveSaving] = useState(false);
+
+  // Pre-fill assignee when workspace changes
+  useEffect(() => {
+    const matched = wsMembers?.find(
+      m => m.email?.toLowerCase() === task.assigneeEmail?.toLowerCase()
+    );
+    setMoveAssignee(matched?.uid || '');
+  }, [selectedWsId, wsMembers, task.assigneeEmail]);
+
+  const handleMove = async () => {
+    if (!selectedWsId) return;
+    setMoveSaving(true);
+    try {
+      const wsAssignee = wsMembers?.find(m => m.uid === moveAssignee);
+      await addWorkspaceTask(selectedWsId, {
+        text:          task.text,
+        status:        moveStatus,
+        priority:      task.priority || 'medium',
+        dueDate:       task.dueDate  || null,
+        assigneeUid:   wsAssignee?.uid   || null,
+        assigneeEmail: wsAssignee?.email?.toLowerCase() || null,
+        assigneeName:  wsAssignee?.displayName || null,
+      }, {
+        uid:         user.uid,
+        email:       user.email,
+        displayName: user.displayName || user.email,
+      });
+      await onDelete(task.id);
+      showToast('Task moved to Team Board!', 'success');
+    } catch (e) {
+      console.error(e);
+      showToast('Failed to move task. Please try again.', 'warning');
+      setMoveSaving(false);
+    }
+  };
+
+  const selStyle = { width: '100%', height: 40, padding: '0 10px', border: '1px solid #d4c5a9', borderRadius: 8, fontSize: 13, fontFamily: 'var(--font-body)', background: '#fffdf5', color: '#4a3728', outline: 'none' };
+
+  return (
+    <div style={{ padding: '0 12px 14px' }}>
+      <div style={{ height: 1, background: '#f0e6d2', marginBottom: 12 }} />
+      <div style={{ background: '#eaf4fb', border: '1px solid #2980b944', borderRadius: 10, padding: '14px 16px' }}>
+        <div style={{ fontWeight: 700, fontSize: 13, color: '#2980b9', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <ArrowUpRight size={14} /> Move to Team Board
+        </div>
+        <p style={{ fontSize: 12, color: '#4a3728', marginBottom: 12, lineHeight: 1.5 }}>
+          This task will be removed from My Tasks and added to the Team Board Kanban.
+        </p>
+        {workspaces.length > 1 && (
+          <div style={{ marginBottom: 12 }}>
+            <label className="label">Workspace</label>
+            <select value={selectedWsId} onChange={e => { setSelectedWsId(e.target.value); setMoveAssignee(''); }} style={selStyle}>
+              {workspaces.map(ws => (
+                <option key={ws.id} value={ws.id}>{ws.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+          <div>
+            <label className="label">Column</label>
+            <select value={moveStatus} onChange={e => setMoveStatus(e.target.value)} style={selStyle}>
+              <option value="open">Open</option>
+              <option value="in_progress">In Progress</option>
+              <option value="review">Review</option>
+              <option value="done">Done</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Assign to</label>
+            <select value={moveAssignee} onChange={e => setMoveAssignee(e.target.value)} style={selStyle}>
+              <option value="">Unassigned</option>
+              {(wsMembers || []).map(m => (
+                <option key={m.uid} value={m.uid}>
+                  {m.displayName || m.email}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn btn-sm btn-outline" onClick={onClose}>
+            <X size={13} /> Cancel
+          </button>
+          <button
+            className="btn btn-sm"
+            style={{ background: '#2980b9', color: '#fff', border: 'none' }}
+            onClick={handleMove}
+            disabled={moveSaving}
+          >
+            {moveSaving ? 'Moving…' : <><ArrowUpRight size={13} /> Move to Team Board</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Individual task card ───────────────────────────────────────────────────────
 function TaskCard({
   task, members, directory,
   onToggle, onUpdate, onDelete,
   showToast, ownerUid,
-  workspaceId, workspaceMembers, hasWorkspace,
+  workspaces, hasWorkspace,
 }) {
   const { user } = useAuth();
   const overdue   = !task.completed && isOverdue(task.dueDate);
@@ -123,11 +228,6 @@ function TaskCard({
   const [expanded,    setExpanded]    = useState(false);
   // Which panel is open inside the expanded area
   const [panel,       setPanel]       = useState(null); // 'edit' | 'assign' | 'collab' | 'move'
-
-  // Move-to-board state
-  const [moveStatus,   setMoveStatus]   = useState('open');
-  const [moveAssignee, setMoveAssignee] = useState('');
-  const [moveSaving,   setMoveSaving]   = useState(false);
 
   // Edit state
   const [editText,     setEditText]     = useState(task.text);
@@ -162,43 +262,8 @@ function TaskCard({
       setScheduleTime(task.scheduledEmailTime || '');
       setSelectedMember(null);
     }
-    if (p === 'move') {
-      // Pre-fill assignee from workspace members if email matches
-      const matched = workspaceMembers?.find(
-        m => m.email?.toLowerCase() === task.assigneeEmail?.toLowerCase()
-      );
-      setMoveAssignee(matched?.uid || '');
-      setMoveStatus('open');
-    }
     setPanel(p);
     setExpanded(true);
-  };
-
-  const handleMoveToBoard = async () => {
-    if (!workspaceId) return;
-    setMoveSaving(true);
-    try {
-      const wsAssignee = workspaceMembers?.find(m => m.uid === moveAssignee);
-      await addWorkspaceTask(workspaceId, {
-        text:          task.text,
-        status:        moveStatus,
-        priority:      task.priority || 'medium',
-        dueDate:       task.dueDate  || null,
-        assigneeUid:   wsAssignee?.uid   || null,
-        assigneeEmail: wsAssignee?.email?.toLowerCase() || null,
-        assigneeName:  wsAssignee?.displayName || null,
-      }, {
-        uid:         user.uid,
-        email:       user.email,
-        displayName: user.displayName || user.email,
-      });
-      await onDelete(task.id);
-      showToast('Task moved to Team Board!', 'success');
-    } catch (e) {
-      console.error(e);
-      showToast('Failed to move task. Please try again.', 'warning');
-      setMoveSaving(false);
-    }
   };
 
   const handleSaveEdit = async () => {
@@ -504,60 +569,14 @@ function TaskCard({
 
           {/* ── Move to Team Board panel ───────────────────────────── */}
           {panel === 'move' && (
-            <div style={{ padding: '0 12px 14px' }}>
-              <div style={{ height: 1, background: '#f0e6d2', marginBottom: 12 }} />
-              <div style={{ background: '#eaf4fb', border: '1px solid #2980b944', borderRadius: 10, padding: '14px 16px' }}>
-                <div style={{ fontWeight: 700, fontSize: 13, color: '#2980b9', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <ArrowUpRight size={14} /> Move to Team Board
-                </div>
-                <p style={{ fontSize: 12, color: '#4a3728', marginBottom: 12, lineHeight: 1.5 }}>
-                  This task will be removed from My Tasks and added to the Team Board Kanban.
-                </p>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-                  <div>
-                    <label className="label">Column</label>
-                    <select
-                      value={moveStatus}
-                      onChange={e => setMoveStatus(e.target.value)}
-                      style={{ width: '100%', height: 40, padding: '0 10px', border: '1px solid #d4c5a9', borderRadius: 8, fontSize: 13, fontFamily: 'var(--font-body)', background: '#fffdf5', color: '#4a3728', outline: 'none' }}
-                    >
-                      <option value="open">Open</option>
-                      <option value="in_progress">In Progress</option>
-                      <option value="review">Review</option>
-                      <option value="done">Done</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="label">Assign to</label>
-                    <select
-                      value={moveAssignee}
-                      onChange={e => setMoveAssignee(e.target.value)}
-                      style={{ width: '100%', height: 40, padding: '0 10px', border: '1px solid #d4c5a9', borderRadius: 8, fontSize: 13, fontFamily: 'var(--font-body)', background: '#fffdf5', color: '#4a3728', outline: 'none' }}
-                    >
-                      <option value="">Unassigned</option>
-                      {(workspaceMembers || []).map(m => (
-                        <option key={m.uid} value={m.uid}>
-                          {m.displayName || m.email}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                  <button className="btn btn-sm btn-outline" onClick={() => setPanel(null)}>
-                    <X size={13} /> Cancel
-                  </button>
-                  <button
-                    className="btn btn-sm"
-                    style={{ background: '#2980b9', color: '#fff', border: 'none' }}
-                    onClick={handleMoveToBoard}
-                    disabled={moveSaving}
-                  >
-                    {moveSaving ? 'Moving…' : <><ArrowUpRight size={13} /> Move to Team Board</>}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <MoveToBoard
+              task={task}
+              workspaces={workspaces}
+              onDelete={onDelete}
+              showToast={showToast}
+              onClose={() => setPanel(null)}
+              user={user}
+            />
           )}
         </div>
       )}
@@ -572,7 +591,8 @@ export default function TaskManager({
 }) {
   const { user } = useAuth();
   const { directory } = useUserDirectory(user?.uid);
-  const { workspace, members: wsMembers } = useMyWorkspace();
+  const { workspaces } = useMyWorkspaces();
+  const firstWs = workspaces[0] || null;
 
   // ── Add form state ──────────────────────────────────────────────────────
   const [newText,     setNewText]     = useState('');
@@ -625,9 +645,8 @@ export default function TaskManager({
 
   const taskCardProps = {
     members, directory, onToggle, onUpdate, onDelete, showToast, ownerUid: user?.uid,
-    workspaceId:      user?.workspaceId || null,
-    workspaceMembers: wsMembers,
-    hasWorkspace:     !!workspace,
+    workspaces,
+    hasWorkspace:     workspaces.length > 0,
   };
 
   return (

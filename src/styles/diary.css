@@ -191,6 +191,8 @@ body {
 .btn-gold:hover { background: #7a5c11; }
 .btn-teal { background: var(--teal); color: white; }
 .btn-teal:hover { background: #238b7f; }
+.btn-purple { background: #8e44ad; color: white; }
+.btn-purple:hover { background: #7d3c98; }
 .btn-red { background: var(--red); color: white; }
 .btn-red:hover { background: #a93226; }
 .btn-blue { background: var(--blue); color: white; }
