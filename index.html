@@ -18,6 +18,30 @@
 </head>
 <body>
   <div id="root"></div>
+  <script>
+    // Force-clear old service workers and caches for users stuck on stale versions
+    (function() {
+      var APP_VERSION = '2.0.0';
+      var stored = localStorage.getItem('ddiary_version');
+      if (stored !== APP_VERSION) {
+        localStorage.setItem('ddiary_version', APP_VERSION);
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function(regs) {
+            regs.forEach(function(r) { r.unregister(); });
+          });
+        }
+        if ('caches' in window) {
+          caches.keys().then(function(names) {
+            names.forEach(function(n) { caches.delete(n); });
+          });
+        }
+        // Only force reload if we actually had a stale version (not first visit)
+        if (stored) {
+          location.reload(true);
+        }
+      }
+    })();
+  </script>
   <script type="module" src="/src/main.jsx"></script>
 </body>
 </html>
