@@ -146,6 +146,7 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
   const [orgUsers,      setOrgUsers]      = useState([]);
   const [orgLoading,    setOrgLoading]    = useState(false);
   const [showOrgPanel,  setShowOrgPanel]  = useState(false);
+  const [orgSearch,     setOrgSearch]     = useState('');
 
   const inviteUrl = `${window.location.origin}?workspace=${workspaceId}`;
   const isAdmin = workspace?.createdBy === user.uid || members.find(m => m.uid === user.uid)?.role === 'admin';
@@ -382,31 +383,49 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
               <RefreshCw size={12} className={orgLoading ? 'spin' : ''} /> Refresh
             </button>
           </div>
+          {/* Search filter */}
+          {!orgLoading && orgUsers.length > 0 && (
+            <input
+              className="input"
+              placeholder="Search by name or email..."
+              value={orgSearch}
+              onChange={e => setOrgSearch(e.target.value)}
+              style={{ fontSize: 13, marginBottom: 10 }}
+            />
+          )}
           {orgLoading && <p style={{ fontSize: 13, color: '#8a7a6a' }}>Loading org users...</p>}
           {!orgLoading && orgUsers.length === 0 && (
             <p style={{ fontSize: 13, color: '#8a7a6a' }}>No users to add (everyone is already in this workspace, or org directory is empty).</p>
           )}
-          {orgUsers.map(u => (
-            <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid #f0e6d2' }}>
-              <div style={{
-                width: 32, height: 32, borderRadius: '50%',
-                background: '#8e44ad22', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                color: '#8e44ad', fontWeight: 700, fontSize: 13,
-              }}>
-                {(u.displayName || '?').charAt(0).toUpperCase()}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>{u.displayName}</div>
-                <div style={{ fontSize: 11, color: '#8a7a6a' }}>
-                  {u.email}
-                  {u.jobTitle && <> · <Briefcase size={9} style={{ display: 'inline' }} /> {u.jobTitle}</>}
+          <div style={{ maxHeight: 320, overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            {orgUsers
+              .filter(u => {
+                if (!orgSearch.trim()) return true;
+                const q = orgSearch.toLowerCase();
+                return (u.displayName || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);
+              })
+              .map(u => (
+              <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid #f0e6d2' }}>
+                <div style={{
+                  width: 32, height: 32, borderRadius: '50%',
+                  background: '#8e44ad22', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: '#8e44ad', fontWeight: 700, fontSize: 13,
+                }}>
+                  {(u.displayName || '?').charAt(0).toUpperCase()}
                 </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{u.displayName}</div>
+                  <div style={{ fontSize: 11, color: '#8a7a6a' }}>
+                    {u.email}
+                    {u.jobTitle && <> · <Briefcase size={9} style={{ display: 'inline' }} /> {u.jobTitle}</>}
+                  </div>
+                </div>
+                <button className="btn btn-teal btn-sm" onClick={() => handleAddFromOrg(u)}>
+                  <Plus size={12} /> Add
+                </button>
               </div>
-              <button className="btn btn-teal btn-sm" onClick={() => handleAddFromOrg(u)}>
-                <Plus size={12} /> Add
-              </button>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
 

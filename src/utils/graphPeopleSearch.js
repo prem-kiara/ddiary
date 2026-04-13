@@ -40,34 +40,42 @@ export async function searchOrgPeople(query) {
 }
 
 /**
- * Fetch ALL users from the M365 org directory (up to 100).
+ * Fetch ALL users from the M365 org directory (paginated — follows @odata.nextLink).
  * Used to auto-populate the Team Members page.
  */
 export async function fetchAllOrgUsers() {
   const msToken = sessionStorage.getItem(MS_TOKEN_KEY);
   if (!msToken) return [];
 
+  const allUsers = [];
+  let url = `https://graph.microsoft.com/v1.0/users?$select=id,displayName,mail,jobTitle,mobilePhone,businessPhones,department&$top=100&$orderby=displayName`;
+
   try {
-    const res = await fetch(
-      `https://graph.microsoft.com/v1.0/users?$select=id,displayName,mail,jobTitle,mobilePhone,businessPhones,department&$top=100&$orderby=displayName`,
-      {
+    while (url) {
+      const res = await fetch(url, {
         headers: { 'Authorization': `Bearer ${msToken}` },
-      }
-    );
+      });
 
-    if (!res.ok) return [];
+      if (!res.ok) break;
 
-    const data = await res.json();
-    return (data.value || []).map(u => ({
-      id:          u.id,
-      displayName: u.displayName,
-      email:       u.mail || '',
-      jobTitle:    u.jobTitle || '',
-      department:  u.department || '',
-      phone:       u.mobilePhone || (u.businessPhones?.[0]) || '',
-    }));
+      const data = await res.json();
+      const users = (data.value || []).map(u => ({
+        id:          u.id,
+        displayName: u.displayName,
+        email:       u.mail || '',
+        jobTitle:    u.jobTitle || '',
+        department:  u.department || '',
+        phone:       u.mobilePhone || (u.businessPhones?.[0]) || '',
+      }));
+      allUsers.push(...users);
+
+      // Follow pagination link if more pages exist (cap at 999 to be safe)
+      url = (data['@odata.nextLink'] && allUsers.length < 999) ? data['@odata.nextLink'] : null;
+    }
+    return allUsers;
   } catch {
-    return [];
+    // Return whatever we fetched so far
+    return allUsers;
   }
 }
 
