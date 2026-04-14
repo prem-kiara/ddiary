@@ -530,7 +530,7 @@ export default function TaskManager({
   // ── Add form state ──────────────────────────────────────────────────────
   const [newText,     setNewText]     = useState('');
   const [newDue,      setNewDue]      = useState(toDateInputValue());
-  const [newPriority, setNewPriority] = useState('medium');
+  const [newPriority, setNewPriority] = useState('high');
   const [newAssignee, setNewAssignee] = useState('');
 
   // ── Section collapse state ──────────────────────────────────────────────
@@ -560,7 +560,7 @@ export default function TaskManager({
         assigneeName:  m?.name  || null,
         assigneePhone: m?.phone || null,
       });
-      setNewText(''); setNewDue(toDateInputValue()); setNewPriority('medium'); setNewAssignee('');
+      setNewText(''); setNewDue(toDateInputValue()); setNewPriority('high'); setNewAssignee('');
       showToast(m ? `Task assigned to ${m.name}!` : 'Task added!', 'success');
     } catch { showToast('Failed to add task', 'warning'); }
   };

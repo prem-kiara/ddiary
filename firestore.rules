@@ -80,8 +80,14 @@ service cloud.firestore {
     }
 
     // ─── In-app notifications (real-time, live) ──────────────────────────
+    // create: sender must be authenticated AND must identify themselves as the
+    //         sender (senderEmail == their own token email).  This blocks any
+    //         user from spoofing notifications on behalf of someone else.
     match /notifications/{notifId} {
-      allow create: if request.auth != null;
+      allow create: if request.auth != null
+                   && (request.resource.data.senderEmail == request.auth.token.email
+                       || request.resource.data.senderEmail == null
+                       || !('senderEmail' in request.resource.data));
       allow read:   if request.auth != null
                    && resource.data.recipientEmail == request.auth.token.email;
       allow update: if request.auth != null
@@ -109,7 +115,10 @@ service cloud.firestore {
       allow read:             if isWorkspaceMember()
                                || (request.auth != null && resource.data.createdBy == request.auth.uid);
       allow create:           if request.auth != null;
-      allow update, delete:   if isWorkspaceMember();
+      // Also allow creator to update/delete — needed so the workspace doc can be
+      // removed even after its member subcollection has already been wiped.
+      allow update, delete:   if isWorkspaceMember()
+                               || (request.auth != null && resource.data.createdBy == request.auth.uid);
 
       match /members/{uid} {
         allow read:           if isWorkspaceMember() || request.auth.uid == uid;
@@ -133,8 +142,45 @@ service cloud.firestore {
     }
 
     // ─── Collection-group: lets users discover which workspaces they belong to
+    // Also allows reading by email match so pending_* placeholder docs can be
+    // found and claimed when the real user signs in for the first time.
     match /{path=**}/members/{uid} {
-      allow read: if request.auth != null && request.auth.uid == uid;
+      allow read: if request.auth != null
+                 && (request.auth.uid == uid
+                     || resource.data.email == request.auth.token.email);
+    }
+
+    // ─── Workspace leave requests ─────────────────────────────────────────────
+    // A member creates a request; the workspace admin approves or denies it.
+    match /workspaceLeaveRequests/{reqId} {
+      allow create: if request.auth != null
+                   && request.resource.data.memberUid == request.auth.uid;
+      allow read:   if request.auth != null
+                   && (resource.data.memberUid    == request.auth.uid
+                       || resource.data.ownerEmail == request.auth.token.email);
+      allow update: if request.auth != null
+                   && resource.data.ownerEmail == request.auth.token.email;
+      allow delete: if request.auth != null
+                   && (resource.data.memberUid    == request.auth.uid
+                       || resource.data.ownerEmail == request.auth.token.email);
+    }
+
+    // ─── Workspace invites ────────────────────────────────────────────────────
+    // Uses deterministic IDs: {workspaceId}_{inviteeEmail_sanitized}
+    // so re-inviting after rejection simply overwrites the old doc.
+    match /workspaceInvites/{inviteId} {
+      // Any authenticated user can create an invite
+      allow create: if request.auth != null;
+      // Invitee can read (to see pending invites); inviter can read (to check status)
+      allow read: if request.auth != null
+                 && (resource.data.inviteeEmail == request.auth.token.email
+                     || resource.data.inviterUid  == request.auth.uid);
+      // Invitee can update status (accept / reject)
+      allow update: if request.auth != null
+                   && resource.data.inviteeEmail == request.auth.token.email;
+      // Inviter can delete (to clean up rejected invites before re-inviting)
+      allow delete: if request.auth != null
+                   && resource.data.inviterUid == request.auth.uid;
     }
 
     // ─── Deny everything else ─────────────────────────────────────────────

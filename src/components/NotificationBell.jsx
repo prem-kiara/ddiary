@@ -1,24 +1,34 @@
 import { useState, useRef, useEffect } from 'react';
-import { Bell, CheckCircle, UserPlus, MessageSquare, ArrowRight, RefreshCw, Check } from 'lucide-react';
+import { Bell, CheckCircle, UserPlus, MessageSquare, ArrowRight, RefreshCw, Check, Briefcase } from 'lucide-react';
 
 const typeConfig = {
-  task_assigned:  { icon: UserPlus,      color: '#8B6914', bg: '#fef9ef', label: 'Assigned' },
-  reassigned:     { icon: UserPlus,      color: '#2a6cb8', bg: '#e8f0fe', label: 'Assigned' },
-  status_changed: { icon: RefreshCw,     color: '#e67e22', bg: '#fef3e2', label: 'Status' },
-  task_completed: { icon: CheckCircle,   color: '#27ae60', bg: '#e8f8f0', label: 'Completed' },
-  comment:        { icon: MessageSquare, color: '#8e44ad', bg: '#f5eafa', label: 'Comment' },
+  task_assigned:    { icon: UserPlus,      color: '#8B6914', bg: '#fef9ef',  label: 'Assigned'  },
+  reassigned:       { icon: UserPlus,      color: '#2a6cb8', bg: '#e8f0fe',  label: 'Assigned'  },
+  status_changed:   { icon: RefreshCw,     color: '#e67e22', bg: '#fef3e2',  label: 'Status'    },
+  task_completed:   { icon: CheckCircle,   color: '#27ae60', bg: '#e8f8f0',  label: 'Completed' },
+  comment:          { icon: MessageSquare, color: '#8e44ad', bg: '#f5eafa',  label: 'Comment'   },
+  workspace_invite: { icon: Briefcase,     color: '#2a9d8f', bg: '#eaf6f5',  label: 'Invite'    },
+  workspace_created:{ icon: Briefcase,     color: '#2a9d8f', bg: '#eaf6f5',  label: 'Workspace' },
 };
 
+// Safe timeAgo — handles null, undefined, plain JS Date, ISO string, and
+// Firestore Timestamps (which have a .toDate() method).
 function timeAgo(ts) {
   if (!ts) return '';
-  const seconds = Math.floor((Date.now() - ts.toDate().getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  const mins = Math.floor(seconds / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
+  try {
+    const date = typeof ts.toDate === 'function' ? ts.toDate() : new Date(ts);
+    if (isNaN(date.getTime())) return '';
+    const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+    if (seconds < 60)  return 'just now';
+    const mins = Math.floor(seconds / 60);
+    if (mins  < 60)  return `${mins}m ago`;
+    const hrs  = Math.floor(mins  / 60);
+    if (hrs   < 24)  return `${hrs}h ago`;
+    const days = Math.floor(hrs   / 24);
+    return `${days}d ago`;
+  } catch {
+    return '';
+  }
 }
 
 export default function NotificationBell({ notifications, unreadCount, onMarkRead, onMarkAllRead, onNavigateToTasks }) {
@@ -99,7 +109,8 @@ export default function NotificationBell({ notifications, unreadCount, onMarkRea
             )}
 
             {notifications.map(n => {
-              const cfg = typeConfig[n.type] || typeConfig.task_assigned;
+              // Fall back to task_assigned config for unknown types — never crashes
+              const cfg  = typeConfig[n.type] || typeConfig.task_assigned;
               const Icon = cfg.icon;
               return (
                 <div

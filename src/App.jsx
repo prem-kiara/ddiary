@@ -5,6 +5,7 @@ import { useEntries, useTasks, useAssignedTasks, useTeamMembers } from './hooks/
 import { useNotifications } from './hooks/useNotifications';
 import KanbanBoard from './components/KanbanBoard';
 import TasksPage from './components/TasksPage';
+import WorkspaceInvitePrompt from './components/WorkspaceInvitePrompt';
 import ErrorBoundary from './components/ErrorBoundary';
 import Auth from './components/Auth';
 import Layout from './components/Layout';
@@ -70,7 +71,7 @@ function DiaryEditorPage({ entries, archivedEntries, onSave, onCancel, showToast
 // ─── Main app shell ──────────────────────────────────────────────────────────
 function DiaryApp() {
   const navigate = useNavigate();
-  const { user, loading: authLoading, isCollaborator, setWorkspaceId } = useAuth();
+  const { user, loading: authLoading, isCollaborator, setWorkspaceId, joinWorkspace } = useAuth();
   const {
     entries, trashedEntries, archivedEntries, loading: entriesLoading,
     addEntry, updateEntry, deleteEntry, restoreEntry, purgeEntry,
@@ -82,6 +83,23 @@ function DiaryApp() {
 
   const [toast, setToast] = useState(null);
   const showToast = useCallback((message, type = 'info') => setToast({ message, type }), []);
+
+  // ─── Handle ?workspace= invite link for already-authenticated users ─────────
+  // Auth.jsx handles this for unauthenticated users.  For users who are already
+  // signed in, they land straight in the app and Auth.jsx never renders, so we
+  // process the param here instead — and clean up the URL afterwards.
+  useEffect(() => {
+    if (!user) return;
+    const params  = new URLSearchParams(window.location.search);
+    const wsParam = params.get('workspace');
+    if (!wsParam) return;
+    // Clean the URL immediately so back-navigation doesn't re-trigger this
+    window.history.replaceState({}, '', window.location.pathname);
+    joinWorkspace(wsParam)
+      .then(() => showToast('You have joined the workspace!', 'success'))
+      .catch(() => showToast('Could not join workspace — the link may have expired.', 'warning'));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.uid]); // run once per sign-in, not on every render
 
   // ─── Push-notification permission ────────────────────────────────────────
   const permissionRequested = useRef(false);
@@ -162,11 +180,12 @@ function DiaryApp() {
     return (
       <>
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+        <WorkspaceInvitePrompt showToast={showToast} />
         <Layout pendingCount={0} collaboratorMode {...commonLayoutProps}>
           <ErrorBoundary>
             <Routes>
               <Route path="/settings" element={<SettingsPage showToast={showToast} />} />
-              <Route path="*"         element={<KanbanBoard onWorkspaceCreated={setWorkspaceId} />} />
+              <Route path="*"         element={<KanbanBoard onWorkspaceCreated={setWorkspaceId} showToast={showToast} />} />
             </Routes>
           </ErrorBoundary>
         </Layout>
@@ -178,6 +197,7 @@ function DiaryApp() {
   return (
     <>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      <WorkspaceInvitePrompt showToast={showToast} />
       <Layout pendingCount={pendingCount} {...commonLayoutProps}>
         <ErrorBoundary>
         <Routes>

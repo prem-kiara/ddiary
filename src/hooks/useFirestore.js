@@ -372,29 +372,42 @@ export function useTasks() {
       detail:    newCompleted ? 'Marked as done' : 'Reopened',
     });
 
-    // Notify assignee when owner toggles their task (fire-and-forget)
+    // Notify assignee when owner toggles their task (fire-and-forget).
+    // When completing: use notifyTaskCompleted for a richer email.
+    // When reopening:  use notifyStatusChanged to inform the assignee.
     try {
       const snap = await getDoc(doc(db, 'users', user.uid, 'tasks', id));
       if (snap.exists()) {
         const task = snap.data();
         if (task.assigneeEmail) {
-          const notifStatus = newCompleted ? 'done' : 'open';
-          import('../utils/emailNotifications').then(({ notifyStatusChanged }) => {
-            notifyStatusChanged({
-              ownerEmail: task.assigneeEmail,
-              ownerName: task.assigneeName || task.assigneeEmail,
-              assigneeName: user.displayName || user.email,
-              taskText: task.text || 'A task',
-              newStatus: notifStatus,
-            }).catch(err => log(err, { action: 'notifyStatusChanged' }));
-          });
+          if (newCompleted) {
+            import('../utils/emailNotifications').then(({ notifyTaskCompleted }) => {
+              notifyTaskCompleted({
+                ownerEmail:    task.assigneeEmail,
+                ownerName:     task.assigneeName || task.assigneeEmail,
+                assigneeName:  user.displayName  || user.email,
+                taskText:      task.text         || 'A task',
+                completedAt,
+              }).catch(err => log(err, { action: 'notifyTaskCompleted' }));
+            });
+          } else {
+            import('../utils/emailNotifications').then(({ notifyStatusChanged }) => {
+              notifyStatusChanged({
+                ownerEmail:   task.assigneeEmail,
+                ownerName:    task.assigneeName || task.assigneeEmail,
+                assigneeName: user.displayName  || user.email,
+                taskText:     task.text         || 'A task',
+                newStatus:    'open',
+              }).catch(err => log(err, { action: 'notifyStatusChanged' }));
+            });
+          }
 
           notifyInApp_StatusChanged({
             recipientEmail: task.assigneeEmail,
-            recipientName: task.assigneeName,
-            assigneeName: user.displayName || user.email,
-            taskText: task.text || 'A task',
-            newStatus: notifStatus,
+            recipientName:  task.assigneeName,
+            assigneeName:   user.displayName || user.email,
+            taskText:       task.text        || 'A task',
+            newStatus:      newCompleted ? 'done' : 'open',
             taskId: id,
             ownerUid: user.uid,
           }).catch(err => log(err, { action: 'notifyInApp_StatusChanged' }));
@@ -410,11 +423,19 @@ export function useTasks() {
 
   const clearCompleted = useCallback(async () => {
     if (!user) return;
+    const completedTasks = tasks.filter(t => t.completed);
+    if (!completedTasks.length) return;
     const batch = writeBatch(db);
-    tasks.filter(t => t.completed).forEach(t => {
+    completedTasks.forEach(t => {
       batch.delete(doc(db, 'users', user.uid, 'tasks', t.id));
     });
-    return batch.commit();
+    try {
+      await batch.commit();
+    } catch (err) {
+      logError(err, { location: 'useTasks:clearCompleted', action: 'batchCommit' });
+      // Re-throw so callers can show a toast
+      throw err;
+    }
   }, [user, tasks]);
 
   return { tasks, loading, addTask, updateTask, toggleTask, deleteTask, clearCompleted };
@@ -495,9 +516,15 @@ export function useTaskActivity(ownerUid, taskId) {
       collection(db, 'users', ownerUid, 'tasks', taskId, 'activity'),
       orderBy('createdAt', 'asc')
     );
-    const unsub = onSnapshot(q, (snap) => {
-      setActivity(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
+    const unsub = onSnapshot(
+      q,
+      (snap) => setActivity(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      (err)  => {
+        logError(err, { location: 'useTaskActivity', ownerUid, taskId });
+        // Stop listening so the dead listener doesn't accumulate
+        unsub?.();
+      }
+    );
 
     return unsub;
   }, [ownerUid, taskId]);

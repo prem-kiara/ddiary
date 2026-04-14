@@ -14,7 +14,11 @@ export async function searchOrgPeople(query) {
   const msToken = sessionStorage.getItem(MS_TOKEN_KEY);
   if (!msToken) return [];
 
-  const encoded = encodeURIComponent(query.trim());
+  // Escape single quotes per OData spec (replace ' with '') before embedding in $filter,
+  // then percent-encode for the URL. Without this, a query like "O'Brien" would break
+  // the OData filter syntax and return a 400 error from Graph API.
+  const safeQuery = query.trim().replace(/'/g, "''");
+  const encoded = encodeURIComponent(safeQuery);
 
   try {
     const res = await fetch(

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-  collection, collectionGroup, doc, addDoc, updateDoc, deleteDoc, setDoc,
+  collection, collectionGroup, doc, addDoc, updateDoc, deleteDoc, setDoc, getDoc,
   query, where, orderBy, onSnapshot, serverTimestamp, getDocs,
 } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -217,7 +217,15 @@ export function useWorkspaceActivity(workspaceId, taskId) {
   useEffect(() => {
     if (!workspaceId || !taskId) return;
     const q = query(collection(db, 'workspaces', workspaceId, 'tasks', taskId, 'activity'), orderBy('createdAt', 'asc'));
-    const unsub = onSnapshot(q, snap => setActivity(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
+    // Error callback cleans up the listener — dangling listeners drain quota.
+    const unsub = onSnapshot(
+      q,
+      snap => setActivity(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err  => {
+        logError(err, { location: 'useWorkspaceActivity', workspaceId, taskId });
+        unsub?.(); // stop listening after an error
+      }
+    );
     return unsub;
   }, [workspaceId, taskId]);
 
@@ -268,30 +276,48 @@ export async function removeWorkspaceMember(workspaceId, uid) {
 export async function deleteWorkspace(workspaceId) {
   const wsRef = doc(db, 'workspaces', workspaceId);
 
-  // 1. Delete every task's subcollections, then the task itself
-  const tasksSnap = await getDocs(collection(db, 'workspaces', workspaceId, 'tasks'));
-  for (const taskDoc of tasksSnap.docs) {
-    const taskId = taskDoc.id;
+  // IMPORTANT ORDER: delete the workspace doc FIRST while the user is still a
+  // member. isWorkspaceMember() checks for the member subdoc — if we deleted
+  // member docs first the workspace-doc delete would be denied.
+  // Subcollections can exist without their parent doc in Firestore, so we clean
+  // them up afterwards.
 
-    const [commentsSnap, activitySnap] = await Promise.all([
-      getDocs(collection(db, 'workspaces', workspaceId, 'tasks', taskId, 'comments')),
-      getDocs(collection(db, 'workspaces', workspaceId, 'tasks', taskId, 'activity')),
-    ]);
-
-    await Promise.all([
-      ...commentsSnap.docs.map(d => deleteDoc(d.ref)),
-      ...activitySnap.docs.map(d => deleteDoc(d.ref)),
-    ]);
-
-    await deleteDoc(taskDoc.ref);
-  }
-
-  // 2. Delete all members
-  const membersSnap = await getDocs(collection(db, 'workspaces', workspaceId, 'members'));
-  await Promise.all(membersSnap.docs.map(d => deleteDoc(d.ref)));
-
-  // 3. Delete the workspace doc itself
+  // 1. Delete workspace doc — user is still a member (or creator) at this point.
+  //    This is the ONLY step that must succeed; everything after is best-effort cleanup.
   await deleteDoc(wsRef);
+
+  // 2. Delete every task's subcollections, then the task itself (best-effort)
+  try {
+    const tasksSnap = await getDocs(collection(db, 'workspaces', workspaceId, 'tasks'));
+    for (const taskDoc of tasksSnap.docs) {
+      try {
+        const taskId = taskDoc.id;
+        const [commentsSnap, activitySnap] = await Promise.all([
+          getDocs(collection(db, 'workspaces', workspaceId, 'tasks', taskId, 'comments')).catch(() => ({ docs: [] })),
+          getDocs(collection(db, 'workspaces', workspaceId, 'tasks', taskId, 'activity')).catch(() => ({ docs: [] })),
+        ]);
+        await Promise.all([
+          ...commentsSnap.docs.map(d => deleteDoc(d.ref).catch(() => {})),
+          ...activitySnap.docs.map(d => deleteDoc(d.ref).catch(() => {})),
+        ]);
+        await deleteDoc(taskDoc.ref).catch(() => {});
+      } catch { /* individual task cleanup failure is non-fatal */ }
+    }
+  } catch { /* tasks collection read failure is non-fatal after workspace doc is deleted */ }
+
+  // 3. Delete all members (best-effort — rules may deny after workspace doc is gone)
+  try {
+    const membersSnap = await getDocs(collection(db, 'workspaces', workspaceId, 'members'));
+    await Promise.all(membersSnap.docs.map(d => deleteDoc(d.ref).catch(() => {})));
+  } catch { /* non-fatal */ }
+
+  // 4. Delete all pending/active invites so invited users don't see a stale prompt
+  try {
+    const invitesSnap = await getDocs(
+      query(collection(db, 'workspaceInvites'), where('workspaceId', '==', workspaceId))
+    );
+    await Promise.all(invitesSnap.docs.map(d => deleteDoc(d.ref).catch(() => {})));
+  } catch { /* non-fatal */ }
 }
 
 export async function addWorkspaceTask(workspaceId, task, actor) {
@@ -349,5 +375,208 @@ async function _logWorkspaceActivity(workspaceId, taskId, { actorUid, actorName,
   await addDoc(collection(db, 'workspaces', workspaceId, 'tasks', taskId, 'activity'), {
     actorUid, actorName, action, detail: detail || '',
     createdAt: serverTimestamp(),
+  });
+}
+
+// ─── Workspace invites ────────────────────────────────────────────────────────
+//
+// Invite lifecycle:
+//   Inviter sends → status:'pending'  (invitee sees Accept / Decline prompt)
+//   Invitee accepts → status:'accepted', real member doc created
+//   Invitee declines → status:'rejected', notification sent to inviter
+//   Inviter can re-invite after rejection (overwrites the old doc via same ID)
+//
+// Document ID is deterministic: {workspaceId}_{sanitised_inviteeEmail}
+// This ensures idempotency and makes single-doc reads possible without queries.
+
+function _inviteId(workspaceId, inviteeEmail) {
+  return `${workspaceId}_${inviteeEmail.toLowerCase().replace(/[^a-zA-Z0-9]/g, '_')}`;
+}
+
+/** Real-time listener: pending invites for the signed-in user */
+export function usePendingInvites(userEmail) {
+  const [invites, setInvites] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!userEmail) { setInvites([]); setLoading(false); return; }
+    const q = query(
+      collection(db, 'workspaceInvites'),
+      where('inviteeEmail', '==', userEmail.toLowerCase()),
+      where('status',       '==', 'pending'),
+      orderBy('createdAt',  'desc')
+    );
+    const unsub = onSnapshot(q,
+      snap => { setInvites(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); },
+      ()   => setLoading(false)
+    );
+    return unsub;
+  }, [userEmail]);
+
+  return { invites, loading };
+}
+
+/**
+ * Create (or overwrite-after-rejection) a workspace invite.
+ * Returns the invite doc ID.
+ */
+export async function createWorkspaceInvite({
+  workspaceId, workspaceName, inviterUid, inviterEmail, inviterName, inviteeEmail,
+}) {
+  const email    = inviteeEmail.toLowerCase();
+  const inviteId = _inviteId(workspaceId, email);
+  await setDoc(doc(db, 'workspaceInvites', inviteId), {
+    workspaceId, workspaceName,
+    inviterUid, inviterEmail, inviterName,
+    inviteeEmail: email,
+    status:    'pending',
+    createdAt: serverTimestamp(),
+  });
+  return inviteId;
+}
+
+/**
+ * Fetch a single invite doc without a query (uses deterministic ID).
+ * Returns the invite object or null.
+ */
+export async function getExistingInvite(workspaceId, inviteeEmail) {
+  const snap = await getDoc(doc(db, 'workspaceInvites', _inviteId(workspaceId, inviteeEmail)));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+}
+
+/**
+ * Invitee accepts → adds them as a real workspace member + cleans up pending placeholder.
+ */
+export async function acceptWorkspaceInvite(invite, user) {
+  const { id: inviteId, workspaceId } = invite;
+
+  // 1. Add real member doc
+  await addWorkspaceMember(workspaceId, {
+    uid: user.uid, email: user.email,
+    displayName: user.displayName || user.email,
+    role: 'member',
+  });
+
+  // 2. Remove any pending_* placeholder (silently OK if not present)
+  const placeholder = `pending_${user.email.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  try { await deleteDoc(doc(db, 'workspaces', workspaceId, 'members', placeholder)); } catch {}
+
+  // 3. Mark invite accepted
+  await updateDoc(doc(db, 'workspaceInvites', inviteId), {
+    status: 'accepted', respondedAt: serverTimestamp(),
+  });
+}
+
+/**
+ * Invitee declines → marks invite rejected + notifies inviter.
+ */
+export async function rejectWorkspaceInvite(invite, userEmail) {
+  const { id: inviteId, inviterEmail, workspaceName } = invite;
+
+  // 1. Mark invite rejected
+  await updateDoc(doc(db, 'workspaceInvites', inviteId), {
+    status: 'rejected', respondedAt: serverTimestamp(),
+  });
+
+  // 2. Send in-app notification to the inviter
+  await addDoc(collection(db, 'notifications'), {
+    recipientEmail: inviterEmail,
+    type:           'invite_rejected',
+    title:          'Workspace invite declined',
+    body:           `${userEmail} declined your invite to "${workspaceName}"`,
+    senderEmail:    userEmail,
+    createdAt:      serverTimestamp(),
+    read:           false,
+  });
+}
+
+// ─── Leave-workspace request flow ─────────────────────────────────────────────
+//
+// Members cannot leave immediately — they submit a request which the workspace
+// owner must approve.  On approval the member doc is deleted and the workspace
+// disappears from the leaver's list.  On denial the member stays and receives
+// an in-app notification.
+
+/** Real-time listener: pending leave requests for a workspace (owner view) */
+export function usePendingLeaveRequests(workspaceId) {
+  const [requests, setRequests] = useState([]);
+  const [loading,  setLoading]  = useState(true);
+
+  useEffect(() => {
+    if (!workspaceId) { setRequests([]); setLoading(false); return; }
+    const q = query(
+      collection(db, 'workspaceLeaveRequests'),
+      where('workspaceId', '==', workspaceId),
+      where('status',      '==', 'pending'),
+      orderBy('createdAt', 'desc')
+    );
+    const unsub = onSnapshot(q,
+      snap => { setRequests(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); },
+      ()   => setLoading(false)
+    );
+    return unsub;
+  }, [workspaceId]);
+
+  return { requests, loading };
+}
+
+/** Member submits a leave request */
+export async function requestLeave(workspaceId, workspaceName, user, ownerEmail) {
+  // Deterministic ID prevents duplicate requests
+  const reqId = `${workspaceId}_${user.uid}`;
+  await setDoc(doc(db, 'workspaceLeaveRequests', reqId), {
+    workspaceId, workspaceName,
+    memberUid:    user.uid,
+    memberEmail:  user.email,
+    memberName:   user.displayName || user.email,
+    ownerEmail,
+    status:       'pending',
+    createdAt:    serverTimestamp(),
+  });
+  // Notify the owner in-app
+  await addDoc(collection(db, 'notifications'), {
+    recipientEmail: ownerEmail,
+    type:           'leave_request',
+    title:          'Leave request',
+    body:           `${user.displayName || user.email} wants to leave "${workspaceName}"`,
+    senderEmail:    user.email,
+    createdAt:      serverTimestamp(),
+    read:           false,
+  });
+}
+
+/** Owner approves the leave request — removes the member */
+export async function approveLeave(request) {
+  const { id: reqId, workspaceId, memberUid, memberEmail, memberName, workspaceName } = request;
+  // Remove member doc
+  await removeWorkspaceMember(workspaceId, memberUid);
+  // Delete request doc
+  await deleteDoc(doc(db, 'workspaceLeaveRequests', reqId));
+  // Notify the member
+  await addDoc(collection(db, 'notifications'), {
+    recipientEmail: memberEmail,
+    type:           'leave_approved',
+    title:          'Leave request approved',
+    body:           `You have been removed from "${workspaceName}"`,
+    senderEmail:    null,
+    createdAt:      serverTimestamp(),
+    read:           false,
+  });
+}
+
+/** Owner denies the leave request — member stays */
+export async function denyLeave(request) {
+  const { id: reqId, memberEmail, memberName, workspaceName, ownerEmail } = request;
+  // Delete request doc
+  await deleteDoc(doc(db, 'workspaceLeaveRequests', reqId));
+  // Notify the member that they were denied
+  await addDoc(collection(db, 'notifications'), {
+    recipientEmail: memberEmail,
+    type:           'leave_denied',
+    title:          'Leave request denied',
+    body:           `Your request to leave "${workspaceName}" was denied by the workspace admin`,
+    senderEmail:    ownerEmail,
+    createdAt:      serverTimestamp(),
+    read:           false,
   });
 }

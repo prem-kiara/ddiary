@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { List, Kanban } from 'lucide-react';
+import { List, Kanban, User, Users } from 'lucide-react';
 import TaskManager from './TaskManager';
 import KanbanBoard from './KanbanBoard';
 
@@ -13,7 +13,7 @@ export default function TasksPage({
   showToast, onWorkspaceCreated,
 }) {
   const [view, setView] = useState(
-    () => localStorage.getItem('ddiary_tasks_view') || 'list'
+    () => localStorage.getItem('ddiary_tasks_view') || 'board'
   );
 
   const switchView = (v) => {
@@ -24,13 +24,24 @@ export default function TasksPage({
   return (
     <div className="fade-in">
 
-      {/* ── View toggle pill ──────────────────────────────────────────────── */}
-      <div style={{
-        display: 'inline-flex', gap: 4, marginBottom: 20,
-        background: '#f0e8d8', borderRadius: 14, padding: 4,
-      }}>
-        <ViewBtn icon={List}   label="My Tasks"   id="list"  active={view === 'list'}  onClick={switchView} />
-        <ViewBtn icon={Kanban} label="Team Board" id="board" active={view === 'board'} onClick={switchView} />
+      {/* ── View toggle ───────────────────────────────────────────────────── */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 22 }}>
+        <ViewTab
+          icon={Users}
+          label="Team Board"
+          description="Shared Kanban — assign & track"
+          id="board"
+          active={view === 'board'}
+          onClick={switchView}
+        />
+        <ViewTab
+          icon={User}
+          label="My Tasks"
+          description="Personal to-do list"
+          id="list"
+          active={view === 'list'}
+          onClick={switchView}
+        />
       </div>
 
       {/* ── Views ────────────────────────────────────────────────────────── */}
@@ -49,29 +60,39 @@ export default function TasksPage({
       )}
 
       {view === 'board' && (
-        <KanbanBoard onWorkspaceCreated={onWorkspaceCreated} />
+        <KanbanBoard onWorkspaceCreated={onWorkspaceCreated} showToast={showToast} />
       )}
     </div>
   );
 }
 
-// ── Small helper ──────────────────────────────────────────────────────────────
-function ViewBtn({ icon: Icon, label, id, active, onClick }) {
+// ── Tab button ─────────────────────────────────────────────────────────────────
+function ViewTab({ icon: Icon, label, description, id, active, onClick }) {
   return (
     <button
       onClick={() => onClick(id)}
       style={{
-        padding: '8px 18px', borderRadius: 10, fontSize: 13, fontWeight: 700,
-        cursor: 'pointer', border: 'none',
-        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '10px 18px', borderRadius: 12, cursor: 'pointer',
+        border: active ? '2px solid #2a9d8f' : '2px solid #e8d5b7',
+        display: 'flex', alignItems: 'center', gap: 10,
+        background: active ? '#f0faf9' : '#faf7f2',
         transition: 'all 0.18s',
-        background: active ? '#fff' : 'transparent',
-        color:      active ? '#4a3728' : '#8a7a6a',
-        boxShadow:  active ? '0 1px 6px rgba(0,0,0,0.12)' : 'none',
+        boxShadow: active ? '0 2px 8px rgba(42,157,143,0.15)' : 'none',
+        textAlign: 'left',
       }}
     >
-      <Icon size={14} />
-      {label}
+      <div style={{
+        width: 36, height: 36, borderRadius: 8, flexShrink: 0,
+        background: active ? '#2a9d8f' : '#e8d5b7',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        transition: 'background 0.18s',
+      }}>
+        <Icon size={16} color={active ? '#fff' : '#8a7a6a'} />
+      </div>
+      <div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: active ? '#2a9d8f' : '#4a3728', lineHeight: 1.2 }}>{label}</div>
+        <div style={{ fontSize: 11, color: '#8a7a6a', marginTop: 2 }}>{description}</div>
+      </div>
     </button>
   );
 }

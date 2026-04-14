@@ -6,7 +6,7 @@ import {
   getAdditionalUserInfo,
   OAuthProvider,
 } from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { doc, setDoc, getDoc, deleteDoc, collectionGroup, query, where, getDocs } from 'firebase/firestore';
 import { auth, db, microsoftProvider } from '../firebase';
 import { writeUserDirectory } from '../hooks/useFirestore';
 import { addWorkspaceMember } from '../hooks/useWorkspace';
@@ -109,10 +109,40 @@ export function AuthProvider({ children }) {
     }
   }, [msToken, msRefreshing, saveMsToken]);
 
+  // ── Claim any pending_* workspace memberships for this user ─────────────
+  // When an admin adds someone from the org directory BEFORE they sign in,
+  // a placeholder doc is created: workspaces/{wsId}/members/pending_{email}.
+  // On every sign-in we scan for these placeholders and replace them with the
+  // user's real Firebase UID so useMyWorkspaces can find them immediately —
+  // even if the user never clicked the invite link.
+  const claimPendingMemberships = useCallback(async (firebaseUser) => {
+    const { uid, email, displayName } = firebaseUser;
+    if (!email) return;
+    const placeholderUid = `pending_${email.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    try {
+      const snap = await getDocs(
+        query(collectionGroup(db, 'members'), where('uid', '==', placeholderUid))
+      );
+      await Promise.all(snap.docs.map(async (memberDoc) => {
+        const workspaceId = memberDoc.ref.parent.parent?.id;
+        if (!workspaceId) return;
+        // Write real-UID doc, then remove placeholder
+        await addWorkspaceMember(workspaceId, {
+          uid, email, displayName: displayName || email,
+          role: memberDoc.data().role || 'member',
+        });
+        await deleteDoc(memberDoc.ref);
+      }));
+    } catch { /* non-fatal — indexes may not exist yet on first deploy */ }
+  }, []);
+
   // ── Firebase auth state listener ─────────────────────────────────────────
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
+        // Claim any pending workspace memberships first, then load profile
+        await claimPendingMemberships(firebaseUser);
+
         const profileRef  = doc(db, 'users', firebaseUser.uid);
         const profileSnap = await getDoc(profileRef).catch(() => null);
         setUser({
@@ -128,7 +158,7 @@ export function AuthProvider({ children }) {
       setLoading(false);
     });
     return unsub;
-  }, [saveMsToken]);
+  }, [saveMsToken, claimPendingMemberships]);
 
   // ── Sign in with Microsoft (works for both owner & member) ───────────────
   const loginWithMicrosoft = async (ownerUid = null) => {
@@ -196,11 +226,26 @@ export function AuthProvider({ children }) {
     setUser(prev => ({ ...prev, settings }));
   };
 
-  // Existing user joins a workspace via ?workspace= link
+  // Join a workspace via ?workspace= link (works for both new & already-signed-in users).
+  //
+  // Before adding the real UID, we clean up any "pending_*" placeholder doc that was
+  // created when an admin added this person from the org directory.  If we didn't do
+  // this, the same person would appear twice in the members list and the Assign-to
+  // dropdown (once as pending_*, once as their real Firebase UID).
   const joinWorkspace = async (workspaceId) => {
     if (!auth.currentUser) return;
     const { uid, email, displayName } = auth.currentUser;
+
+    // Add real member doc FIRST — this makes isWorkspaceMember() return true so
+    // the subsequent placeholder delete (which requires being a member) succeeds.
     await addWorkspaceMember(workspaceId, { uid, email, displayName, role: 'member' });
+
+    // Now clean up the pending_* placeholder (if it exists).
+    // We're a member now so the delete is allowed by Firestore rules.
+    const placeholderUid = `pending_${email.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    try {
+      await deleteDoc(doc(db, 'workspaces', workspaceId, 'members', placeholderUid));
+    } catch { /* non-fatal */ }
   };
 
   // Called after owner creates a workspace (kept for backward compat)

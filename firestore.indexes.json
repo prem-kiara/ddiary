@@ -63,6 +63,24 @@
         { "fieldPath": "recipientEmail", "order": "ASCENDING" },
         { "fieldPath": "createdAt",      "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "workspaceLeaveRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "workspaceId", "order": "ASCENDING" },
+        { "fieldPath": "status",      "order": "ASCENDING" },
+        { "fieldPath": "createdAt",   "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "workspaceInvites",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "inviteeEmail", "order": "ASCENDING" },
+        { "fieldPath": "status",       "order": "ASCENDING" },
+        { "fieldPath": "createdAt",    "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [
