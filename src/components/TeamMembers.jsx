@@ -10,6 +10,7 @@ import {
   createWorkspace, renameWorkspace, addWorkspaceMember, removeWorkspaceMember, deleteWorkspace,
 } from '../hooks/useWorkspace';
 import { fetchAllOrgUsers } from '../utils/graphPeopleSearch';
+import { notifyWorkspaceInvite } from '../utils/emailNotifications';
 
 export default function TeamMembers({ showToast }) {
   const { user } = useAuth();
@@ -207,8 +208,7 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
   };
 
   const handleAddFromOrg = async (orgUser) => {
-    // We can only add them as a pending invite — they need to sign in to get a uid.
-    // For now, we create a placeholder member entry with their email.
+    // Create a placeholder member entry with their email.
     // When they sign in via the invite link, they'll get a proper uid.
     try {
       const placeholderUid = `pending_${orgUser.email.replace(/[^a-zA-Z0-9]/g, '_')}`;
@@ -220,6 +220,16 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
       });
       setOrgUsers(prev => prev.filter(u => u.email !== orgUser.email));
       showToast(`Invited ${orgUser.displayName}`, 'success');
+
+      // Send invite email (fire-and-forget — don't block the UI)
+      notifyWorkspaceInvite({
+        inviteeEmail:  orgUser.email,
+        inviteeName:   orgUser.displayName,
+        inviterName:   user.displayName || user.email,
+        workspaceName: workspace?.name || 'Workspace',
+        inviteUrl,
+      }).catch(() => {}); // silently ignore if MS token unavailable
+
     } catch { showToast('Failed to add member', 'warning'); }
   };
 

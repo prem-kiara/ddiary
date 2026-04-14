@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTaskComments, useTaskActivity, addComment, updateTaskStatus } from '../hooks/useFirestore';
+import { logError } from '../utils/errorLogger';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
@@ -62,7 +63,7 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
     if (ownerUid && user.uid !== ownerUid) {
       getDoc(doc(db, 'users', ownerUid)).then(snap => {
         if (snap.exists()) setOwnerEmail(snap.data().email);
-      }).catch(() => {});
+      }).catch(err => console.warn('[TaskCollabPanel] failed to fetch owner email:', err));
     }
   }, [ownerUid, user.uid]);
 
@@ -84,7 +85,7 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
       });
       setCommentText('');
     } catch (err) {
-      console.error('addComment error', err);
+      logError(err, { location: 'TaskCollabPanel:handleSend', action: 'addComment' }, user.uid);
     }
     setSending(false);
   };
@@ -104,7 +105,7 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
         assigneeName: task.assigneeName,
       });
     } catch (err) {
-      console.error('updateTaskStatus error', err);
+      logError(err, { location: 'TaskCollabPanel:handleStatus', action: 'updateTaskStatus' }, user.uid);
     }
     setStatusSaving(false);
   };

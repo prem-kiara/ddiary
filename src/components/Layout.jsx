@@ -1,3 +1,4 @@
+import { useNavigate, useLocation } from 'react-router-dom';
 import { BookOpen, Home, PenTool, CheckSquare, Settings, LogOut, Users, List, Kanban } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import NotificationBell from './NotificationBell';
@@ -6,31 +7,45 @@ const formatDate = (d) => new Date(d).toLocaleDateString('en-US', {
   weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
 });
 
+// Map URL path prefixes to nav item IDs so the active tab highlights correctly.
+function useActivePage() {
+  const { pathname } = useLocation();
+  if (pathname === '/' || pathname.startsWith('/entry')) return 'home';
+  if (pathname.startsWith('/write'))    return 'write';
+  if (pathname.startsWith('/tasks'))    return 'tasks';
+  if (pathname.startsWith('/team'))     return 'team';
+  if (pathname.startsWith('/settings')) return 'settings';
+  if (pathname.startsWith('/collaborate')) return 'collaborate';
+  return 'home';
+}
+
 export default function Layout({
-  children, currentPage, onNavigate, pendingCount,
+  children, pendingCount,
   memberMode = false, collaboratorMode = false,
   notifications = [], unreadCount = 0, onMarkRead, onMarkAllRead,
 }) {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
+  const activePage = useActivePage();
 
   const ownerNavItems = [
-    { id: 'home',     icon: Home,        label: 'Diary'    },
-    { id: 'write',    icon: PenTool,     label: 'Write'    },
-    { id: 'tasks',    icon: List,        label: 'Tasks'    },
-    { id: 'team',     icon: Users,       label: 'Team'     },
-    { id: 'settings', icon: Settings,    label: 'Settings' },
+    { id: 'home',     path: '/',         icon: Home,        label: 'Diary'    },
+    { id: 'write',    path: '/write',    icon: PenTool,     label: 'Write'    },
+    { id: 'tasks',    path: '/tasks',    icon: List,        label: 'Tasks'    },
+    { id: 'team',     path: '/team',     icon: Users,       label: 'Workspaces' },
+    { id: 'settings', path: '/settings', icon: Settings,    label: 'Settings' },
   ];
 
   // Team members (subordinates) see only their assigned tasks + settings
   const memberNavItems = [
-    { id: 'tasks',    icon: CheckSquare, label: 'My Tasks' },
-    { id: 'settings', icon: Settings,    label: 'Settings' },
+    { id: 'tasks',    path: '/tasks',    icon: CheckSquare, label: 'My Tasks' },
+    { id: 'settings', path: '/settings', icon: Settings,    label: 'Settings' },
   ];
 
   // Collaborators (peers) see only the shared workspace + settings
   const collaboratorNavItems = [
-    { id: 'collaborate', icon: Kanban,   label: 'Collaborate' },
-    { id: 'settings',    icon: Settings, label: 'Settings'    },
+    { id: 'collaborate', path: '/',         icon: Kanban,   label: 'Collaborate' },
+    { id: 'settings',    path: '/settings', icon: Settings, label: 'Settings'    },
   ];
 
   const navItems = collaboratorMode
@@ -62,7 +77,7 @@ export default function Layout({
             unreadCount={unreadCount}
             onMarkRead={onMarkRead || (() => {})}
             onMarkAllRead={onMarkAllRead || (() => {})}
-            onNavigateToTasks={() => onNavigate('tasks')}
+            onNavigateToTasks={() => navigate('/tasks')}
           />
           <button className="btn-icon" onClick={logout} title="Sign Out" style={{ color: 'rgba(254,249,239,0.7)' }}>
             <LogOut size={18} />
@@ -75,8 +90,8 @@ export default function Layout({
         {navItems.map(n => (
           <button
             key={n.id}
-            className={`nav-btn ${currentPage === n.id ? 'active' : ''}`}
-            onClick={() => onNavigate(n.id)}
+            className={`nav-btn ${activePage === n.id ? 'active' : ''}`}
+            onClick={() => navigate(n.path)}
           >
             <n.icon size={18} />
             <span>{n.label}</span>

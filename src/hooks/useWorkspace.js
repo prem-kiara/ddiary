@@ -8,77 +8,110 @@ import { useAuth } from '../contexts/AuthContext';
 import { logError } from '../utils/errorLogger';
 
 // ─── All workspaces where the current user is a member (real-time) ──────────
+//
+// Two parallel real-time listeners merge into one workspaces array:
+//   1. collectionGroup('members') where uid == me  — workspaces I'm a member of
+//   2. collection('workspaces')   where createdBy == me — workspaces I created
+//
+// Each listener updates state immediately when it resolves, so the UI never
+// waits for both. Listener 2 acts as an instant fallback while the
+// collection-group index builds (takes a few minutes after first deploy).
 export function useMyWorkspaces() {
   const { user } = useAuth();
   const [workspaces, setWorkspaces] = useState([]);
   const [loading,    setLoading]    = useState(true);
 
-  // Track inner workspace-doc listeners so we can clean them up properly.
-  // The key problem: onSnapshot callbacks can't return cleanup functions.
-  // We store active inner unsubs in a ref and tear them down explicitly.
+  // wsMapRef is shared between both listeners so merging doesn't cause races.
+  const wsMapRef       = useRef(new Map());
   const innerUnsubsRef = useRef([]);
 
   useEffect(() => {
     if (!user?.uid) { setWorkspaces([]); setLoading(false); return; }
+
+    wsMapRef.current = new Map();
+
+    const flush = () => {
+      setWorkspaces(
+        Array.from(wsMapRef.current.values())
+          .sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0))
+      );
+      setLoading(false);
+    };
 
     const cleanupInner = () => {
       innerUnsubsRef.current.forEach(fn => fn());
       innerUnsubsRef.current = [];
     };
 
-    const q = query(
+    // ── Listener 1: workspaces where I am a member (via collection-group) ────
+    const membersQuery = query(
       collectionGroup(db, 'members'),
       where('uid', '==', user.uid)
     );
 
-    const unsub = onSnapshot(q, (snap) => {
-      // Tear down previous workspace listeners before setting up new ones
+    const unsubMembers = onSnapshot(membersQuery, (snap) => {
       cleanupInner();
 
-      const memberDocs = snap.docs.map(d => ({
-        workspaceId: d.ref.parent.parent?.id,
-        role: d.data().role,
-      })).filter(d => d.workspaceId);
+      const memberDocs = snap.docs
+        .map(d => ({ workspaceId: d.ref.parent.parent?.id, role: d.data().role }))
+        .filter(d => d.workspaceId);
 
       if (memberDocs.length === 0) {
-        setWorkspaces([]);
-        setLoading(false);
+        flush();
         return;
       }
 
-      // Shared mutable state for this batch of listeners
-      const wsMap = new Map();
       let loaded = 0;
-      const total = memberDocs.length;
-
-      const flush = () => {
-        setWorkspaces(Array.from(wsMap.values()));
-        setLoading(false);
-      };
-
-      innerUnsubsRef.current = memberDocs.map(({ workspaceId, role }) => {
-        return onSnapshot(doc(db, 'workspaces', workspaceId), (wsSnap) => {
+      innerUnsubsRef.current = memberDocs.map(({ workspaceId, role }) =>
+        onSnapshot(doc(db, 'workspaces', workspaceId), (wsSnap) => {
           if (wsSnap.exists()) {
-            wsMap.set(workspaceId, { id: workspaceId, role, ...wsSnap.data() });
+            wsMapRef.current.set(workspaceId, { id: workspaceId, role, ...wsSnap.data() });
           } else {
-            // Workspace doc is missing — likely deleted; remove from map silently
-            wsMap.delete(workspaceId);
+            wsMapRef.current.delete(workspaceId);
           }
           loaded++;
-          if (loaded >= total) flush();
+          // Flush as soon as all inner doc listeners have fired at least once
+          if (loaded >= memberDocs.length) flush();
         }, (err) => {
           logError(err, { location: 'useMyWorkspaces', action: 'workspaceDocSnapshot', workspaceId });
           loaded++;
-          if (loaded >= total) flush();
-        });
-      });
+          if (loaded >= memberDocs.length) flush();
+        })
+      );
     }, (err) => {
       logError(err, { location: 'useMyWorkspaces', action: 'membersCollectionGroupQuery' });
-      setLoading(false);
+      flush(); // show whatever createdBy query has already populated
+    });
+
+    // ── Listener 2: workspaces I created (instant fallback, always works) ────
+    const createdByQuery = query(
+      collection(db, 'workspaces'),
+      where('createdBy', '==', user.uid)
+    );
+
+    const unsubCreated = onSnapshot(createdByQuery, (snap) => {
+      snap.docs.forEach(d => {
+        // Member query is authoritative for role; don't overwrite if already present
+        if (!wsMapRef.current.has(d.id)) {
+          wsMapRef.current.set(d.id, { id: d.id, role: 'admin', ...d.data() });
+        }
+      });
+      // Remove workspace from map if it was only here and has now been deleted
+      wsMapRef.current.forEach((_, id) => {
+        const inThisSnap   = snap.docs.some(d => d.id === id);
+        const inMemberSnap = innerUnsubsRef.current.length > 0 &&
+                             Array.from(wsMapRef.current.keys()).includes(id);
+        if (!inThisSnap && !inMemberSnap) wsMapRef.current.delete(id);
+      });
+      flush(); // update immediately — don't wait for member query
+    }, (err) => {
+      logError(err, { location: 'useMyWorkspaces', action: 'createdByQuery' });
+      flush();
     });
 
     return () => {
-      unsub();
+      unsubMembers();
+      unsubCreated();
       cleanupInner();
     };
   }, [user?.uid]);

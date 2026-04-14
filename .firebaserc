@@ -5,7 +5,9 @@
   "targets": {
     "ddiary-a72ca": {
       "hosting": {
-        "prod": ["dhanamdiary"]
+        "prod": [
+          "ddiary-a72ca"
+        ]
       }
     }
   },

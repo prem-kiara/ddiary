@@ -19,23 +19,97 @@ export function useAuth() {
   return ctx;
 }
 
-// ─── Key for persisting the Microsoft access token across page reloads ───────
-const MS_TOKEN_KEY = 'ddiary_ms_access_token';
+// ─── Keys for persisting the Microsoft access token across page reloads ──────
+const MS_TOKEN_KEY        = 'ddiary_ms_access_token';
+const MS_TOKEN_EXPIRY_KEY = 'ddiary_ms_token_expiry';
+// MS Graph tokens last ~60 min; we treat them as valid for 55 min to allow headroom
+const MS_TOKEN_TTL_MS = 55 * 60 * 1000;
+
+/** Read the stored token only if it has not yet expired. */
+function readStoredMsToken() {
+  const token  = sessionStorage.getItem(MS_TOKEN_KEY);
+  const expiry = sessionStorage.getItem(MS_TOKEN_EXPIRY_KEY);
+  if (!token || !expiry) return null;
+  return Date.now() < parseInt(expiry, 10) ? token : null;
+}
 
 export function AuthProvider({ children }) {
   const [user,    setUser]    = useState(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
 
-  // Microsoft access token for Graph API (SharePoint uploads)
-  const [msToken, setMsToken] = useState(() => sessionStorage.getItem(MS_TOKEN_KEY));
+  // Microsoft access token for Graph API (SharePoint uploads, email)
+  const [msToken,       setMsToken]       = useState(() => readStoredMsToken());
+  const [msTokenExpiry, setMsTokenExpiry] = useState(() => {
+    const expiry = sessionStorage.getItem(MS_TOKEN_EXPIRY_KEY);
+    return expiry ? parseInt(expiry, 10) : null;
+  });
+  const [msRefreshing, setMsRefreshing] = useState(false);
 
+  // ── Persist token + expiry ────────────────────────────────────────────────
   const saveMsToken = useCallback((token) => {
     setMsToken(token);
-    if (token) sessionStorage.setItem(MS_TOKEN_KEY, token);
-    else       sessionStorage.removeItem(MS_TOKEN_KEY);
+    if (token) {
+      const expiry = Date.now() + MS_TOKEN_TTL_MS;
+      setMsTokenExpiry(expiry);
+      sessionStorage.setItem(MS_TOKEN_KEY,        token);
+      sessionStorage.setItem(MS_TOKEN_EXPIRY_KEY, String(expiry));
+    } else {
+      setMsTokenExpiry(null);
+      sessionStorage.removeItem(MS_TOKEN_KEY);
+      sessionStorage.removeItem(MS_TOKEN_EXPIRY_KEY);
+    }
   }, []);
 
+  // ── Proactive expiry check every minute ──────────────────────────────────
+  // Clears the stored token once it expires so callers get a clean null rather
+  // than a stale token that will 401 on the server side.
+  useEffect(() => {
+    if (!msToken) return;
+    const id = setInterval(() => {
+      const expiry = sessionStorage.getItem(MS_TOKEN_EXPIRY_KEY);
+      if (!expiry || Date.now() >= parseInt(expiry, 10)) {
+        saveMsToken(null);
+      }
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [msToken, saveMsToken]);
+
+  // ── Derived: is the stored token currently valid? ─────────────────────────
+  const isMsTokenValid = useCallback(() => {
+    if (!msToken || !msTokenExpiry) return false;
+    return Date.now() < msTokenExpiry;
+  }, [msToken, msTokenExpiry]);
+
+  // ── Minutes remaining before token expires (for UI warnings) ─────────────
+  const msTokenMinutesRemaining = msTokenExpiry
+    ? Math.max(0, Math.floor((msTokenExpiry - Date.now()) / 60_000))
+    : 0;
+
+  // ── Silent token refresh via Microsoft SSO ────────────────────────────────
+  // Microsoft's SSO means signInWithPopup completes instantly (no visible UI)
+  // when the user already has an active Azure AD / M365 session in the browser.
+  const refreshMsToken = useCallback(async () => {
+    if (msRefreshing) return msToken; // already in flight
+    setMsRefreshing(true);
+    try {
+      const result     = await signInWithPopup(auth, microsoftProvider);
+      const credential = OAuthProvider.credentialFromResult(result);
+      const newToken   = result._tokenResponse?.oauthAccessToken || credential?.accessToken;
+      if (newToken) {
+        saveMsToken(newToken);
+        return newToken;
+      }
+      return null;
+    } catch (err) {
+      console.warn('[AuthContext] MS token refresh failed:', err.message);
+      return null;
+    } finally {
+      setMsRefreshing(false);
+    }
+  }, [msToken, msRefreshing, saveMsToken]);
+
+  // ── Firebase auth state listener ─────────────────────────────────────────
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
@@ -56,7 +130,7 @@ export function AuthProvider({ children }) {
     return unsub;
   }, [saveMsToken]);
 
-  // ── Sign in with Microsoft (works for both owner & member) ────────────────
+  // ── Sign in with Microsoft (works for both owner & member) ───────────────
   const loginWithMicrosoft = async (ownerUid = null) => {
     setError(null);
     try {
@@ -142,7 +216,11 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthContext.Provider value={{
-      user, loading, error, msToken,
+      user, loading, error,
+      // Token state & helpers
+      msToken, msTokenExpiry, msTokenMinutesRemaining, msRefreshing,
+      isMsTokenValid, refreshMsToken,
+      // Auth actions
       loginWithMicrosoft, logout, updateSettings,
       joinWorkspace, setWorkspaceId,
       setError, isOwner, isMember, isCollaborator,

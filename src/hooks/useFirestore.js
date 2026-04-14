@@ -6,7 +6,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { createLogger } from '../utils/errorLogger';
+import { createLogger, logError } from '../utils/errorLogger';
 import {
   notifyInApp_TaskAssigned,
   notifyInApp_StatusChanged,
@@ -18,14 +18,23 @@ import {
 const SP_DRIVE_ID = import.meta.env.VITE_SHAREPOINT_DRIVE_ID;
 const MS_TOKEN_KEY = 'ddiary_ms_access_token';
 
+/** Sentinel error thrown when the MS Graph token is expired or revoked. */
+export class MsTokenExpiredError extends Error {
+  constructor() {
+    super('Microsoft token expired — please sign in again');
+    this.name = 'MsTokenExpiredError';
+  }
+}
+
 /**
  * Upload a data URL (base64 image) to SharePoint.
  * Files go to: Dhanam Repository / Shared Documents / DDiary / drawings / {userEmail} /
  * Returns the SharePoint web URL for the uploaded file.
+ * Throws MsTokenExpiredError on HTTP 401 so callers can refresh the token and retry.
  */
 async function uploadToSharePoint(dataUrl, userEmail) {
   const msToken = sessionStorage.getItem(MS_TOKEN_KEY);
-  if (!msToken) throw new Error('Microsoft token not available — please sign in again');
+  if (!msToken) throw new MsTokenExpiredError();
   if (!SP_DRIVE_ID) throw new Error('SharePoint Drive ID not configured');
 
   // Convert data URL to Blob
@@ -53,7 +62,7 @@ async function uploadToSharePoint(dataUrl, userEmail) {
   );
 
   if (uploadRes.status === 401) {
-    throw new Error('Microsoft token expired — please sign out and sign in again');
+    throw new MsTokenExpiredError();
   }
   if (!uploadRes.ok) {
     const errData = await uploadRes.json().catch(() => ({}));
@@ -88,7 +97,7 @@ async function uploadToSharePoint(dataUrl, userEmail) {
 
 // ─── Diary Entries Hook ───────────────────────────────────────────────────
 export function useEntries() {
-  const { user } = useAuth();
+  const { user, refreshMsToken } = useAuth();
   const [entries, setEntries]               = useState([]);
   const [trashedEntries, setTrashedEntries] = useState([]);
   const [archivedEntries, setArchivedEntries] = useState([]);
@@ -114,36 +123,62 @@ export function useEntries() {
     return unsub;
   }, [user]);
 
+  /**
+   * Upload a drawing, retrying once after a token refresh on 401.
+   * Returns the SharePoint URL on success, or null on failure.
+   */
+  const uploadDrawingSafe = useCallback(async (dataUrl, logCtx) => {
+    try {
+      return await uploadToSharePoint(dataUrl, user.email);
+    } catch (err) {
+      if (err instanceof MsTokenExpiredError) {
+        // Try refreshing the MS token, then retry the upload once
+        const newToken = await refreshMsToken().catch(() => null);
+        if (newToken) {
+          try { return await uploadToSharePoint(dataUrl, user.email); }
+          catch (retryErr) { logCtx(retryErr, { action: 'uploadDrawing:retry' }); }
+        } else {
+          logCtx(err, { action: 'uploadDrawing:tokenExpired' });
+        }
+      } else {
+        logCtx(err, { action: 'uploadDrawing' });
+      }
+      return null;
+    }
+  }, [user, refreshMsToken]);
+
   const addEntry = useCallback(async (entry) => {
     if (!user) return;
-    const log = createLogger('useEntries', user.uid);
+    const log = createLogger('useEntries:addEntry', user.uid);
     const col = collection(db, 'users', user.uid, 'entries');
     const drawingUrls = [];
     if (entry.drawings?.length) {
       for (let i = 0; i < entry.drawings.length; i++) {
-        try { drawingUrls.push(await uploadToSharePoint(entry.drawings[i], user.email)); }
-        catch (err) { log(err, { action: 'uploadDrawing', index: i }); }
+        const url = await uploadDrawingSafe(entry.drawings[i], log);
+        if (url) drawingUrls.push(url);
       }
     }
     return addDoc(col, { ...entry, drawings: drawingUrls, deletedAt: null, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-  }, [user]);
+  }, [user, uploadDrawingSafe]);
 
   const updateEntry = useCallback(async (id, updates) => {
     if (!user) return;
-    const log = createLogger('useEntries', user.uid);
+    const log = createLogger('useEntries:updateEntry', user.uid);
     const docRef = doc(db, 'users', user.uid, 'entries', id);
     if (updates.drawings) {
       const drawingUrls = [];
       for (const drawing of updates.drawings) {
         if (drawing.startsWith('data:')) {
-          try { drawingUrls.push(await uploadToSharePoint(drawing, user.email)); }
-          catch (err) { log(err, { action: 'uploadDrawing' }); }
-        } else { drawingUrls.push(drawing); }
+          const url = await uploadDrawingSafe(drawing, log);
+          if (url) drawingUrls.push(url);
+        } else {
+          drawingUrls.push(drawing);
+        }
       }
       updates.drawings = drawingUrls;
     }
     return updateDoc(docRef, { ...updates, updatedAt: serverTimestamp() });
-  }, [user]);
+  }, [user, uploadDrawingSafe]);
 
   const deleteEntry = useCallback(async (id) => {
     if (!user) return;
@@ -205,6 +240,7 @@ export function useTasks() {
 
   const addTask = useCallback(async (task) => {
     if (!user) return;
+    const log = createLogger('useTasks:addTask', user.uid);
     // Always lowercase the email so Firestore where-equality queries match reliably
     const assigneeEmail = task.assigneeEmail?.trim().toLowerCase() || null;
     const assigneeName  = task.assigneeName?.trim() || null;
@@ -244,7 +280,7 @@ export function useTasks() {
           priority: task.priority || 'medium',
           ownerName: user.displayName || user.email,
           ownerUid: user.uid,
-        }).catch(() => {});
+        }).catch(err => log(err, { action: 'notifyTaskAssigned' }));
       });
 
       notifyInApp_TaskAssigned({
@@ -254,7 +290,7 @@ export function useTasks() {
         ownerName: user.displayName || user.email,
         ownerUid: user.uid,
         taskId: ref.id,
-      }).catch(() => {});
+      }).catch(err => log(err, { action: 'notifyInApp_TaskAssigned' }));
     }
 
     return ref;
@@ -262,6 +298,7 @@ export function useTasks() {
 
   const updateTask = useCallback(async (id, updates) => {
     if (!user) return;
+    const log = createLogger('useTasks:updateTask', user.uid);
     const sanitized = { ...updates };
     // Ensure assigneeEmail is always lowercase so queries match
     if (sanitized.assigneeEmail !== undefined) {
@@ -303,7 +340,7 @@ export function useTasks() {
           priority:      sanitized.priority || 'medium',
           ownerName:     user.displayName || user.email,
           ownerUid:      user.uid,
-        }).catch(() => {});
+        }).catch(err => log(err, { action: 'notifyTaskAssigned' }));
       });
 
       notifyInApp_Reassigned({
@@ -313,12 +350,13 @@ export function useTasks() {
         ownerName:     user.displayName || user.email,
         ownerUid:      user.uid,
         taskId:        id,
-      }).catch(() => {});
+      }).catch(err => log(err, { action: 'notifyInApp_Reassigned' }));
     }
   }, [user]);
 
   const toggleTask = useCallback(async (id, currentState) => {
     if (!user) return;
+    const log = createLogger('useTasks:toggleTask', user.uid);
     const newCompleted = !currentState;
     const completedAt = newCompleted ? new Date().toISOString() : null;
     await updateDoc(doc(db, 'users', user.uid, 'tasks', id), {
@@ -348,7 +386,7 @@ export function useTasks() {
               assigneeName: user.displayName || user.email,
               taskText: task.text || 'A task',
               newStatus: notifStatus,
-            }).catch(() => {});
+            }).catch(err => log(err, { action: 'notifyStatusChanged' }));
           });
 
           notifyInApp_StatusChanged({
@@ -359,7 +397,7 @@ export function useTasks() {
             newStatus: notifStatus,
             taskId: id,
             ownerUid: user.uid,
-          }).catch(() => {});
+          }).catch(err => log(err, { action: 'notifyInApp_StatusChanged' }));
         }
       }
     } catch { /* non-fatal */ }
@@ -412,7 +450,7 @@ export function useAssignedTasks() {
       setLoading(false);
       setError(null);
     }, (err) => {
-      console.error('useAssignedTasks error:', err);
+      logError(err, { location: 'useAssignedTasks', action: 'onSnapshot' });
       setError(err.message);
       setLoading(false);
     });
@@ -513,7 +551,7 @@ export async function addComment(ownerUid, taskId, { authorUid, authorName, text
         commenterName: authorName,
         taskText: taskText || 'A task',
         commentText: text,
-      }).catch(() => {});
+      }).catch(err => logError(err, { location: 'addComment', action: 'notify' }));
     });
 
     notifyInApp_Comment({
@@ -523,7 +561,7 @@ export async function addComment(ownerUid, taskId, { authorUid, authorName, text
       commentText: text,
       taskId,
       ownerUid,
-    }).catch(() => {});
+    }).catch(err => logError(err, { location: 'addComment', action: 'notify' }));
   }
 }
 
@@ -553,7 +591,7 @@ export async function updateTaskStatus(ownerUid, taskId, { status, actorUid, act
           assigneeName: assigneeName || actorName,
           taskText: taskText || 'A task',
           completedAt,
-        }).catch(() => {});
+        }).catch(err => logError(err, { location: 'updateTaskStatus', action: 'notify' }));
       });
     } else {
       import('../utils/emailNotifications').then(({ notifyStatusChanged }) => {
@@ -563,7 +601,7 @@ export async function updateTaskStatus(ownerUid, taskId, { status, actorUid, act
           assigneeName: assigneeName || actorName,
           taskText: taskText || 'A task',
           newStatus: status,
-        }).catch(() => {});
+        }).catch(err => logError(err, { location: 'updateTaskStatus', action: 'notify' }));
       });
     }
 
@@ -575,7 +613,7 @@ export async function updateTaskStatus(ownerUid, taskId, { status, actorUid, act
       newStatus: status,
       taskId,
       ownerUid,
-    }).catch(() => {});
+    }).catch(err => logError(err, { location: 'updateTaskStatus', action: 'notify' }));
   }
 }
 
@@ -617,7 +655,7 @@ export function useTeamMembers() {
         setMembers(data);
         setLoading(false);
       },
-      (err) => { console.error('teamMembers snapshot error:', err); setLoading(false); }
+      (err) => { logError(err, { location: 'useTeamMembers', action: 'onSnapshot' }); setLoading(false); }
     );
 
     return unsub;

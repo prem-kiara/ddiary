@@ -186,7 +186,41 @@ export async function notifyTaskCompleted({ ownerEmail, ownerName, assigneeName,
 }
 
 /**
- * 4. New Comment — sent to the other party when someone comments on a task.
+ * 4. Workspace Invite — sent to a new member when they are added to a workspace.
+ */
+export async function notifyWorkspaceInvite({ inviteeEmail, inviteeName, inviterName, workspaceName, inviteUrl }) {
+  if (!inviteeEmail) return false;
+
+  const body = `
+    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+      Hi${inviteeName ? ' <strong>' + inviteeName + '</strong>' : ''},
+    </p>
+    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+      <strong>${inviterName}</strong> has invited you to join a workspace on DDiary:
+    </p>
+    <div style="background: #f9f5ec; border-left: 4px solid #2a9d8f; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 20px;">
+      <p style="font-size: 18px; font-weight: 700; color: #4a3728; margin: 0;">
+        🗂 ${workspaceName}
+      </p>
+    </div>
+    <p style="font-size: 14px; color: #4a3728; margin: 0 0 20px; line-height: 1.6;">
+      Click the button below to open DDiary and access the shared workspace board.
+      You'll be able to view tasks, update statuses, and collaborate with the team.
+    </p>
+    <a href="${inviteUrl}" style="display: inline-block; background: #2a9d8f; color: #fff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+      Open Workspace
+    </a>
+  `;
+
+  return sendEmail({
+    to: inviteeEmail,
+    subject: `You've been invited to "${workspaceName}" on DDiary`,
+    htmlBody: wrapHtml('Workspace Invitation', body),
+  });
+}
+
+/**
+ * 5. New Comment — sent to the other party when someone comments on a task.
  */
 export async function notifyNewComment({ recipientEmail, recipientName, commenterName, taskText, commentText }) {
   if (!recipientEmail) return false;

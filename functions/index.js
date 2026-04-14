@@ -212,6 +212,158 @@ exports.onNewUser = functions.auth.user().onCreate(async (user) => {
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 🔧 ONE-TIME DATA MIGRATION — Callable, admin-only
+// Normalises task assigneeEmails to lowercase and links assigneeUid fields.
+// Safe to call multiple times (idempotent). Only the first admin UID listed
+// in functions config (migration.admin_uid) may call it.
+// Deploy: firebase deploy --only functions
+// Call once via the Firebase console or a one-off script, then remove access.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+exports.runDataMigration = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  }
+
+  const config = functions.config();
+  const allowedUid = config.migration?.admin_uid;
+  if (allowedUid && context.auth.uid !== allowedUid) {
+    throw new functions.https.HttpsError('permission-denied', 'Not authorised to run migrations');
+  }
+
+  const stats = { usersProcessed: 0, tasksFixed: 0, membersFixed: 0 };
+
+  // Build a UID → email reverse map from userDirectory
+  const dirSnap = await db.collection('userDirectory').get();
+  const emailToUid = {};
+  dirSnap.docs.forEach(d => {
+    const { email, uid } = d.data();
+    if (email && uid) emailToUid[email.toLowerCase()] = uid;
+  });
+
+  const usersSnap = await db.collection('users').get();
+  for (const userDoc of usersSnap.docs) {
+    stats.usersProcessed++;
+    const uid = userDoc.id;
+
+    // ── Fix tasks ──────────────────────────────────────────────────────────
+    const tasksSnap = await db.collection('users').doc(uid).collection('tasks').get();
+    const taskBatch = db.batch();
+    let taskBatchSize = 0;
+
+    for (const taskDoc of tasksSnap.docs) {
+      const task = taskDoc.data();
+      const updates = {};
+
+      // Normalise email to lowercase
+      if (task.assigneeEmail && task.assigneeEmail !== task.assigneeEmail.toLowerCase()) {
+        updates.assigneeEmail = task.assigneeEmail.toLowerCase();
+      }
+      const emailKey = (updates.assigneeEmail || task.assigneeEmail || '').toLowerCase();
+
+      // Link UID if missing
+      if (emailKey && !task.assigneeUid && emailToUid[emailKey]) {
+        updates.assigneeUid = emailToUid[emailKey];
+      }
+
+      if (Object.keys(updates).length > 0) {
+        taskBatch.update(taskDoc.ref, updates);
+        stats.tasksFixed++;
+        taskBatchSize++;
+        // Firestore batch limit is 500
+        if (taskBatchSize >= 400) {
+          await taskBatch.commit();
+          taskBatchSize = 0;
+        }
+      }
+    }
+    if (taskBatchSize > 0) await taskBatch.commit();
+
+    // ── Fix teamMembers ────────────────────────────────────────────────────
+    const membersSnap = await db.collection('users').doc(uid).collection('teamMembers').get();
+    const memberBatch = db.batch();
+    let memberBatchSize = 0;
+
+    for (const memberDoc of membersSnap.docs) {
+      const member = memberDoc.data();
+      const emailKey = member.email?.toLowerCase();
+      if (emailKey && !member.uid && emailToUid[emailKey]) {
+        memberBatch.update(memberDoc.ref, { uid: emailToUid[emailKey] });
+        stats.membersFixed++;
+        memberBatchSize++;
+        if (memberBatchSize >= 400) {
+          await memberBatch.commit();
+          memberBatchSize = 0;
+        }
+      }
+    }
+    if (memberBatchSize > 0) await memberBatch.commit();
+  }
+
+  console.log('Migration complete:', stats);
+  return { success: true, stats };
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 🗑️  DELETE WORKSPACE — Callable, owner only
+// Deletes the workspace document and ALL subcollections (tasks, members,
+// comments, activity) to avoid orphaned data in Firestore.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+exports.deleteWorkspace = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+  }
+
+  const { workspaceId } = data;
+  if (!workspaceId) {
+    throw new functions.https.HttpsError('invalid-argument', 'workspaceId is required');
+  }
+
+  const wsRef = db.collection('workspaces').doc(workspaceId);
+  const wsSnap = await wsRef.get();
+
+  if (!wsSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Workspace not found');
+  }
+
+  // Only the workspace creator (owner) may delete it
+  const wsData = wsSnap.data();
+  if (wsData.createdBy !== context.auth.uid) {
+    throw new functions.https.HttpsError('permission-denied', 'Only the workspace owner can delete it');
+  }
+
+  /** Recursively delete all docs in a subcollection (handles >500 docs via batches). */
+  async function deleteCollection(colRef) {
+    const snap = await colRef.get();
+    if (snap.empty) return;
+    const batch = db.batch();
+    snap.docs.forEach(d => batch.delete(d.ref));
+    await batch.commit();
+  }
+
+  /** Delete all comments and activity subcollections under each task. */
+  async function deleteTaskSubcollections(taskRef) {
+    await deleteCollection(taskRef.collection('comments'));
+    await deleteCollection(taskRef.collection('activity'));
+  }
+
+  // 1. Delete all task subcollections first
+  const tasksSnap = await wsRef.collection('tasks').get();
+  for (const taskDoc of tasksSnap.docs) {
+    await deleteTaskSubcollections(taskDoc.ref);
+  }
+
+  // 2. Delete tasks, members
+  await deleteCollection(wsRef.collection('tasks'));
+  await deleteCollection(wsRef.collection('members'));
+
+  // 3. Delete the workspace doc itself
+  await wsRef.delete();
+
+  console.log(`Workspace ${workspaceId} deleted by ${context.auth.uid}`);
+  return { success: true };
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Helper: Build HTML email template
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 function buildReminderEmail(name, overdue, upcoming) {

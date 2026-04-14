@@ -1,9 +1,11 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { Routes, Route, Navigate, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { useEntries, useTasks, useAssignedTasks, useTeamMembers, useUserDirectory } from './hooks/useFirestore';
+import { useEntries, useTasks, useAssignedTasks, useTeamMembers } from './hooks/useFirestore';
 import { useNotifications } from './hooks/useNotifications';
 import KanbanBoard from './components/KanbanBoard';
 import TasksPage from './components/TasksPage';
+import ErrorBoundary from './components/ErrorBoundary';
 import Auth from './components/Auth';
 import Layout from './components/Layout';
 import Toast from './components/Toast';
@@ -15,7 +17,59 @@ import TeamTaskView from './components/TeamTaskView';
 import SettingsPage from './components/SettingsPage';
 import './styles/diary.css';
 
+// ─── Route wrappers ──────────────────────────────────────────────────────────
+// DiaryView needs an entry object. We prefer route state (fast, no re-fetch)
+// then fall back to finding by ID in the already-loaded entries array.
+function DiaryViewPage({ entries, archivedEntries, onEdit, onDelete, onArchive, onUnarchive }) {
+  const { id } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const entry = location.state?.entry
+    || entries.find(e => e.id === id)
+    || archivedEntries.find(e => e.id === id);
+
+  if (!entry) return <Navigate to="/" replace />;
+
+  return (
+    <DiaryView
+      entry={entry}
+      onBack={() => navigate('/')}
+      onEdit={onEdit}
+      onDelete={onDelete}
+      onArchive={onArchive}
+      onUnarchive={onUnarchive}
+    />
+  );
+}
+
+// DiaryEditor for new entries (/write) and existing entries (/write/:id).
+// Wraps onSave to include the editing entry's ID so DiaryApp can route the
+// call to either addEntry or updateEntry without DiaryEditor needing to know.
+function DiaryEditorPage({ entries, archivedEntries, onSave, onCancel, showToast }) {
+  const { id } = useParams();
+  const location = useLocation();
+  const editingEntry = id
+    ? (location.state?.entry || entries.find(e => e.id === id) || archivedEntries.find(e => e.id === id))
+    : null;
+
+  const handleSave = useCallback(
+    async (entryData) => onSave(entryData, editingEntry?.id || null),
+    [onSave, editingEntry]
+  );
+
+  return (
+    <DiaryEditor
+      editingEntry={editingEntry || null}
+      onSave={handleSave}
+      onCancel={onCancel}
+      showToast={showToast}
+    />
+  );
+}
+
+// ─── Main app shell ──────────────────────────────────────────────────────────
 function DiaryApp() {
+  const navigate = useNavigate();
   const { user, loading: authLoading, isCollaborator, setWorkspaceId } = useAuth();
   const {
     entries, trashedEntries, archivedEntries, loading: entriesLoading,
@@ -25,57 +79,11 @@ function DiaryApp() {
   const { tasks, loading: tasksLoading, addTask, updateTask, toggleTask, deleteTask, clearCompleted } = useTasks();
   const { members, loading: membersLoading, addMember, addMembersBulk, updateMember, deleteMember } = useTeamMembers();
   const { tasks: assignedTasks } = useAssignedTasks();
-  const { directory } = useUserDirectory(user?.uid);
 
-  // ─── Retroactive task & member patch ────────────────────────────────────
-  useEffect(() => {
-    tasks.forEach(task => {
-      if (task.assigneeEmail && task.assigneeEmail !== task.assigneeEmail.toLowerCase()) {
-        updateTask(task.id, { assigneeEmail: task.assigneeEmail.toLowerCase() }).catch(() => {});
-      }
-    });
-  }, [tasks]);
-
-  // Track which emails we've already auto-added to avoid duplicate writes
-  const autoAddedRef = useRef(new Set());
-
-  useEffect(() => {
-    if (!directory.length) return;
-    directory.forEach(async (dirEntry) => {
-      const emailKey = dirEntry.email?.toLowerCase();
-      if (!emailKey || !dirEntry.uid) return;
-
-      const memberRecord = members.find(m => m.email?.toLowerCase() === emailKey);
-
-      if (memberRecord && !memberRecord.uid) {
-        updateMember(memberRecord.id, { uid: dirEntry.uid }).catch(() => {});
-      } else if (!memberRecord && !autoAddedRef.current.has(emailKey)) {
-        autoAddedRef.current.add(emailKey);
-        addMember({
-          name: dirEntry.displayName || dirEntry.email,
-          email: dirEntry.email,
-          phone: '',
-        }).catch(() => {});
-      }
-
-      tasks.forEach(task => {
-        if (task.assigneeEmail?.toLowerCase() === emailKey && !task.assigneeUid) {
-          updateTask(task.id, { assigneeUid: dirEntry.uid }).catch(() => {});
-        }
-      });
-    });
-  }, [directory, tasks, members]);
-
-  const [page, setPage] = useState('home');
-  const [viewingEntry, setViewingEntry] = useState(null);
-  const [editingEntry, setEditingEntry] = useState(null);
   const [toast, setToast] = useState(null);
+  const showToast = useCallback((message, type = 'info') => setToast({ message, type }), []);
 
-  const showToast = useCallback((message, type = 'info') => {
-    setToast({ message, type });
-  }, []);
-
-  // ─── Real-time notifications ────────────────────────────────────────────
+  // ─── Push-notification permission ────────────────────────────────────────
   const permissionRequested = useRef(false);
   useEffect(() => {
     if (user && !permissionRequested.current && 'Notification' in window && Notification.permission === 'default') {
@@ -98,50 +106,33 @@ function DiaryApp() {
     }
   }, [showToast]);
 
-  const {
-    notifications, unreadCount, markRead, markAllRead,
-  } = useNotifications({ onNewNotification: handleNewNotification });
+  const { notifications, unreadCount, markRead, markAllRead } = useNotifications({ onNewNotification: handleNewNotification });
 
   // Update PWA app icon badge count
   useEffect(() => {
     if ('setAppBadge' in navigator) {
-      if (unreadCount > 0) {
-        navigator.setAppBadge(unreadCount).catch(() => {});
-      } else {
-        navigator.clearAppBadge().catch(() => {});
-      }
+      if (unreadCount > 0) navigator.setAppBadge(unreadCount).catch(() => {});
+      else                 navigator.clearAppBadge().catch(() => {});
     }
   }, [unreadCount]);
 
-  const pendingCount = tasks.filter(t => !t.completed).length;
-
-  // ─── Navigation helpers ──────────────────────────────────────────────
-  const navigate = (p) => {
-    setPage(p);
-    setViewingEntry(null);
-    if (p === 'write' && !editingEntry) setEditingEntry(null);
+  // ─── Entry handlers ──────────────────────────────────────────────────────
+  // editingId is supplied by DiaryEditorPage when an existing entry is being edited.
+  const handleSaveEntry = async (entryData, editingId = null) => {
+    if (editingId) await updateEntry(editingId, entryData);
+    else           await addEntry(entryData);
+    navigate('/');
   };
 
-  const goToNewEntry = () => { setEditingEntry(null); setPage('write'); };
-  const goToEditEntry = (entry) => { setEditingEntry(entry); setPage('write'); };
-  const handleViewEntry = (entry) => { setViewingEntry(entry); };
+  const handleDeleteEntry   = async (id) => { await deleteEntry(id);   showToast('Entry moved to trash', 'success');        navigate('/'); };
+  const handleArchiveEntry  = async (id) => { await archiveEntry(id);  showToast('Entry archived', 'success');              navigate('/'); };
+  const handleUnarchiveEntry= async (id) => { await unarchiveEntry(id); showToast('Entry restored to diary', 'success');   navigate('/'); };
+  const handleRestoreEntry  = async (id) => { await restoreEntry(id);  showToast('Entry restored', 'success'); };
+  const handlePurgeEntry    = async (id) => { await purgeEntry(id);    showToast('Entry permanently deleted', 'success'); };
 
-  // ─── Entry handlers ──────────────────────────────────────────────────
-  const handleSaveEntry = async (entryData) => {
-    if (editingEntry) await updateEntry(editingEntry.id, entryData);
-    else await addEntry(entryData);
-    setEditingEntry(null);
-    setPage('home');
-  };
+  const goToEditEntry = (entry) => navigate(`/write/${entry.id}`, { state: { entry } });
 
-  const handleDeleteEntry = async (id) => { await deleteEntry(id); setViewingEntry(null); showToast('Entry moved to trash', 'success'); };
-  const handleArchiveEntry = async (id) => { await archiveEntry(id); setViewingEntry(null); showToast('Entry archived', 'success'); };
-  const handleUnarchiveEntry = async (id) => { await unarchiveEntry(id); setViewingEntry(null); showToast('Entry restored to diary', 'success'); };
-  const handleRestoreEntry = async (id) => { await restoreEntry(id); showToast('Entry restored', 'success'); };
-  const handlePurgeEntry = async (id) => { await purgeEntry(id); showToast('Entry permanently deleted', 'success'); };
-  const handleCancelEdit = () => { setEditingEntry(null); setPage('home'); };
-
-  // ─── Auth gate ───────────────────────────────────────────────────────
+  // ─── Auth gate ───────────────────────────────────────────────────────────
   if (authLoading) {
     return (
       <div style={{
@@ -159,102 +150,131 @@ function DiaryApp() {
 
   if (!user) return <Auth />;
 
-  // ─── Collaborator view (role: 'collaborator') — workspace Kanban only ──
+  const pendingCount = tasks.filter(t => !t.completed).length;
+
+  const commonLayoutProps = {
+    notifications, unreadCount,
+    onMarkRead: markRead, onMarkAllRead: markAllRead,
+  };
+
+  // ─── Collaborator view — workspace Kanban only ───────────────────────────
   if (isCollaborator) {
     return (
       <>
         {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
-        <Layout
-          currentPage={page} onNavigate={navigate} pendingCount={0} collaboratorMode
-          notifications={notifications} unreadCount={unreadCount}
-          onMarkRead={markRead} onMarkAllRead={markAllRead}
-        >
-          {page !== 'settings' && <KanbanBoard onWorkspaceCreated={setWorkspaceId} />}
-          {page === 'settings' && <SettingsPage showToast={showToast} />}
+        <Layout pendingCount={0} collaboratorMode {...commonLayoutProps}>
+          <ErrorBoundary>
+            <Routes>
+              <Route path="/settings" element={<SettingsPage showToast={showToast} />} />
+              <Route path="*"         element={<KanbanBoard onWorkspaceCreated={setWorkspaceId} />} />
+            </Routes>
+          </ErrorBoundary>
         </Layout>
       </>
     );
   }
 
-  // ─── Full app — everyone gets the same experience ───────────────────
+  // ─── Full app ────────────────────────────────────────────────────────────
   return (
     <>
-      {toast && (
-        <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />
-      )}
-
-      <Layout
-        currentPage={page} onNavigate={navigate} pendingCount={pendingCount}
-        notifications={notifications} unreadCount={unreadCount}
-        onMarkRead={markRead} onMarkAllRead={markAllRead}
-      >
-        {/* Diary Home / List */}
-        {page === 'home' && !viewingEntry && (
-          <DiaryList
-            entries={entries}
-            trashedEntries={trashedEntries}
-            archivedEntries={archivedEntries}
-            loading={entriesLoading}
-            onView={handleViewEntry}
-            onNew={goToNewEntry}
-            onRestore={handleRestoreEntry}
-            onPurge={handlePurgeEntry}
-            onArchive={handleArchiveEntry}
-            onUnarchive={handleUnarchiveEntry}
+      {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
+      <Layout pendingCount={pendingCount} {...commonLayoutProps}>
+        <ErrorBoundary>
+        <Routes>
+          {/* Diary home */}
+          <Route
+            path="/"
+            element={
+              <DiaryList
+                entries={entries}
+                trashedEntries={trashedEntries}
+                archivedEntries={archivedEntries}
+                loading={entriesLoading}
+                onView={(entry) => navigate(`/entry/${entry.id}`, { state: { entry } })}
+                onNew={() => navigate('/write')}
+                onRestore={handleRestoreEntry}
+                onPurge={handlePurgeEntry}
+                onArchive={handleArchiveEntry}
+                onUnarchive={handleUnarchiveEntry}
+              />
+            }
           />
-        )}
 
-        {/* View Single Entry */}
-        {page === 'home' && viewingEntry && (
-          <DiaryView
-            entry={viewingEntry}
-            onBack={() => setViewingEntry(null)}
-            onEdit={goToEditEntry}
-            onDelete={handleDeleteEntry}
-            onArchive={handleArchiveEntry}
-            onUnarchive={handleUnarchiveEntry}
+          {/* View a single entry */}
+          <Route
+            path="/entry/:id"
+            element={
+              <DiaryViewPage
+                entries={entries}
+                archivedEntries={archivedEntries}
+                onEdit={goToEditEntry}
+                onDelete={handleDeleteEntry}
+                onArchive={handleArchiveEntry}
+                onUnarchive={handleUnarchiveEntry}
+              />
+            }
           />
-        )}
 
-        {/* Write / Edit Entry */}
-        {page === 'write' && (
-          <DiaryEditor
-            editingEntry={editingEntry}
-            onSave={handleSaveEntry}
-            onCancel={handleCancelEdit}
-            showToast={showToast}
+          {/* Write new entry */}
+          <Route
+            path="/write"
+            element={
+              <DiaryEditorPage
+                entries={entries}
+                archivedEntries={archivedEntries}
+                onSave={handleSaveEntry}
+                onCancel={() => navigate('/')}
+                showToast={showToast}
+              />
+            }
           />
-        )}
 
-        {/* Tasks — unified My Tasks + Team Board (Suren's TasksPage) */}
-        {page === 'tasks' && (
-          <>
-            <TasksPage
-              tasks={tasks}
-              members={members}
-              loading={tasksLoading}
-              onAdd={addTask}
-              onUpdate={updateTask}
-              onToggle={toggleTask}
-              onDelete={deleteTask}
-              onClearCompleted={clearCompleted}
-              showToast={showToast}
-              onWorkspaceCreated={setWorkspaceId}
-            />
-            {/* Show tasks assigned to me by others */}
-            {assignedTasks.length > 0 && <TeamTaskView />}
-          </>
-        )}
+          {/* Edit existing entry */}
+          <Route
+            path="/write/:id"
+            element={
+              <DiaryEditorPage
+                entries={entries}
+                archivedEntries={archivedEntries}
+                onSave={handleSaveEntry}
+                onCancel={() => navigate(-1)}
+                showToast={showToast}
+              />
+            }
+          />
 
-        {/* Workspaces (Team) */}
-        {page === 'team' && (
-          <TeamMembers showToast={showToast} />
-        )}
+          {/* Tasks */}
+          <Route
+            path="/tasks"
+            element={
+              <>
+                <TasksPage
+                  tasks={tasks}
+                  members={members}
+                  loading={tasksLoading}
+                  onAdd={addTask}
+                  onUpdate={updateTask}
+                  onToggle={toggleTask}
+                  onDelete={deleteTask}
+                  onClearCompleted={clearCompleted}
+                  showToast={showToast}
+                  onWorkspaceCreated={setWorkspaceId}
+                />
+                {assignedTasks.length > 0 && <TeamTaskView />}
+              </>
+            }
+          />
 
-        {/* Settings */}
-        {page === 'settings' && (
-          <SettingsPage showToast={showToast} />
-        )}
+          {/* Team members */}
+          <Route path="/team"     element={<TeamMembers showToast={showToast} />} />
+
+          {/* Settings */}
+          <Route path="/settings" element={<SettingsPage showToast={showToast} />} />
+
+          {/* Fallback */}
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+        </ErrorBoundary>
       </Layout>
     </>
   );

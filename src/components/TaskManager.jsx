@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import {
   Plus, Bell, Calendar, CheckSquare, Edit2, Check, X,
-  ChevronDown, ChevronRight, User, Link, Mail, MessageCircle,
+  User, Link, Mail, MessageCircle, ChevronDown, ChevronRight,
   Clock, CheckCircle, UserPlus, Send, AlertCircle, ArrowUpRight,
 } from 'lucide-react';
 import { formatDate, isOverdue, isDueToday, toDateInputValue } from '../utils/dates';
@@ -10,6 +10,8 @@ import { useUserDirectory } from '../hooks/useFirestore';
 import TaskCollabPanel, { StatusBadge } from './TaskCollabPanel';
 import { useTaskComments } from '../hooks/useFirestore';
 import { useMyWorkspaces, useWorkspace, addWorkspaceTask } from '../hooks/useWorkspace';
+import MemberAutocomplete from './shared/MemberAutocomplete';
+import SectionHeader from './shared/SectionHeader';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const priorityColors = { high: '#c0392b', medium: '#e67e22', low: '#27ae60' };
@@ -35,75 +37,6 @@ function CommentBadge({ ownerUid, taskId }) {
   );
 }
 
-// ── Member autocomplete ────────────────────────────────────────────────────────
-function MemberAutocomplete({ value, onChange, onSelect, members, placeholder }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef();
-  const filtered = value.trim().length > 0
-    ? members.filter(m => m.name?.toLowerCase().includes(value.toLowerCase()))
-    : members;
-
-  useEffect(() => {
-    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  return (
-    <div ref={ref} style={{ position: 'relative' }}>
-      <input
-        className="input"
-        placeholder={placeholder}
-        value={value}
-        onChange={e => { onChange(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        autoComplete="off"
-        style={{ fontSize: 14 }}
-      />
-      {open && filtered.length > 0 && (
-        <div style={{
-          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-          background: '#fffdf5', border: '1px solid #d4c5a9', borderRadius: 8,
-          boxShadow: '0 4px 16px rgba(0,0,0,0.12)', maxHeight: 180, overflowY: 'auto', marginTop: 2,
-        }}>
-          {filtered.map(m => (
-            <div
-              key={m.id}
-              onClick={() => { onSelect(m); setOpen(false); }}
-              style={{ padding: '8px 14px', cursor: 'pointer', borderBottom: '1px solid #f0e6d2' }}
-              onMouseEnter={e => e.currentTarget.style.background = '#f5f0e5'}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-            >
-              <div style={{ fontWeight: 600, fontSize: 13 }}>{m.name}</div>
-              {m.email && <div style={{ fontSize: 11, color: '#8a7a6a' }}>{m.email}</div>}
-              {m.phone && <div style={{ fontSize: 11, color: '#8a7a6a' }}>{m.phone}</div>}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Section header ─────────────────────────────────────────────────────────────
-function SectionHeader({ open, onToggle, icon, label, count, color, accentColor }) {
-  return (
-    <button onClick={onToggle} style={{
-      background: 'none', border: 'none', cursor: 'pointer',
-      display: 'flex', alignItems: 'center', gap: 8, width: '100%',
-      padding: '10px 16px',
-    }}>
-      <span style={{ color: color || '#c9a96e', display: 'flex', alignItems: 'center' }}>{icon}</span>
-      <span style={{ fontWeight: 700, fontSize: 14, color: color || '#4a3728', flex: 1, textAlign: 'left' }}>
-        {label}
-        {count !== undefined && (
-          <span style={{ fontWeight: 400, fontSize: 13, color: '#8a7a6a', marginLeft: 6 }}>({count})</span>
-        )}
-      </span>
-      <span style={{ color: '#8a7a6a' }}>{open ? <ChevronDown size={17} /> : <ChevronRight size={17} />}</span>
-    </button>
-  );
-}
 
 // ── Move-to-Board sub-panel (needs its own hook for workspace members) ────────
 function MoveToBoard({ task, workspaces, onDelete, showToast, onClose, user }) {
