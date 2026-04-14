@@ -1,10 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   collection, collectionGroup, doc, addDoc, updateDoc, deleteDoc, setDoc,
-  query, where, orderBy, onSnapshot, serverTimestamp,
+  query, where, orderBy, onSnapshot, serverTimestamp, getDocs,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { logError } from '../utils/errorLogger';
 
 // ─── All workspaces where the current user is a member (real-time) ──────────
 export function useMyWorkspaces() {
@@ -34,8 +35,6 @@ export function useMyWorkspaces() {
       // Tear down previous workspace listeners before setting up new ones
       cleanupInner();
 
-      console.log('[useMyWorkspaces] members query returned', snap.docs.length, 'docs');
-
       const memberDocs = snap.docs.map(d => ({
         workspaceId: d.ref.parent.parent?.id,
         role: d.data().role,
@@ -53,7 +52,6 @@ export function useMyWorkspaces() {
       const total = memberDocs.length;
 
       const flush = () => {
-        console.log('[useMyWorkspaces] flushing', wsMap.size, 'workspaces');
         setWorkspaces(Array.from(wsMap.values()));
         setLoading(false);
       };
@@ -63,19 +61,19 @@ export function useMyWorkspaces() {
           if (wsSnap.exists()) {
             wsMap.set(workspaceId, { id: workspaceId, role, ...wsSnap.data() });
           } else {
-            console.warn('[useMyWorkspaces] workspace doc missing:', workspaceId);
+            // Workspace doc is missing — likely deleted; remove from map silently
             wsMap.delete(workspaceId);
           }
           loaded++;
           if (loaded >= total) flush();
         }, (err) => {
-          console.error('[useMyWorkspaces] workspace doc error:', workspaceId, err.message);
+          logError(err, { location: 'useMyWorkspaces', action: 'workspaceDocSnapshot', workspaceId });
           loaded++;
           if (loaded >= total) flush();
         });
       });
     }, (err) => {
-      console.error('[useMyWorkspaces] collection-group query FAILED:', err.message, err.code);
+      logError(err, { location: 'useMyWorkspaces', action: 'membersCollectionGroupQuery' });
       setLoading(false);
     });
 
@@ -224,10 +222,43 @@ export async function removeWorkspaceMember(workspaceId, uid) {
   await deleteDoc(doc(db, 'workspaces', workspaceId, 'members', uid));
 }
 
+/**
+ * Delete a workspace and ALL its subcollections (tasks, members, comments, activity).
+ * Done entirely client-side in batches — compatible with Firebase Spark (free) plan.
+ *
+ * Deletion order:
+ *   1. For each task → delete its 'comments' and 'activity' subcollections
+ *   2. Delete all tasks
+ *   3. Delete all members
+ *   4. Delete the workspace doc
+ */
 export async function deleteWorkspace(workspaceId) {
-  // Note: this deletes the workspace doc. Subcollections (tasks, members) remain
-  // but become orphaned. A Cloud Function would be ideal for full cleanup.
-  await deleteDoc(doc(db, 'workspaces', workspaceId));
+  const wsRef = doc(db, 'workspaces', workspaceId);
+
+  // 1. Delete every task's subcollections, then the task itself
+  const tasksSnap = await getDocs(collection(db, 'workspaces', workspaceId, 'tasks'));
+  for (const taskDoc of tasksSnap.docs) {
+    const taskId = taskDoc.id;
+
+    const [commentsSnap, activitySnap] = await Promise.all([
+      getDocs(collection(db, 'workspaces', workspaceId, 'tasks', taskId, 'comments')),
+      getDocs(collection(db, 'workspaces', workspaceId, 'tasks', taskId, 'activity')),
+    ]);
+
+    await Promise.all([
+      ...commentsSnap.docs.map(d => deleteDoc(d.ref)),
+      ...activitySnap.docs.map(d => deleteDoc(d.ref)),
+    ]);
+
+    await deleteDoc(taskDoc.ref);
+  }
+
+  // 2. Delete all members
+  const membersSnap = await getDocs(collection(db, 'workspaces', workspaceId, 'members'));
+  await Promise.all(membersSnap.docs.map(d => deleteDoc(d.ref)));
+
+  // 3. Delete the workspace doc itself
+  await deleteDoc(wsRef);
 }
 
 export async function addWorkspaceTask(workspaceId, task, actor) {

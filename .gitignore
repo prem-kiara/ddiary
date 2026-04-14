@@ -13,6 +13,9 @@ dist/
 
 # Firebase
 .firebaserc
+
+# Service account key — NEVER commit this
+scripts/serviceAccountKey.json
 firebase-debug.log
 firestore-debug.log
 storage-debug.log

@@ -17,7 +17,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+export const db   = getFirestore(app);
 
 // ─── Microsoft OAuth Provider ────────────────────────────────────────────────
 // Used for "Sign in with Microsoft" — scopes grant access to SharePoint files.
