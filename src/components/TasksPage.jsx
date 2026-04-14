@@ -25,11 +25,11 @@ export default function TasksPage({
     <div className="fade-in">
 
       {/* ── View toggle ───────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 22 }}>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 22, justifyContent: 'center' }}>
         <ViewTab
           icon={Users}
           label="Team Board"
-          description="Shared Kanban — assign & track"
+          description="Assign & track"
           id="board"
           active={view === 'board'}
           onClick={switchView}
@@ -72,6 +72,7 @@ function ViewTab({ icon: Icon, label, description, id, active, onClick }) {
     <button
       onClick={() => onClick(id)}
       style={{
+        width: 200,
         padding: '10px 18px', borderRadius: 12, cursor: 'pointer',
         border: active ? '2px solid #2a9d8f' : '2px solid #e8d5b7',
         display: 'flex', alignItems: 'center', gap: 10,

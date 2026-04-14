@@ -220,7 +220,52 @@ export async function notifyWorkspaceInvite({ inviteeEmail, inviteeName, inviter
 }
 
 /**
- * 5. New Comment — sent to the other party when someone comments on a task.
+ * 5. Task Reassigned — sent to the new assignee when a task is reassigned to them.
+ */
+export async function notifyTaskReassigned({
+  assigneeEmail, assigneeName, taskText, dueDate, priority,
+  reassignedByName, latestComment, workspaceUrl,
+}) {
+  if (!assigneeEmail) return false;
+
+  const commentBlock = latestComment
+    ? `<div style="background: #f0f7ff; border-left: 4px solid #2a9d8f; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0;">
+        <p style="font-size: 12px; font-weight: 600; color: #2a9d8f; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.04em;">Latest comment</p>
+        <p style="font-size: 14px; color: #4a3728; margin: 0; font-style: italic; line-height: 1.5;">"${latestComment}"</p>
+      </div>`
+    : '';
+
+  const body = `
+    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+      Hi${assigneeName ? ' <strong>' + assigneeName + '</strong>' : ''},
+    </p>
+    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+      <strong>${reassignedByName}</strong> has reassigned a task to you:
+    </p>
+    <div style="background: #f9f5ec; border-left: 4px solid #8B6914; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
+      <p style="font-size: 16px; font-weight: 600; color: #4a3728; margin: 0 0 8px;">${taskText}</p>
+      <p style="font-size: 13px; color: #8a7a6a; margin: 0;">
+        ${priorityBadge(priority)} &nbsp; Due: ${formatDue(dueDate)}
+      </p>
+    </div>
+    ${commentBlock}
+    <p style="font-size: 14px; color: #4a3728; margin: 0 0 16px;">
+      Open DDiary to view your task, add comments, and update the status:
+    </p>
+    <a href="${workspaceUrl || 'https://dhanamdiary.web.app'}" style="display: inline-block; background: #2a9d8f; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+      Open in DDiary
+    </a>
+  `;
+
+  return sendEmail({
+    to: assigneeEmail,
+    subject: `Task reassigned to you: ${taskText.slice(0, 55)}`,
+    htmlBody: wrapHtml('Task Assigned to You', body),
+  });
+}
+
+/**
+ * 6. New Comment — sent to the other party when someone comments on a task.
  */
 export async function notifyNewComment({ recipientEmail, recipientName, commenterName, taskText, commentText }) {
   if (!recipientEmail) return false;

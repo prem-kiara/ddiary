@@ -1,0 +1,27 @@
+[debug] [2026-04-14T10:57:29.487Z] ----------------------------------------------------------------------
+[debug] [2026-04-14T10:57:29.488Z] Command:       /usr/bin/node /tmp/node_modules/.bin/firebase deploy --only firestore:rules,hosting --project dhanamdiary
+[debug] [2026-04-14T10:57:29.488Z] CLI Version:   15.14.0
+[debug] [2026-04-14T10:57:29.488Z] Platform:      linux
+[debug] [2026-04-14T10:57:29.488Z] Node Version:  v22.22.0
+[debug] [2026-04-14T10:57:29.489Z] Time:          Tue Apr 14 2026 16:27:29 GMT+0530 (India Standard Time)
+[debug] [2026-04-14T10:57:29.489Z] ----------------------------------------------------------------------
+[debug] 
+[debug] [2026-04-14T10:57:29.490Z] >>> [apiv2][query] GET https://firebase-public.firebaseio.com/cli.json [none]
+[debug] [2026-04-14T10:57:29.985Z] Object "" in "firebase.json" has unknown property: {"additionalProperty":"_functions_disabled"}
+[debug] [2026-04-14T10:57:29.989Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-04-14T10:57:30.007Z] <<< [apiv2][status] GET https://firebase-public.firebaseio.com/cli.json 403
+[debug] [2026-04-14T10:57:30.007Z] <<< [apiv2][body] GET https://firebase-public.firebaseio.com/cli.json "Connection blocked by network allowlist"
+[warn] ⚠  Unable to fetch the CLI MOTD and remote config. This is not a fatal error, but may indicate an issue with your network connection. 
+[debug] [2026-04-14T10:57:30.008Z] Failed to fetch MOTD FirebaseError: Unable to parse JSON: SyntaxError: Unexpected token 'C', "Connection"... is not valid JSON
+[debug] [2026-04-14T10:57:30.013Z] Error: Could not load the default credentials. Browse to https://cloud.google.com/docs/authentication/getting-started for more information.
+    at GoogleAuth.getApplicationDefaultAsync (/tmp/node_modules/google-auth-library/build/src/auth/googleauth.js:287:15)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async GoogleAuth._GoogleAuth_determineClient (/tmp/node_modules/google-auth-library/build/src/auth/googleauth.js:834:32)
+    at async GoogleAuth.getClient (/tmp/node_modules/google-auth-library/build/src/auth/googleauth.js:698:20)
+    at async GoogleAuth.getAccessToken (/tmp/node_modules/google-auth-library/build/src/auth/googleauth.js:722:24)
+    at async autoAuth (/tmp/node_modules/firebase-tools/lib/requireAuth.js:28:19)
+    at async requireAuth (/tmp/node_modules/firebase-tools/lib/requireAuth.js:90:20)
+    at async requirePermissions (/tmp/node_modules/firebase-tools/lib/requirePermissions.js:17:5)
+    at async /tmp/node_modules/firebase-tools/lib/command.js:277:17
+[error] 
+[error] Error: Failed to authenticate, have you run firebase login?

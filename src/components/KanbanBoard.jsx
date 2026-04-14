@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Plus, X, ChevronDown, ChevronRight, User, Calendar, Send, Mail,
   Circle, Clock, Eye, CheckCircle, Trash2, Link, Copy, Check as CheckIcon,
@@ -16,6 +16,7 @@ import { logError } from '../utils/errorLogger';
 import WorkspaceCollabPanel from './WorkspaceCollabPanel';
 import WorkspaceInvitePrompt from './WorkspaceInvitePrompt';
 import { notifyWorkspaceInvite, notifyTaskAssigned } from '../utils/emailNotifications';
+import { fetchAllOrgUsers, searchOrgPeopleDebounced } from '../utils/graphPeopleSearch';
 
 // ── Status config ─────────────────────────────────────────────────────────────
 const STATUSES = [
@@ -32,7 +33,7 @@ const formatDate = (d) => {
 };
 
 // ── Task Detail Modal ─────────────────────────────────────────────────────────
-function TaskDetailModal({ task, workspaceId, members, onDelete, currentUid, onClose }) {
+function TaskDetailModal({ task, workspaceId, members, onDelete, currentUid, isAdmin, onClose }) {
   const priority  = PRIORITY_COLORS[task.priority] || '#e67e22';
   const statusCfg = STATUSES.find(s => s.value === (task.status || 'open')) || STATUSES[0];
   const isOverdue = task.dueDate && task.status !== 'done' && new Date(task.dueDate) < new Date();
@@ -107,11 +108,20 @@ function TaskDetailModal({ task, workspaceId, members, onDelete, currentUid, onC
           </div>
         </div>
 
+        {/* Notes (if any) */}
+        {task.notes && (
+          <div style={{ padding: '12px 18px', borderBottom: '1px solid #ede0c8', background: '#fdf8ee' }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#b5a898', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 5 }}>Notes</div>
+            <div style={{ fontSize: 13, color: '#4a3728', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{task.notes}</div>
+          </div>
+        )}
+
         {/* Collaboration panel (comments, activity, status updates) */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <WorkspaceCollabPanel
             workspaceId={workspaceId}
             task={task}
+            isAdmin={isAdmin}
             onClose={onClose}
           />
         </div>
@@ -121,7 +131,7 @@ function TaskDetailModal({ task, workspaceId, members, onDelete, currentUid, onC
 }
 
 // ── Kanban Card ───────────────────────────────────────────────────────────────
-function KanbanCard({ task, workspaceId, members, onDelete, currentUid }) {
+function KanbanCard({ task, workspaceId, members, onDelete, currentUid, isAdmin }) {
   const [open, setOpen] = useState(false);
   const priority  = PRIORITY_COLORS[task.priority] || '#e67e22';
   const statusCfg = STATUSES.find(s => s.value === (task.status || 'open')) || STATUSES[0];
@@ -154,7 +164,7 @@ function KanbanCard({ task, workspaceId, members, onDelete, currentUid }) {
         <div style={{ width: 4, background: priority, flexShrink: 0, borderRadius: '10px 0 0 10px' }} />
 
         {/* Content */}
-        <div style={{ flex: 1, minWidth: 0, padding: '10px 8px 10px 4px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+        <div style={{ flex: 1, minWidth: 0, padding: '10px 8px 10px 4px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 5 }}>
           {/* Task title — clamp to 2 lines */}
           <div style={{
             fontSize: 13, fontWeight: 600, color: '#4a3728', lineHeight: 1.35,
@@ -208,6 +218,7 @@ function KanbanCard({ task, workspaceId, members, onDelete, currentUid }) {
           members={members}
           onDelete={onDelete}
           currentUid={currentUid}
+          isAdmin={isAdmin}
           onClose={() => setOpen(false)}
         />
       )}
@@ -216,7 +227,7 @@ function KanbanCard({ task, workspaceId, members, onDelete, currentUid }) {
 }
 
 // ── Kanban Column ─────────────────────────────────────────────────────────────
-function KanbanColumn({ status, tasks, workspaceId, members, onDelete, currentUid }) {
+function KanbanColumn({ status, tasks, workspaceId, members, onDelete, currentUid, isAdmin }) {
   const { Icon, label, color, bg } = status;
   return (
     <div style={{ minWidth: 252, flex: '0 0 252px', display: 'flex', flexDirection: 'column' }}>
@@ -229,7 +240,7 @@ function KanbanColumn({ status, tasks, workspaceId, members, onDelete, currentUi
       </div>
       {tasks.length === 0
         ? <div style={{ border: '2px dashed #e8d5b7', borderRadius: 10, padding: '20px 12px', textAlign: 'center', color: '#c9b89a', fontSize: 12 }}>No tasks here</div>
-        : tasks.map(t => <KanbanCard key={t.id} task={t} workspaceId={workspaceId} members={members} onDelete={onDelete} currentUid={currentUid} />)
+        : tasks.map(t => <KanbanCard key={t.id} task={t} workspaceId={workspaceId} members={members} onDelete={onDelete} currentUid={currentUid} isAdmin={isAdmin} />)
       }
     </div>
   );
@@ -237,16 +248,38 @@ function KanbanColumn({ status, tasks, workspaceId, members, onDelete, currentUi
 
 // ── Add Task Modal ────────────────────────────────────────────────────────────
 function AddTaskModal({ onClose, onAdd, members, workspaces, currentWorkspaceId, showToast }) {
-  const [text,        setText]        = useState('');
-  const [status,      setStatus]      = useState('open');
-  const [priority,    setPriority]    = useState('high');
-  const [dueDate,     setDueDate]     = useState('');
-  const [assigneeUid, setAssigneeUid] = useState('');
-  const [saving,      setSaving]      = useState(false);
+  const [text,          setText]          = useState('');
+  const [notes,         setNotes]         = useState('');
+  const [status,        setStatus]        = useState('open');
+  const [priority,      setPriority]      = useState('high');
+  const [dueDate,       setDueDate]       = useState('');
+  const [assigneeEmail, setAssigneeEmail] = useState('');
+  const [saving,        setSaving]        = useState(false);
 
-  const [wsMode,       setWsMode]       = useState('existing');
+  const [wsMode,       setWsMode]       = useState(workspaces.length ? 'existing' : 'new');
   const [selectedWsId, setSelectedWsId] = useState(currentWorkspaceId || workspaces[0]?.id || '');
   const [newWsName,    setNewWsName]    = useState('');
+
+  // ── Fetch M365 org users ────────────────────────────────────────────────
+  const [orgUsers, setOrgUsers] = useState([]);
+  useEffect(() => {
+    fetchAllOrgUsers().then(u => setOrgUsers(u || [])).catch(() => {});
+  }, []);
+
+  // Merged assignee list: workspace members (have UIDs) first, then org users, deduped by email
+  const assigneeOptions = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    for (const m of members) {
+      const key = m.email?.toLowerCase();
+      if (key && !seen.has(key)) { seen.add(key); list.push({ email: m.email, name: m.displayName || m.email, uid: m.uid || null }); }
+    }
+    for (const u of orgUsers) {
+      const key = u.email?.toLowerCase();
+      if (key && !seen.has(key)) { seen.add(key); list.push({ email: u.email, name: u.displayName || u.email, uid: null }); }
+    }
+    return list;
+  }, [members, orgUsers]);
 
   const switchToNewWsMode = () => {
     setWsMode('new');
@@ -258,14 +291,17 @@ function AddTaskModal({ onClose, onAdd, members, workspaces, currentWorkspaceId,
     if (wsMode === 'new' && !newWsName.trim()) return;
     setSaving(true);
     try {
-      const m = members.find(m => m.uid === assigneeUid);
+      const person = assigneeOptions.find(p => p.email?.toLowerCase() === assigneeEmail.toLowerCase());
       await onAdd(
         {
-          text: text.trim(), status, priority,
+          text: text.trim(),
+          notes: notes.trim() || null,
+          status,
+          priority,
           dueDate:       dueDate ? new Date(dueDate).toISOString() : null,
-          assigneeUid:   m?.uid   || null,
-          assigneeEmail: m?.email?.toLowerCase() || null,
-          assigneeName:  m?.displayName || null,
+          assigneeUid:   person?.uid   || null,
+          assigneeEmail: person?.email?.toLowerCase() || null,
+          assigneeName:  person?.name  || null,
         },
         {
           targetWorkspaceId: wsMode === 'existing' ? selectedWsId : null,
@@ -286,24 +322,27 @@ function AddTaskModal({ onClose, onAdd, members, workspaces, currentWorkspaceId,
     fontSize: 14, fontFamily: 'var(--font-body)', background: '#fffdf5', color: '#4a3728',
     boxSizing: 'border-box', outline: 'none',
   };
+  const labelStyle = { fontSize: 12, fontWeight: 700, color: '#8a7a6a', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 6 };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div style={{ background: '#fffdf5', borderRadius: 16, padding: 28, width: '100%', maxWidth: 800, boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#fffdf5', borderRadius: 16, padding: 28, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-          <h3 style={{ margin: 0, color: '#4a3728', fontSize: 17 }}>New Task</h3>
+          <h3 style={{ margin: 0, color: '#4a3728', fontSize: 17, fontWeight: 700 }}>New Task</h3>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8a7a6a' }}><X size={20} /></button>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Task description */}
           <div>
-            <label style={{ fontSize: 12, fontWeight: 700, color: '#8a7a6a', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 6 }}>Task *</label>
+            <label style={labelStyle}>Task *</label>
             <textarea value={text} onChange={e => setText(e.target.value)} placeholder="Describe the task…" rows={3} autoFocus style={{ ...inputStyle, resize: 'vertical' }} />
           </div>
 
+          {/* Workspace picker */}
           <div style={{ background: '#f5f0e5', borderRadius: 10, padding: '12px 14px' }}>
-            <label style={{ fontSize: 12, fontWeight: 700, color: '#8a7a6a', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 8 }}>
-              <Briefcase size={11} style={{ marginRight: 4 }} />Workspace
+            <label style={{ ...labelStyle, marginBottom: 8 }}>
+              <Briefcase size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Workspace
             </label>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: wsMode === 'new' ? 10 : 0 }}>
               {workspaces.map(ws => (
@@ -329,19 +368,20 @@ function AddTaskModal({ onClose, onAdd, members, workspaces, currentWorkspaceId,
             </div>
             {wsMode === 'new' && (
               <input value={newWsName} onChange={e => setNewWsName(e.target.value)}
-                placeholder="Workspace name…" style={{ ...inputStyle, fontSize: 13, marginTop: 2 }} />
+                placeholder="Workspace name…" style={{ ...inputStyle, fontSize: 13, marginTop: 2 }} autoFocus={workspaces.length === 0} />
             )}
           </div>
 
+          {/* Column + Priority */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: '#8a7a6a', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 6 }}>Column</label>
+              <label style={labelStyle}>Column</label>
               <select value={status} onChange={e => setStatus(e.target.value)} style={inputStyle}>
                 {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
             </div>
             <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: '#8a7a6a', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 6 }}>Priority</label>
+              <label style={labelStyle}>Priority</label>
               <select value={priority} onChange={e => setPriority(e.target.value)} style={inputStyle}>
                 <option value="high">🔴 High</option>
                 <option value="medium">🟡 Medium</option>
@@ -350,21 +390,37 @@ function AddTaskModal({ onClose, onAdd, members, workspaces, currentWorkspaceId,
             </div>
           </div>
 
+          {/* Assign to + Due Date */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: '#8a7a6a', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 6 }}>Assign to</label>
-              <select value={assigneeUid} onChange={e => setAssigneeUid(e.target.value)} style={inputStyle}>
+              <label style={labelStyle}>Assign to</label>
+              <select value={assigneeEmail} onChange={e => setAssigneeEmail(e.target.value)} style={inputStyle}>
                 <option value="">Unassigned</option>
-                {members.map(m => <option key={m.uid} value={m.uid}>{m.displayName || m.email}</option>)}
+                {assigneeOptions.map(p => (
+                  <option key={p.email} value={p.email}>{p.name}</option>
+                ))}
               </select>
             </div>
             <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: '#8a7a6a', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 6 }}>Due Date</label>
+              <label style={labelStyle}>Due Date</label>
               <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} style={inputStyle} />
             </div>
           </div>
+
+          {/* Notes */}
+          <div>
+            <label style={labelStyle}>Notes</label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder="Additional context, links, or details…"
+              rows={3}
+              style={{ ...inputStyle, resize: 'vertical' }}
+            />
+          </div>
         </div>
 
+        {/* Buttons */}
         <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
           <button className="btn btn-outline btn-sm" onClick={onClose} style={{ flex: 1, justifyContent: 'center' }}>Cancel</button>
           <button className="btn btn-teal" onClick={handleAdd}
@@ -383,7 +439,7 @@ function AddTaskModal({ onClose, onAdd, members, workspaces, currentWorkspaceId,
 }
 
 // ── Workspace Setup (first workspace creation) ────────────────────────────────
-function WorkspaceSetup({ onCreated, onCancel, showToast }) {
+function WorkspaceSetup({ onCreated, onCancel, showToast, title }) {
   const { user } = useAuth();
   const [name,     setName]     = useState('');
   const [taskText, setTaskText] = useState('');
@@ -420,7 +476,7 @@ function WorkspaceSetup({ onCreated, onCancel, showToast }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Briefcase size={18} color="#c9a96e" />
-          <span style={{ fontWeight: 700, fontSize: 16, color: '#4a3728' }}>New Workspace</span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: '#4a3728' }}>{title || 'New Workspace'}</span>
         </div>
         {onCancel && (
           <button onClick={onCancel} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8a7a6a' }}>
@@ -482,7 +538,7 @@ function WorkspaceSetup({ onCreated, onCancel, showToast }) {
 
 // ── WorkspaceBoardContent ─────────────────────────────────────────────────────
 // The actual kanban board — rendered only when a workspace is expanded.
-function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspaces, onWorkspaceCreated, showAddTaskInitial, onAddTaskClose }) {
+function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspaces, onWorkspaceCreated, showAddTaskInitial, onAddTaskClose, isAdmin }) {
   const { tasks, loading: tasksLoading, error } = useWorkspaceTasks(workspaceId);
   const [filterAssignee, setFilterAssignee] = useState('all');
   const [showAddTask, setShowAddTask]       = useState(showAddTaskInitial || false);
@@ -590,6 +646,7 @@ function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspac
                   members={members}
                   onDelete={handleDelete}
                   currentUid={user.uid}
+                  isAdmin={isAdmin}
                 />
               ))}
             </div>
@@ -630,11 +687,27 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
   const { members, loading: membersLoading } = useWorkspace(workspace.id);
 
   // Invite state
-  const [inviteEmail,     setInviteEmail]     = useState('');
-  const [inviteSending,   setInviteSending]   = useState(false);
-  const [inviteEmailSent, setInviteEmailSent] = useState(false);
-  const [inviteError,     setInviteError]     = useState('');
-  const [copied,          setCopied]          = useState(false);
+  const [inviteEmail,       setInviteEmail]       = useState('');
+  const [inviteSending,     setInviteSending]     = useState(false);
+  const [inviteEmailSent,   setInviteEmailSent]   = useState(false);
+  const [inviteError,       setInviteError]       = useState('');
+  const [copied,            setCopied]            = useState(false);
+  const [inviteSuggestions, setInviteSuggestions] = useState([]);
+
+  const handleInviteInputChange = (val) => {
+    setInviteEmail(val);
+    setInviteError('');
+    if (val.trim().length >= 2) {
+      searchOrgPeopleDebounced(val.trim()).then(results => setInviteSuggestions(results || []));
+    } else {
+      setInviteSuggestions([]);
+    }
+  };
+
+  const selectInviteSuggestion = (person) => {
+    setInviteEmail(person.email);
+    setInviteSuggestions([]);
+  };
 
   // Rename state
   const [renaming,     setRenaming]     = useState(false);
@@ -864,22 +937,49 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
             </button>
           </div>
 
-          {/* Email input */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: inviteError ? 6 : 10 }}>
-            <input
-              type="email"
-              value={inviteEmail}
-              onChange={e => { setInviteEmail(e.target.value); setInviteError(''); }}
-              onKeyDown={e => e.key === 'Enter' && handleEmailInvite()}
-              placeholder="colleague@company.com"
-              style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${inviteError ? '#c0392b66' : '#2980b944'}`, background: '#fff', fontSize: 13, fontFamily: 'var(--font-body)', color: '#4a3728', outline: 'none' }}
-            />
-            <button className="btn btn-sm btn-teal" onClick={handleEmailInvite}
-              disabled={inviteSending || !inviteEmail.trim()} style={{ flexShrink: 0, minWidth: 80 }}>
-              {inviteEmailSent ? <><CheckIcon size={13} /> Sent!</>
-                : inviteSending ? '…'
-                : <><Send size={13} /> Send</>}
-            </button>
+          {/* Email input with org autocomplete */}
+          <div style={{ position: 'relative', marginBottom: inviteError ? 6 : 10 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                type="text"
+                value={inviteEmail}
+                onChange={e => handleInviteInputChange(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { setInviteSuggestions([]); handleEmailInvite(); } if (e.key === 'Escape') setInviteSuggestions([]); }}
+                onBlur={() => setTimeout(() => setInviteSuggestions([]), 150)}
+                placeholder="Search by name or email…"
+                autoComplete="off"
+                style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${inviteError ? '#c0392b66' : '#2980b944'}`, background: '#fff', fontSize: 13, fontFamily: 'var(--font-body)', color: '#4a3728', outline: 'none' }}
+              />
+              <button className="btn btn-sm btn-teal" onClick={() => { setInviteSuggestions([]); handleEmailInvite(); }}
+                disabled={inviteSending || !inviteEmail.trim()} style={{ flexShrink: 0, minWidth: 80 }}>
+                {inviteEmailSent ? <><CheckIcon size={13} /> Sent!</>
+                  : inviteSending ? '…'
+                  : <><Send size={13} /> Send</>}
+              </button>
+            </div>
+
+            {/* Autocomplete dropdown */}
+            {inviteSuggestions.length > 0 && (
+              <div style={{
+                position: 'absolute', top: '100%', left: 0, right: 90, zIndex: 200,
+                background: '#fff', border: '1px solid #d4c5a9', borderRadius: 8,
+                boxShadow: '0 4px 16px rgba(0,0,0,0.12)', marginTop: 2, overflow: 'hidden',
+              }}>
+                {inviteSuggestions.map(person => (
+                  <div
+                    key={person.id || person.email}
+                    onMouseDown={() => selectInviteSuggestion(person)}
+                    style={{ padding: '8px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 1, borderBottom: '1px solid #f0e8d8' }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#f5f0e5'}
+                    onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: 600, color: '#4a3728' }}>{person.displayName}</span>
+                    <span style={{ fontSize: 11, color: '#8a7a6a' }}>{person.email}</span>
+                    {person.jobTitle && <span style={{ fontSize: 11, color: '#b5a898' }}>{person.jobTitle}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Inline error */}
@@ -945,6 +1045,7 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
             onWorkspaceCreated={onWorkspaceCreated}
             showAddTaskInitial={showAddTask}
             onAddTaskClose={() => setShowAddTask(false)}
+            isAdmin={isAdmin}
           />
         </div>
       )}
@@ -956,27 +1057,35 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
 export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
   const { user } = useAuth();
   const { workspaces, loading: wsListLoading } = useMyWorkspaces();
-  const [showSetup, setShowSetup] = useState(false);
+  const [showNewTask, setShowNewTask] = useState(false);
 
   if (wsListLoading) {
     return <div className="empty-state fade-in"><p>Loading workspaces…</p></div>;
   }
 
-  // First-time experience: no workspaces yet
-  if (!workspaces.length && !showSetup) {
-    return (
-      <div className="fade-in">
-        <h2 className="section-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Briefcase size={20} color="#c9a96e" /> Team Board
-        </h2>
-        <WorkspaceInvitePrompt showToast={showToast} />
-        <WorkspaceSetup
-          showToast={showToast}
-          onCreated={async (id) => { if (onWorkspaceCreated) await onWorkspaceCreated(id); }}
-        />
-      </div>
-    );
-  }
+  // Handler for AddTaskModal when creating from the header or empty state
+  const handleTopLevelAdd = async (taskData, wsOptions) => {
+    let wsId = wsOptions.targetWorkspaceId || workspaces[0]?.id || null;
+    if (wsOptions.newWorkspaceName) {
+      wsId = await createWorkspace(user.uid, user.email, user.displayName || user.email, wsOptions.newWorkspaceName);
+      if (onWorkspaceCreated) await onWorkspaceCreated(wsId);
+      if (showToast) showToast(`Workspace "${wsOptions.newWorkspaceName}" created!`, 'success');
+    }
+    if (wsId) {
+      await addWorkspaceTask(wsId, taskData, { uid: user.uid, email: user.email, displayName: user.displayName || user.email });
+      if (taskData.assigneeEmail) {
+        notifyTaskAssigned({
+          assigneeEmail: taskData.assigneeEmail,
+          assigneeName:  taskData.assigneeName,
+          taskText:      taskData.text,
+          dueDate:       taskData.dueDate,
+          priority:      taskData.priority,
+          ownerName:     user.displayName || user.email,
+          ownerUid:      user.uid,
+        }).catch(() => {});
+      }
+    }
+  };
 
   return (
     <div className="fade-in">
@@ -985,25 +1094,35 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
         <h2 className="section-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           <Briefcase size={20} color="#c9a96e" /> Team Board
         </h2>
-        <button className="btn btn-outline btn-sm" onClick={() => setShowSetup(v => !v)} style={{ gap: 5 }}>
-          <Plus size={14} /> New Workspace
+        <button className="btn btn-teal" onClick={() => setShowNewTask(true)} style={{ gap: 5 }}>
+          <Plus size={14} /> New Task
         </button>
       </div>
 
-      {/* New workspace setup (inline, dismissible) */}
-      {showSetup && (
-        <WorkspaceSetup
+      {/* New Task modal */}
+      {showNewTask && (
+        <AddTaskModal
+          onClose={() => setShowNewTask(false)}
+          onAdd={handleTopLevelAdd}
+          members={[]}
+          workspaces={workspaces}
           showToast={showToast}
-          onCancel={() => setShowSetup(false)}
-          onCreated={async (id) => {
-            setShowSetup(false);
-            if (onWorkspaceCreated) await onWorkspaceCreated(id);
-          }}
         />
       )}
 
       {/* Pending invite banners (auto-dismiss on accept/decline) */}
       <WorkspaceInvitePrompt showToast={showToast} />
+
+      {/* Empty state when no workspaces */}
+      {!workspaces.length && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 24px', textAlign: 'center' }}>
+          <Briefcase size={40} color="#c9a96e" style={{ opacity: 0.5 }} />
+          <p style={{ marginTop: 12, color: '#8a7a6a', fontSize: 15, fontWeight: 600 }}>No team board yet</p>
+          <p style={{ fontSize: 13, color: '#b5a898', maxWidth: 340, lineHeight: 1.6, marginTop: 6 }}>
+            Click <strong>New Task</strong> above to create your first task and workspace.
+          </p>
+        </div>
+      )}
 
       {/* Collapsible workspace list */}
       {workspaces.map((ws, i) => (

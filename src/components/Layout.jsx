@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BookOpen, Home, PenTool, CheckSquare, Settings, LogOut, Users, List, Kanban } from 'lucide-react';
+import { BookOpen, Home, PenTool, CheckSquare, Settings, LogOut, List, Kanban } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import NotificationBell from './NotificationBell';
 
@@ -32,7 +32,6 @@ export default function Layout({
     { id: 'home',     path: '/',         icon: Home,        label: 'Diary'    },
     { id: 'write',    path: '/write',    icon: PenTool,     label: 'Write'    },
     { id: 'tasks',    path: '/tasks',    icon: List,        label: 'Tasks'    },
-    { id: 'team',     path: '/team',     icon: Users,       label: 'Workspaces' },
     { id: 'settings', path: '/settings', icon: Settings,    label: 'Settings' },
   ];
 

@@ -13,7 +13,6 @@ import Toast from './components/Toast';
 import DiaryList from './components/DiaryList';
 import DiaryView from './components/DiaryView';
 import DiaryEditor from './components/DiaryEditor';
-import TeamMembers from './components/TeamMembers';
 import TeamTaskView from './components/TeamTaskView';
 import SettingsPage from './components/SettingsPage';
 import './styles/diary.css';
@@ -284,9 +283,6 @@ function DiaryApp() {
               </>
             }
           />
-
-          {/* Team members */}
-          <Route path="/team"     element={<TeamMembers showToast={showToast} />} />
 
           {/* Settings */}
           <Route path="/settings" element={<SettingsPage showToast={showToast} />} />

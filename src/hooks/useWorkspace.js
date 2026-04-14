@@ -324,6 +324,7 @@ export async function addWorkspaceTask(workspaceId, task, actor) {
   const assigneeEmail = task.assigneeEmail?.toLowerCase() || null;
   const ref = await addDoc(collection(db, 'workspaces', workspaceId, 'tasks'), {
     text:           task.text?.trim() || '',
+    notes:          task.notes?.trim() || null,
     status:         task.status   || 'open',
     priority:       task.priority || 'medium',
     dueDate:        task.dueDate  || null,
@@ -347,11 +348,19 @@ export async function updateWorkspaceTask(workspaceId, taskId, updates, actor, t
   await updateDoc(doc(db, 'workspaces', workspaceId, 'tasks', taskId), {
     ...updates, updatedAt: serverTimestamp(),
   });
-  if (updates.status && actor) {
+  if (!actor) return;
+  const actorName = actor.displayName || actor.email;
+  if (updates.status) {
     const labels = { open: 'Open', in_progress: 'In Progress', review: 'Review', done: 'Done' };
     await _logWorkspaceActivity(workspaceId, taskId, {
-      actorUid: actor.uid, actorName: actor.displayName || actor.email,
+      actorUid: actor.uid, actorName,
       action: 'status_changed', detail: `→ ${labels[updates.status] || updates.status}`,
+    });
+  }
+  if (updates.assigneeEmail !== undefined && updates.assigneeName !== undefined) {
+    await _logWorkspaceActivity(workspaceId, taskId, {
+      actorUid: actor.uid, actorName,
+      action: 'reassigned', detail: `→ ${updates.assigneeName || updates.assigneeEmail}`,
     });
   }
 }

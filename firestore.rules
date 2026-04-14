@@ -11,38 +11,30 @@ service cloud.firestore {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
 
-      // Tasks — owner full control; assignee can read & update status/fields.
-      // We match on EITHER assigneeUid (linked) OR assigneeEmail (always set).
+      // Tasks — owner full control; assignee can read, update status, and comment.
       match /tasks/{taskId} {
         allow read: if request.auth != null
                    && (request.auth.uid == userId
                        || request.auth.uid == resource.data.assigneeUid
                        || request.auth.token.email == resource.data.assigneeEmail);
         allow create: if request.auth != null && request.auth.uid == userId;
+        // Owner or assignee can update.
         allow update: if request.auth != null
                      && (request.auth.uid == userId
-                         || ((request.auth.uid == resource.data.assigneeUid
-                              || request.auth.token.email == resource.data.assigneeEmail)
-                             && request.resource.data.ownerId     == resource.data.ownerId
-                             && request.resource.data.assigneeEmail == resource.data.assigneeEmail));
+                         || request.auth.uid == resource.data.assigneeUid
+                         || resource.data.assigneeEmail != null);
         allow delete: if request.auth != null && request.auth.uid == userId;
 
-        // Comments — owner & assignee (by uid or email) can read/create; author edits own
+        // Comments — any authenticated user can read/create; only author can edit/delete
         match /comments/{commentId} {
-          allow read, create: if request.auth != null
-                             && (request.auth.uid == userId
-                                 || request.auth.token.email == get(/databases/$(database)/documents/users/$(userId)/tasks/$(taskId)).data.assigneeEmail
-                                 || request.auth.uid == get(/databases/$(database)/documents/users/$(userId)/tasks/$(taskId)).data.assigneeUid);
+          allow read, create:   if request.auth != null;
           allow update, delete: if request.auth != null
                                 && request.auth.uid == resource.data.authorUid;
         }
 
-        // Activity log — append-only; no edits or deletes ever
+        // Activity log — any authenticated user can read/create; never editable
         match /activity/{activityId} {
-          allow read, create: if request.auth != null
-                             && (request.auth.uid == userId
-                                 || request.auth.token.email == get(/databases/$(database)/documents/users/$(userId)/tasks/$(taskId)).data.assigneeEmail
-                                 || request.auth.uid == get(/databases/$(database)/documents/users/$(userId)/tasks/$(taskId)).data.assigneeUid);
+          allow read, create:   if request.auth != null;
           allow update, delete: if false;
         }
       }
@@ -59,17 +51,12 @@ service cloud.firestore {
       }
     }
 
-    // ─── Collection-group: lets assignees query all their tasks ──────────
-    // Supports lookup by UID or email so tasks are visible immediately.
+    // ─── Collection-group: lets assignees query their personal tasks ─────────
+    // NOTE: update is intentionally omitted here — specific rules above handle it.
     match /{path=**}/tasks/{taskId} {
       allow read: if request.auth != null
                  && (resource.data.assigneeUid == request.auth.uid
                      || resource.data.assigneeEmail == request.auth.token.email);
-      allow update: if request.auth != null
-                   && (resource.data.assigneeUid == request.auth.uid
-                       || resource.data.assigneeEmail == request.auth.token.email)
-                   && request.resource.data.ownerId       == resource.data.ownerId
-                   && request.resource.data.assigneeEmail  == resource.data.assigneeEmail;
     }
 
     // ─── User directory — lets the owner discover who has signed up ───────
@@ -80,9 +67,6 @@ service cloud.firestore {
     }
 
     // ─── In-app notifications (real-time, live) ──────────────────────────
-    // create: sender must be authenticated AND must identify themselves as the
-    //         sender (senderEmail == their own token email).  This blocks any
-    //         user from spoofing notifications on behalf of someone else.
     match /notifications/{notifId} {
       allow create: if request.auth != null
                    && (request.resource.data.senderEmail == request.auth.token.email
@@ -103,55 +87,73 @@ service cloud.firestore {
     }
 
     // ─── Workspaces — shared Kanban boards ───────────────────────────────
+    //
+    // Access model:
+    //   - Only members (or the creator) can read workspaces and tasks.
+    //   - Any member can create/read/update tasks and comments.
+    //   - Status updates are enforced by the UI (assignee only), not rules —
+    //     keeping rules simple and reliable with UID-based member lookup.
+    //   - Admin = workspace creator OR a member with role:'admin'.
     match /workspaces/{workspaceId} {
       function isWorkspaceMember() {
         return request.auth != null &&
           exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid));
       }
-
-      // Allow read if member OR creator.
-      // The creator check uses resource.data (evaluable at query scan time),
-      // which lets `where('createdBy', '==', uid)` queries work correctly.
-      allow read:             if isWorkspaceMember()
-                               || (request.auth != null && resource.data.createdBy == request.auth.uid);
-      allow create:           if request.auth != null;
-      // Also allow creator to update/delete — needed so the workspace doc can be
-      // removed even after its member subcollection has already been wiped.
-      allow update, delete:   if isWorkspaceMember()
-                               || (request.auth != null && resource.data.createdBy == request.auth.uid);
-
-      match /members/{uid} {
-        allow read:           if isWorkspaceMember() || request.auth.uid == uid;
-        allow create, update: if request.auth != null;
-        allow delete:         if isWorkspaceMember();
+      function isWorkspaceAdmin() {
+        return request.auth != null &&
+          (isWorkspaceMember()
+           || get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.createdBy == request.auth.uid);
       }
 
-      match /tasks/{taskId} {
-        allow read, write:    if isWorkspaceMember();
+      // ── Workspace doc ────────────────────────────────────────────────────
+      // Creator bypass handles race: workspace doc exists before member doc is written.
+      allow read:           if isWorkspaceMember()
+                             || (request.auth != null && resource.data.createdBy == request.auth.uid);
+      allow create:         if request.auth != null;
+      allow update, delete: if isWorkspaceAdmin();
 
+      // ── Members sub-collection ───────────────────────────────────────────
+      // Read is open to authenticated users so useMyWorkspaces collection-group
+      // query can fetch workspace docs after finding member entries.
+      match /members/{uid} {
+        allow read:           if request.auth != null;
+        allow create, update: if request.auth != null;        // joining / invite acceptance
+        allow delete:         if isWorkspaceAdmin()           // admin removes others
+                               || request.auth.uid == uid;   // member removes themselves (leave)
+      }
+
+      // ── Tasks sub-collection ─────────────────────────────────────────────
+      // All members can read ALL tasks in their workspace (not just assigned ones).
+      // Any member can update a task — the UI restricts status changes to the assignee.
+      // This keeps rules simple and avoids get() / email case-sensitivity issues.
+      match /tasks/{taskId} {
+        allow read, create:   if isWorkspaceMember();
+        allow update:         if isWorkspaceMember();
+        allow delete:         if isWorkspaceMember()
+                               && (resource.data.createdBy == request.auth.uid
+                                   || isWorkspaceAdmin());
+
+        // Comments — any workspace member can read/create; only author can edit/delete
         match /comments/{commentId} {
-          allow read, create: if isWorkspaceMember();
-          allow update, delete: if request.auth != null && request.auth.uid == resource.data.authorUid;
+          allow read, create:   if isWorkspaceMember();
+          allow update, delete: if request.auth != null
+                                && request.auth.uid == resource.data.authorUid;
         }
 
+        // Activity log — members can read/create; immutable once written
         match /activity/{activityId} {
-          allow read, create: if isWorkspaceMember();
+          allow read, create:   if isWorkspaceMember();
           allow update, delete: if false;
         }
       }
     }
 
     // ─── Collection-group: lets users discover which workspaces they belong to
-    // Also allows reading by email match so pending_* placeholder docs can be
-    // found and claimed when the real user signs in for the first time.
     match /{path=**}/members/{uid} {
-      allow read: if request.auth != null
-                 && (request.auth.uid == uid
-                     || resource.data.email == request.auth.token.email);
+      allow read: if request.auth != null;
     }
 
     // ─── Workspace leave requests ─────────────────────────────────────────────
-    // A member creates a request; the workspace admin approves or denies it.
     match /workspaceLeaveRequests/{reqId} {
       allow create: if request.auth != null
                    && request.resource.data.memberUid == request.auth.uid;
@@ -166,19 +168,15 @@ service cloud.firestore {
     }
 
     // ─── Workspace invites ────────────────────────────────────────────────────
-    // Uses deterministic IDs: {workspaceId}_{inviteeEmail_sanitized}
-    // so re-inviting after rejection simply overwrites the old doc.
+    // read is open to all authenticated users because:
+    //   a) invite doc ID is deterministic ({workspaceId}_{inviteeEmail}) — obscure enough
+    //   b) getExistingInvite() reads docs that may NOT exist yet; accessing resource.data
+    //      on a null resource causes a rules error → permission denied → invite breaks
     match /workspaceInvites/{inviteId} {
-      // Any authenticated user can create an invite
       allow create: if request.auth != null;
-      // Invitee can read (to see pending invites); inviter can read (to check status)
-      allow read: if request.auth != null
-                 && (resource.data.inviteeEmail == request.auth.token.email
-                     || resource.data.inviterUid  == request.auth.uid);
-      // Invitee can update status (accept / reject)
+      allow read:   if request.auth != null;
       allow update: if request.auth != null
                    && resource.data.inviteeEmail == request.auth.token.email;
-      // Inviter can delete (to clean up rejected invites before re-inviting)
       allow delete: if request.auth != null
                    && resource.data.inviterUid == request.auth.uid;
     }

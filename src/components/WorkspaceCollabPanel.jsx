@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
-  ChevronDown, Mail, Send, Check as CheckIcon,
-  MessageCircle, Activity as ActivityIcon,
+  ChevronDown, Send, Check as CheckIcon, Save,
+  MessageCircle, Activity as ActivityIcon, UserCheck, X,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useWorkspaceComments, useWorkspaceActivity, addWorkspaceComment, updateWorkspaceTask } from '../hooks/useWorkspace';
+import { notifyTaskReassigned } from '../utils/emailNotifications';
+import { searchOrgPeopleDebounced } from '../utils/graphPeopleSearch';
 import { logError } from '../utils/errorLogger';
 
 // ── Status config ─────────────────────────────────────────────────────────────
@@ -22,40 +24,57 @@ const formatTime = (ts) => {
 };
 
 // ── Workspace Collab Panel ────────────────────────────────────────────────────
-export default function WorkspaceCollabPanel({ workspaceId, task, onClose }) {
+export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = false, onClose }) {
   const { user } = useAuth();
   const { comments } = useWorkspaceComments(workspaceId, task.id);
   const { activity }  = useWorkspaceActivity(workspaceId, task.id);
 
-  const [tab,           setTab]          = useState('comments');
-  const [commentText,   setCommentText]  = useState('');
-  const [sending,       setSending]      = useState(false);
-  const [statusSaving,  setStatusSaving] = useState(false);
-  const [emailSent,     setEmailSent]    = useState(false);
+  // Current user is the assignee if UID matches OR email matches (case-insensitive)
+  const isAssignee = !!(
+    (task.assigneeUid  && task.assigneeUid  === user.uid) ||
+    (task.assigneeEmail && task.assigneeEmail.toLowerCase() === user.email?.toLowerCase())
+  );
+  // Only assignee or admin can change status / reassign
+  const canAct = isAssignee || isAdmin;
 
-  const handleSendEmail = () => {
-    const statusLabel = { open: 'Open', in_progress: 'In Progress', review: 'Review', done: 'Done' }[task.status || 'open'] || task.status;
-    const due = task.dueDate ? new Date(task.dueDate).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : 'No due date';
-    const subject = encodeURIComponent(`[Task Update] ${task.text}`);
-    const body = encodeURIComponent(
-      `Hi ${task.assigneeName || task.assigneeEmail?.split('@')[0] || 'there'},\n\n` +
-      `Here's a quick update on your task:\n\n` +
-      `📋 Task: ${task.text}\n` +
-      `📊 Status: ${statusLabel}\n` +
-      `📅 Due: ${due}\n` +
-      `🔴 Priority: ${(task.priority || 'medium').charAt(0).toUpperCase() + (task.priority || 'medium').slice(1)}\n\n` +
-      `Please let me know if you have any questions.\n\n` +
-      `Thanks,\n${user.displayName || user.email}`
-    );
-    window.location.href = `mailto:${task.assigneeEmail}?subject=${subject}&body=${body}`;
-    setEmailSent(true);
-    setTimeout(() => setEmailSent(false), 3000);
+  const [tab,          setTab]          = useState('comments');
+  const [commentText,  setCommentText]  = useState('');
+  const [saving,       setSaving]       = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
+
+  // Pending status — clicking a button only stages the change; must be saved explicitly
+  const [pendingStatus, setPendingStatus] = useState(null);
+  // Reset pending if the saved status changes externally (real-time update from another user)
+  useEffect(() => { setPendingStatus(null); }, [task.status]);
+
+  const effectiveStatus = pendingStatus ?? (task.status || 'open');
+  const hasStatusChange = pendingStatus !== null && pendingStatus !== task.status;
+
+  // ── Reassign state ──────────────────────────────────────────────────────────
+  const [showReassign,        setShowReassign]        = useState(false);
+  const [reassignQuery,       setReassignQuery]       = useState('');
+  const [reassignSuggestions, setReassignSuggestions] = useState([]);
+  const [reassignPerson,      setReassignPerson]      = useState(null);
+  const [reassignComment,     setReassignComment]     = useState('');
+  const [reassigning,         setReassigning]         = useState(false);
+  const [reassignError,       setReassignError]       = useState('');
+
+  // ── Save staged status change ───────────────────────────────────────────────
+  const handleSaveStatus = async () => {
+    if (!hasStatusChange) return;
+    setStatusSaving(true);
+    try {
+      await updateWorkspaceTask(workspaceId, task.id, { status: pendingStatus }, user, task);
+      setPendingStatus(null);
+    } catch (e) { logError(e, { location: 'WorkspaceCollabPanel:handleSaveStatus' }, user.uid); }
+    setStatusSaving(false);
   };
 
-  const handleSend = async () => {
+  // ── Comment save ────────────────────────────────────────────────────────────
+  const handleSaveComment = async () => {
     const t = commentText.trim();
     if (!t) return;
-    setSending(true);
+    setSaving(true);
     try {
       await addWorkspaceComment(workspaceId, task.id, {
         authorUid:   user.uid,
@@ -64,68 +83,280 @@ export default function WorkspaceCollabPanel({ workspaceId, task, onClose }) {
         text: t,
       }, task);
       setCommentText('');
-    } catch (e) { logError(e, { location: 'WorkspaceCollabPanel:handleSend', action: 'addWorkspaceComment' }, user.uid); }
-    setSending(false);
+    } catch (e) { logError(e, { location: 'WorkspaceCollabPanel:handleSaveComment' }, user.uid); }
+    setSaving(false);
   };
 
-  const handleStatus = async (newStatus) => {
-    if (newStatus === task.status) return;
-    setStatusSaving(true);
+  // ── Reassign search ─────────────────────────────────────────────────────────
+  const handleReassignSearch = (val) => {
+    setReassignQuery(val);
+    setReassignPerson(null);
+    setReassignError('');
+    if (val.trim().length >= 2) {
+      searchOrgPeopleDebounced(val.trim()).then(r => setReassignSuggestions(r || []));
+    } else {
+      setReassignSuggestions([]);
+    }
+  };
+
+  const selectReassignPerson = (person) => {
+    setReassignPerson({ email: person.email, name: person.displayName || person.email, uid: person.id || null });
+    setReassignQuery(person.displayName || person.email);
+    setReassignSuggestions([]);
+  };
+
+  // ── Send reassign (also saves any staged status change) ─────────────────────
+  const handleReassign = async () => {
+    if (!reassignPerson?.email) { setReassignError('Please select a person from the list.'); return; }
+    setReassigning(true);
+    setReassignError('');
     try {
-      await updateWorkspaceTask(workspaceId, task.id, { status: newStatus }, user, task);
-    } catch (e) { logError(e, { location: 'WorkspaceCollabPanel:handleStatus', action: 'updateWorkspaceTask' }, user.uid); }
-    setStatusSaving(false);
+      // 1. Post comment if provided
+      if (reassignComment.trim()) {
+        await addWorkspaceComment(workspaceId, task.id, {
+          authorUid:   user.uid,
+          authorName:  user.displayName || user.email,
+          authorEmail: user.email,
+          text:        reassignComment.trim(),
+        }, task);
+      }
+
+      // 2. Reassign (+ include any staged status change in the same write)
+      const updates = {
+        assigneeEmail: reassignPerson.email.toLowerCase(),
+        assigneeUid:   reassignPerson.uid   || null,
+        assigneeName:  reassignPerson.name  || reassignPerson.email,
+      };
+      if (hasStatusChange) updates.status = pendingStatus;
+
+      await updateWorkspaceTask(workspaceId, task.id, updates, user, task);
+      setPendingStatus(null);
+
+      // 3. Email new assignee (non-fatal)
+      notifyTaskReassigned({
+        assigneeEmail:    reassignPerson.email,
+        assigneeName:     reassignPerson.name,
+        taskText:         task.text,
+        dueDate:          task.dueDate,
+        priority:         task.priority,
+        reassignedByName: user.displayName || user.email,
+        latestComment:    reassignComment.trim() || null,
+        workspaceUrl:     window.location.origin,
+      }).catch(() => {});
+
+      // 4. Reset
+      setShowReassign(false);
+      setReassignQuery('');
+      setReassignPerson(null);
+      setReassignComment('');
+    } catch (e) {
+      logError(e, { location: 'WorkspaceCollabPanel:handleReassign' }, user.uid);
+      setReassignError('Failed to reassign. Please try again.');
+    }
+    setReassigning(false);
   };
 
   const actionColor = {
-    created: '#27ae60', status_changed: '#2980b9', commented: '#8e44ad', completed: '#27ae60',
+    created: '#27ae60', status_changed: '#2980b9', commented: '#8e44ad',
+    completed: '#27ae60', reassigned: '#e67e22',
   };
 
   return (
     <div style={{ border: '1px solid #d4c5a9', borderTop: 'none', borderRadius: '0 0 10px 10px', background: '#fffdf5', padding: '12px 16px 16px' }}>
 
-      {/* Status selector */}
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#8a7a6a', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Status</div>
+      {/* ── Status selector ───────────────────────────────────────────────────── */}
+      <div style={{ marginBottom: hasStatusChange ? 8 : 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#8a7a6a', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+          Status
+          {!canAct && (
+            <span style={{ fontSize: 10, color: '#b5a898', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
+              (only the assignee can change status)
+            </span>
+          )}
+        </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {STATUSES.map(({ value, label, color, bg }) => {
-            const active = (task.status || 'open') === value;
+            const active = effectiveStatus === value;
+            const isPendingChange = active && hasStatusChange;
+            const locked = !canAct;
             return (
-              <button key={value} disabled={statusSaving} onClick={() => handleStatus(value)} style={{
-                display: 'inline-flex', alignItems: 'center', gap: 4,
-                padding: '4px 10px', borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                border: active ? `2px solid ${color}` : `1px solid ${color}55`,
-                background: active ? bg : 'transparent', color: active ? color : '#8a7a6a',
-                opacity: statusSaving ? 0.6 : 1, transition: 'all 0.15s',
-              }}>
+              <button
+                key={value}
+                disabled={locked}
+                onClick={() => {
+                  if (!canAct) return;
+                  // Clicking the currently saved status reverts any staged change
+                  if (value === (task.status || 'open')) setPendingStatus(null);
+                  else setPendingStatus(value);
+                }}
+                title={locked ? 'Only the assignee can change status' : undefined}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  padding: '4px 10px', borderRadius: 10, fontSize: 12, fontWeight: 600,
+                  cursor: locked ? 'not-allowed' : 'pointer',
+                  border: active ? `2px solid ${color}` : `1px solid ${color}55`,
+                  background: active ? bg : 'transparent',
+                  color: active ? color : locked ? '#c9b89a' : '#8a7a6a',
+                  opacity: locked ? 0.5 : 1,
+                  // Dashed border signals "staged but not saved"
+                  borderStyle: isPendingChange ? 'dashed' : 'solid',
+                  transition: 'all 0.15s',
+                }}
+              >
                 {label}
+                {isPendingChange && <span style={{ fontSize: 9, marginLeft: 2 }}>●</span>}
               </button>
             );
           })}
         </div>
       </div>
 
-      {/* Manual email button — only shown when task has an assignee */}
-      {task.assigneeEmail && (
-        <div style={{ marginBottom: 14 }}>
+      {/* Save status button — only shown when there's a staged change */}
+      {hasStatusChange && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
           <button
-            onClick={handleSendEmail}
+            onClick={handleSaveStatus}
+            disabled={statusSaving}
             style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
-              cursor: 'pointer', border: '1px solid #2980b944',
-              background: emailSent ? '#eafaf1' : '#eaf4fb',
-              color: emailSent ? '#27ae60' : '#2980b9',
-              transition: 'all 0.2s',
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              padding: '5px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
+              cursor: statusSaving ? 'not-allowed' : 'pointer',
+              border: 'none', background: '#2a9d8f', color: '#fff',
+              opacity: statusSaving ? 0.6 : 1, transition: 'opacity 0.15s',
             }}
           >
-            {emailSent ? <><CheckIcon size={13} /> Email opened!</> : <><Mail size={13} /> Email {task.assigneeName || task.assigneeEmail}</>}
+            <Save size={12} /> {statusSaving ? 'Saving…' : 'Save Status'}
           </button>
-          <span style={{ fontSize: 11, color: '#b5a898', marginLeft: 8 }}>Opens your email app with task details pre-filled</span>
+          <button
+            onClick={() => setPendingStatus(null)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#b5a898' }}
+          >
+            Revert
+          </button>
+          <span style={{ fontSize: 11, color: '#b5a898' }}>Unsaved change</span>
         </div>
       )}
 
-      {/* Tab bar */}
+      {/* ── Reassign section — only shown to assignee or admin ────────────────── */}
+      {canAct && (
+        <div style={{ marginBottom: 14 }}>
+          {!showReassign ? (
+            <button
+              onClick={() => setShowReassign(true)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                cursor: 'pointer', border: '1px solid #e67e2244',
+                background: '#fdf5ec', color: '#e67e22', transition: 'all 0.2s',
+              }}
+            >
+              <UserCheck size={13} /> Reassign Task
+            </button>
+          ) : (
+            <div style={{ background: '#fdf5ec', border: '1px solid #e67e2233', borderRadius: 10, padding: '12px 14px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#e67e22', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <UserCheck size={13} /> Reassign Task
+                </span>
+                <button
+                  onClick={() => { setShowReassign(false); setReassignQuery(''); setReassignPerson(null); setReassignComment(''); setReassignError(''); }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8a7a6a', display: 'flex', padding: 2 }}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+
+              {/* Person search */}
+              <div style={{ position: 'relative', marginBottom: 8 }}>
+                <input
+                  type="text"
+                  value={reassignQuery}
+                  onChange={e => handleReassignSearch(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Escape') setReassignSuggestions([]); }}
+                  onBlur={() => setTimeout(() => setReassignSuggestions([]), 150)}
+                  placeholder="Search name or email…"
+                  autoComplete="off"
+                  style={{
+                    width: '100%', padding: '8px 12px',
+                    border: `1px solid ${reassignPerson ? '#27ae6044' : '#e8d5b7'}`,
+                    borderRadius: 8, fontSize: 13, fontFamily: 'var(--font-body)',
+                    background: '#fffdf5', color: '#4a3728', outline: 'none', boxSizing: 'border-box',
+                  }}
+                />
+                {reassignSuggestions.length > 0 && (
+                  <div style={{
+                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 300,
+                    background: '#fff', border: '1px solid #d4c5a9', borderRadius: 8,
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.12)', marginTop: 2, overflow: 'hidden',
+                  }}>
+                    {reassignSuggestions.map(p => (
+                      <div
+                        key={p.id || p.email}
+                        onMouseDown={() => selectReassignPerson(p)}
+                        style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f0e8d8' }}
+                        onMouseEnter={e => e.currentTarget.style.background = '#f5f0e5'}
+                        onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+                      >
+                        <div style={{ fontSize: 13, fontWeight: 600, color: '#4a3728' }}>{p.displayName}</div>
+                        <div style={{ fontSize: 11, color: '#8a7a6a' }}>{p.email}</div>
+                        {p.jobTitle && <div style={{ fontSize: 11, color: '#b5a898' }}>{p.jobTitle}</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {reassignPerson && (
+                  <div style={{ fontSize: 11, color: '#27ae60', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <CheckIcon size={11} /> Assigning to <strong>{reassignPerson.name}</strong> ({reassignPerson.email})
+                  </div>
+                )}
+              </div>
+
+              {/* Optional comment */}
+              <textarea
+                value={reassignComment}
+                onChange={e => setReassignComment(e.target.value)}
+                placeholder="Add a comment for the new assignee (optional)…"
+                rows={2}
+                style={{
+                  width: '100%', padding: '8px 12px', border: '1px solid #e8d5b7',
+                  borderRadius: 8, fontSize: 13, fontFamily: 'var(--font-body)',
+                  background: '#fffdf5', color: '#4a3728', resize: 'none',
+                  outline: 'none', boxSizing: 'border-box', lineHeight: 1.5, marginBottom: 8,
+                }}
+              />
+
+              {reassignError && (
+                <div style={{ fontSize: 12, color: '#c0392b', marginBottom: 8 }}>{reassignError}</div>
+              )}
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <button
+                  onClick={handleReassign}
+                  disabled={reassigning || !reassignPerson}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '7px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700,
+                    cursor: reassigning || !reassignPerson ? 'not-allowed' : 'pointer',
+                    border: 'none', background: '#e67e22', color: '#fff',
+                    opacity: reassigning || !reassignPerson ? 0.6 : 1,
+                    transition: 'opacity 0.2s',
+                  }}
+                >
+                  <Send size={13} />
+                  {reassigning ? 'Reassigning…' : 'Send & Reassign'}
+                </button>
+                {hasStatusChange && (
+                  <span style={{ fontSize: 11, color: '#2a9d8f', fontWeight: 600 }}>
+                    ✓ Will also save status change
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Tab bar ───────────────────────────────────────────────────────────── */}
       <div style={{ display: 'flex', borderBottom: '1px solid #e8d5b7', marginBottom: 12 }}>
         {[
           { key: 'comments', label: 'Comments', Icon: MessageCircle, count: comments.length },
@@ -143,7 +374,7 @@ export default function WorkspaceCollabPanel({ workspaceId, task, onClose }) {
         ))}
       </div>
 
-      {/* Comments */}
+      {/* ── Comments ──────────────────────────────────────────────────────────── */}
       {tab === 'comments' && (
         <div>
           <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 10 }}>
@@ -166,18 +397,18 @@ export default function WorkspaceCollabPanel({ workspaceId, task, onClose }) {
           <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
             <textarea
               value={commentText} onChange={e => setCommentText(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSend(); }}
-              placeholder="Write a comment… (⌘Enter to send)" rows={2}
+              onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSaveComment(); }}
+              placeholder="Write a comment… (⌘Enter to save)" rows={2}
               style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid #d4c5a9', fontSize: 13, fontFamily: 'var(--font-body)', resize: 'none', background: '#fffdf5', color: '#4a3728', lineHeight: 1.5, outline: 'none' }}
             />
-            <button className="btn btn-teal btn-sm" onClick={handleSend} disabled={sending || !commentText.trim()} style={{ flexShrink: 0, height: 36 }}>
-              <Send size={13} /> {sending ? '…' : 'Send'}
+            <button className="btn btn-teal btn-sm" onClick={handleSaveComment} disabled={saving || !commentText.trim()} style={{ flexShrink: 0, height: 36 }}>
+              <Save size={13} /> {saving ? '…' : 'Save'}
             </button>
           </div>
         </div>
       )}
 
-      {/* Activity */}
+      {/* ── Activity ──────────────────────────────────────────────────────────── */}
       {tab === 'activity' && (
         <div style={{ maxHeight: 260, overflowY: 'auto' }}>
           {activity.length === 0 && <p style={{ color: '#b5a898', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>No activity yet.</p>}

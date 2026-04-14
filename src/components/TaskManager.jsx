@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Plus, Bell, Calendar, CheckSquare, Edit2, Check, X,
   User, Link, Mail, MessageCircle, ChevronDown, ChevronRight,
@@ -12,6 +12,7 @@ import { useTaskComments } from '../hooks/useFirestore';
 import { useMyWorkspaces, useWorkspace, addWorkspaceTask } from '../hooks/useWorkspace';
 import MemberAutocomplete from './shared/MemberAutocomplete';
 import SectionHeader from './shared/SectionHeader';
+import { fetchAllOrgUsers } from '../utils/graphPeopleSearch';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const priorityColors = { high: '#c0392b', medium: '#e67e22', low: '#27ae60' };
@@ -527,6 +528,33 @@ export default function TaskManager({
   const { workspaces } = useMyWorkspaces();
   const firstWs = workspaces[0] || null;
 
+  // ── Org users from M365 ─────────────────────────────────────────────────
+  const [orgUsers, setOrgUsers] = useState([]);
+  useEffect(() => {
+    fetchAllOrgUsers().then(users => setOrgUsers(users || [])).catch(() => {});
+  }, []);
+
+  // Merged assignee list: Firestore members (have UIDs) + M365 org users, deduped by email
+  const assigneeOptions = useMemo(() => {
+    const seen = new Set();
+    const combined = [];
+    for (const m of members) {
+      const key = m.email?.toLowerCase();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        combined.push({ email: m.email, name: m.name, uid: m.uid || null, phone: m.phone || null });
+      }
+    }
+    for (const u of orgUsers) {
+      const key = u.email?.toLowerCase();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        combined.push({ email: u.email, name: u.displayName, uid: null, phone: u.phone || null });
+      }
+    }
+    return combined;
+  }, [members, orgUsers]);
+
   // ── Add form state ──────────────────────────────────────────────────────
   const [newText,     setNewText]     = useState('');
   const [newDue,      setNewDue]      = useState(toDateInputValue());
@@ -538,7 +566,7 @@ export default function TaskManager({
   const [pendingOpen,    setPendingOpen]    = useState(true);
   const [completedOpen,  setCompletedOpen]  = useState(false);
 
-  const memberByEmail = (email) => members.find(m => m.email?.toLowerCase() === email?.toLowerCase());
+  const memberByEmail = (email) => assigneeOptions.find(m => m.email?.toLowerCase() === email?.toLowerCase());
 
   // ── Derived lists ───────────────────────────────────────────────────────
   const overdueTasks   = tasks.filter(t => !t.completed && isOverdue(t.dueDate));
@@ -612,24 +640,22 @@ export default function TaskManager({
             </select>
           </div>
         </div>
-        {members.length > 0 && (
-          <div style={{ marginBottom: 10 }}>
-            <label className="label"><User size={12} style={{ display: 'inline', marginRight: 4 }} />Assign to</label>
-            <select value={newAssignee} onChange={e => setNewAssignee(e.target.value)} style={inputStyle}>
-              <option value="">— No assignee —</option>
-              {members.map(m => (
-                <option key={m.id} value={m.email || m.id}>
-                  {m.name}{m.email ? ` (${m.email})` : ''}{m.uid ? ' ✓' : ''}
-                </option>
-              ))}
-            </select>
-            {newAssignee && memberByEmail(newAssignee)?.uid && (
-              <p style={{ fontSize: 12, color: '#2a9d8f', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <Link size={11} /> Linked — task will appear in their dashboard immediately.
-              </p>
-            )}
-          </div>
-        )}
+        <div style={{ marginBottom: 10 }}>
+          <label className="label"><User size={12} style={{ display: 'inline', marginRight: 4 }} />Assign to</label>
+          <select value={newAssignee} onChange={e => setNewAssignee(e.target.value)} style={inputStyle}>
+            <option value="">— No assignee —</option>
+            {assigneeOptions.map(m => (
+              <option key={m.email} value={m.email}>
+                {m.name}{m.email ? ` (${m.email})` : ''}
+              </option>
+            ))}
+          </select>
+          {newAssignee && memberByEmail(newAssignee)?.uid && (
+            <p style={{ fontSize: 12, color: '#2a9d8f', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Link size={11} /> Linked — task will appear in their dashboard immediately.
+            </p>
+          )}
+        </div>
         <button className="btn btn-gold" onClick={handleAdd} style={{ width: '100%', justifyContent: 'center' }}>
           <Plus size={16} /> Add Task
         </button>

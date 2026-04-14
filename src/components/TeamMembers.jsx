@@ -79,10 +79,10 @@ export default function TeamMembers({ showToast }) {
       )}
 
       {workspaces.length === 0 && !creating && (
-        <div className="empty-state" style={{ padding: 40 }}>
-          <Users size={40} color="#c9a96e" />
-          <p style={{ marginTop: 10, color: '#8a7a6a', fontSize: 15 }}>No workspaces yet</p>
-          <p style={{ fontSize: 13, color: '#b5a898', maxWidth: 340, textAlign: 'center', lineHeight: 1.6 }}>
+        <div className="empty-state" style={{ padding: 60, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
+          <Users size={40} color="#c9a96e" style={{ opacity: 0.5 }} />
+          <p style={{ marginTop: 12, color: '#8a7a6a', fontSize: 15, fontWeight: 600, textAlign: 'center' }}>No workspaces yet</p>
+          <p style={{ fontSize: 13, color: '#b5a898', maxWidth: 340, textAlign: 'center', lineHeight: 1.6, marginTop: 6 }}>
             Create a workspace to start collaborating with your team.
           </p>
         </div>
