@@ -11,10 +11,10 @@ import { db } from '../firebase';
 
 /* ── Status config ────────────────────────────────────────────────────────── */
 const STATUSES = [
-  { value: 'open',        label: 'Open',        color: '#8a7a6a', bg: '#f5f0e5', Icon: Circle       },
-  { value: 'in_progress', label: 'In Progress', color: '#2980b9', bg: '#eaf4fb', Icon: Clock        },
-  { value: 'review',      label: 'Review',      color: '#8e44ad', bg: '#f5eef8', Icon: Eye          },
-  { value: 'done',        label: 'Done',        color: '#27ae60', bg: '#eafaf1', Icon: CheckCircle  },
+  { value: 'open',        label: 'Open',        color: '#475569', bg: '#f1f5f9', Icon: Circle       },
+  { value: 'in_progress', label: 'In Progress', color: '#2563eb', bg: '#eff6ff', Icon: Clock        },
+  { value: 'review',      label: 'Review',      color: '#7c3aed', bg: '#f5eef8', Icon: Eye          },
+  { value: 'done',        label: 'Done',        color: '#15803d', bg: '#eafaf1', Icon: CheckCircle  },
 ];
 
 function StatusBadge({ status }) {
@@ -112,17 +112,17 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
 
   return (
     <div style={{
-      border: '1px solid #d4c5a9',
+      border: '1px solid #cbd5e1',
       borderTop: 'none',
       borderRadius: '0 0 10px 10px',
-      background: '#fffdf5',
+      background: '#ffffff',
       padding: '12px 16px 16px',
     }}>
 
       {/* ── Status selector ──────────────────────────────────────────────── */}
       {canChangeStatus && (
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: '#8a7a6a', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>
             Status
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -139,7 +139,7 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
                     cursor: statusSaving ? 'default' : 'pointer',
                     border: active ? `2px solid ${color}` : `1px solid ${color}55`,
                     background: active ? bg : 'transparent',
-                    color: active ? color : '#8a7a6a',
+                    color: active ? color : '#475569',
                     opacity: statusSaving ? 0.6 : 1,
                     transition: 'all 0.15s',
                   }}
@@ -153,7 +153,7 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
       )}
 
       {/* ── Tab bar ──────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #e8d5b7', marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid #e2e8f0', marginBottom: 12 }}>
         {[
           { key: 'comments', label: 'Comments', Icon: MessageCircle, count: comments.length },
           { key: 'activity', label: 'Activity',  Icon: Activity,       count: activity.length  },
@@ -164,15 +164,15 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
               padding: '6px 14px', fontSize: 13, fontWeight: 600,
-              color: tab === key ? '#2a9d8f' : '#8a7a6a',
-              borderBottom: tab === key ? '2px solid #2a9d8f' : '2px solid transparent',
+              color: tab === key ? '#7c3aed' : '#475569',
+              borderBottom: tab === key ? '2px solid #7c3aed' : '2px solid transparent',
               display: 'flex', alignItems: 'center', gap: 5,
             }}
           >
             <Icon size={13} /> {label}
             {count > 0 && (
               <span style={{
-                background: tab === key ? '#2a9d8f' : '#c9a96e',
+                background: tab === key ? '#7c3aed' : '#7c3aed',
                 color: '#fff', fontSize: 10, fontWeight: 700,
                 padding: '1px 5px', borderRadius: 8, minWidth: 16, textAlign: 'center',
               }}>
@@ -188,9 +188,9 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
         <div>
           {/* Thread */}
           <div style={{ maxHeight: 220, overflowY: 'auto', marginBottom: 10 }}>
-            {cLoading && <p style={{ color: '#8a7a6a', fontSize: 13 }}>Loading…</p>}
+            {cLoading && <p style={{ color: '#475569', fontSize: 13 }}>Loading…</p>}
             {!cLoading && comments.length === 0 && (
-              <p style={{ color: '#b5a898', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>
+              <p style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>
                 No comments yet. Be the first!
               </p>
             )}
@@ -198,13 +198,13 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
               <div key={c.id} style={{
                 display: 'flex', gap: 8, marginBottom: 10,
                 padding: '8px 10px', borderRadius: 8,
-                background: c.authorUid === user.uid ? '#eaf4fb' : '#f5f0e5',
+                background: c.authorUid === user.uid ? '#eff6ff' : '#f1f5f9',
               }}>
                 {/* Avatar */}
                 <div style={{
                   width: 28, height: 28, borderRadius: '50%',
-                  background: c.authorUid === user.uid ? '#2a9d8f22' : '#c9a96e33',
-                  color: c.authorUid === user.uid ? '#2a9d8f' : '#8B6914',
+                  background: c.authorUid === user.uid ? '#7c3aed22' : '#7c3aed33',
+                  color: c.authorUid === user.uid ? '#7c3aed' : '#6d28d9',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontWeight: 700, fontSize: 13, flexShrink: 0,
                 }}>
@@ -212,10 +212,10 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
-                    <span style={{ fontWeight: 700, fontSize: 12, color: '#4a3728' }}>{c.authorName || 'Unknown'}</span>
-                    <span style={{ fontSize: 11, color: '#b5a898' }}>{formatTime(c.createdAt)}</span>
+                    <span style={{ fontWeight: 700, fontSize: 12, color: '#0f172a' }}>{c.authorName || 'Unknown'}</span>
+                    <span style={{ fontSize: 11, color: '#94a3b8' }}>{formatTime(c.createdAt)}</span>
                   </div>
-                  <div style={{ fontSize: 13, color: '#4a3728', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{c.text}</div>
+                  <div style={{ fontSize: 13, color: '#0f172a', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{c.text}</div>
                 </div>
               </div>
             ))}
@@ -231,9 +231,9 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
               rows={2}
               style={{
                 flex: 1, padding: '8px 12px', borderRadius: 8,
-                border: '1px solid #d4c5a9', fontSize: 13,
+                border: '1px solid #cbd5e1', fontSize: 13,
                 fontFamily: 'var(--font-body)', resize: 'none',
-                background: '#fffdf5', color: '#4a3728',
+                background: '#ffffff', color: '#0f172a',
                 lineHeight: 1.5, outline: 'none',
               }}
             />
@@ -253,18 +253,18 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
       {tab === 'activity' && (
         <div style={{ maxHeight: 280, overflowY: 'auto' }}>
           {activity.length === 0 && (
-            <p style={{ color: '#b5a898', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>
+            <p style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>
               No activity yet.
             </p>
           )}
           {activity.map((a, i) => {
             const actionColor = {
-              created:       '#27ae60',
-              completed:     '#27ae60',
-              reopened:      '#e67e22',
-              status_changed:'#2980b9',
-              commented:     '#8e44ad',
-            }[a.action] || '#8a7a6a';
+              created:       '#15803d',
+              completed:     '#15803d',
+              reopened:      '#d97706',
+              status_changed:'#2563eb',
+              commented:     '#7c3aed',
+            }[a.action] || '#475569';
 
             return (
               <div key={a.id || i} style={{ display: 'flex', gap: 10, marginBottom: 10, alignItems: 'flex-start' }}>
@@ -272,24 +272,24 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 4, flexShrink: 0 }}>
                   <div style={{ width: 8, height: 8, borderRadius: '50%', background: actionColor }} />
                   {i < activity.length - 1 && (
-                    <div style={{ width: 1, flex: 1, minHeight: 16, background: '#e8d5b7', marginTop: 2 }} />
+                    <div style={{ width: 1, flex: 1, minHeight: 16, background: '#e2e8f0', marginTop: 2 }} />
                   )}
                 </div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 12, color: '#4a3728', lineHeight: 1.4 }}>
+                  <div style={{ fontSize: 12, color: '#0f172a', lineHeight: 1.4 }}>
                     <span style={{ fontWeight: 700 }}>{a.actorName || 'Someone'}</span>
                     {' '}
                     <span style={{ color: actionColor, fontWeight: 600 }}>{a.action?.replace('_', ' ')}</span>
                     {a.detail && a.action !== 'commented' && (
-                      <span style={{ color: '#8a7a6a' }}> — {a.detail}</span>
+                      <span style={{ color: '#475569' }}> — {a.detail}</span>
                     )}
                   </div>
                   {a.action === 'commented' && a.detail && (
-                    <div style={{ fontSize: 12, color: '#8a7a6a', marginTop: 2, fontStyle: 'italic' }}>
+                    <div style={{ fontSize: 12, color: '#475569', marginTop: 2, fontStyle: 'italic' }}>
                       "{a.detail.length > 60 ? a.detail.slice(0, 60) + '…' : a.detail}"
                     </div>
                   )}
-                  <div style={{ fontSize: 11, color: '#b5a898', marginTop: 2 }}>{formatTime(a.createdAt)}</div>
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{formatTime(a.createdAt)}</div>
                 </div>
               </div>
             );
@@ -304,7 +304,7 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
             onClick={onClose}
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 12, color: '#b5a898', display: 'inline-flex', alignItems: 'center', gap: 3,
+              fontSize: 12, color: '#94a3b8', display: 'inline-flex', alignItems: 'center', gap: 3,
             }}
           >
             <ChevronUp size={12} /> Close

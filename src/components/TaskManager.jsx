@@ -15,7 +15,7 @@ import SectionHeader from './shared/SectionHeader';
 import { fetchAllOrgUsers } from '../utils/graphPeopleSearch';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-const priorityColors = { high: '#c0392b', medium: '#e67e22', low: '#27ae60' };
+const priorityColors = { high: '#dc2626', medium: '#d97706', low: '#15803d' };
 
 function formatWhatsAppPhone(phone) {
   const digits = phone.replace(/\D/g, '');
@@ -30,7 +30,7 @@ function CommentBadge({ ownerUid, taskId }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 3,
-      background: '#8e44ad22', color: '#8e44ad',
+      background: '#7c3aed22', color: '#7c3aed',
       fontSize: 11, fontWeight: 700, padding: '2px 6px', borderRadius: 8,
     }}>
       💬 {comments.length}
@@ -82,16 +82,16 @@ function MoveToBoard({ task, workspaces, onDelete, showToast, onClose, user }) {
     }
   };
 
-  const selStyle = { width: '100%', height: 40, padding: '0 10px', border: '1px solid #d4c5a9', borderRadius: 8, fontSize: 13, fontFamily: 'var(--font-body)', background: '#fffdf5', color: '#4a3728', outline: 'none' };
+  const selStyle = { width: '100%', height: 40, padding: '0 10px', border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 13, fontFamily: 'var(--font-body)', background: '#ffffff', color: '#0f172a', outline: 'none' };
 
   return (
     <div style={{ padding: '0 12px 14px' }}>
-      <div style={{ height: 1, background: '#f0e6d2', marginBottom: 12 }} />
-      <div style={{ background: '#eaf4fb', border: '1px solid #2980b944', borderRadius: 10, padding: '14px 16px' }}>
-        <div style={{ fontWeight: 700, fontSize: 13, color: '#2980b9', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+      <div style={{ height: 1, background: '#e2e8f0', marginBottom: 12 }} />
+      <div style={{ background: '#eff6ff', border: '1px solid #2563eb44', borderRadius: 10, padding: '14px 16px' }}>
+        <div style={{ fontWeight: 700, fontSize: 13, color: '#2563eb', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
           <ArrowUpRight size={14} /> Move to Team Board
         </div>
-        <p style={{ fontSize: 12, color: '#4a3728', marginBottom: 12, lineHeight: 1.5 }}>
+        <p style={{ fontSize: 12, color: '#0f172a', marginBottom: 12, lineHeight: 1.5 }}>
           This task will be removed from My Tasks and added to the Team Board Kanban.
         </p>
         {workspaces.length > 1 && (
@@ -132,7 +132,7 @@ function MoveToBoard({ task, workspaces, onDelete, showToast, onClose, user }) {
           </button>
           <button
             className="btn btn-sm"
-            style={{ background: '#2980b9', color: '#fff', border: 'none' }}
+            style={{ background: '#2563eb', color: '#fff', border: 'none' }}
             onClick={handleMove}
             disabled={moveSaving}
           >
@@ -266,15 +266,15 @@ function TaskCard({
   const inputStyle = {
     WebkitAppearance: 'none', appearance: 'none',
     width: '100%', boxSizing: 'border-box', height: 44,
-    padding: '0 12px', border: '1px solid #d4c5a9', borderRadius: 8,
-    fontSize: 14, fontFamily: 'var(--font-body)', background: '#fffdf5',
-    color: '#4a3728', outline: 'none',
+    padding: '0 12px', border: '1px solid #cbd5e1', borderRadius: 8,
+    fontSize: 14, fontFamily: 'var(--font-body)', background: '#ffffff',
+    color: '#0f172a', outline: 'none',
   };
 
   return (
     <div style={{
       borderRadius: 10, overflow: 'hidden',
-      border: `1px solid ${overdue ? '#c0392b44' : '#e8d5b7'}`,
+      border: `1px solid ${overdue ? '#dc262644' : '#e2e8f0'}`,
       marginBottom: 8,
       boxShadow: expanded ? '0 2px 8px rgba(0,0,0,0.06)' : 'none',
     }}>
@@ -284,8 +284,8 @@ function TaskCard({
         style={{
           display: 'flex', alignItems: 'center', gap: 8,
           padding: '10px 12px', cursor: 'pointer', userSelect: 'none',
-          background: task.completed ? '#f9f6f0' : expanded ? '#fffdf5' : '#fff',
-          borderLeft: `3px solid ${overdue ? '#c0392b' : priorityColors[task.priority] || '#e67e22'}`,
+          background: task.completed ? '#f9f6f0' : expanded ? '#ffffff' : '#fff',
+          borderLeft: `3px solid ${overdue ? '#dc2626' : priorityColors[task.priority] || '#d97706'}`,
         }}
       >
         {/* Checkbox */}
@@ -302,7 +302,7 @@ function TaskCard({
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{
               fontWeight: 600, fontSize: 14, lineHeight: 1.4,
-              color: task.completed ? '#b5a898' : overdue ? '#c0392b' : '#4a3728',
+              color: task.completed ? '#94a3b8' : overdue ? '#dc2626' : '#0f172a',
               textDecoration: task.completed ? 'line-through' : 'none',
             }}>
               {task.text}
@@ -312,9 +312,9 @@ function TaskCard({
             {isLinked && (
               <span style={{
                 display: 'inline-flex', alignItems: 'center', gap: 3,
-                background: '#e8f8f5', color: '#2a9d8f',
+                background: '#e8f8f5', color: '#7c3aed',
                 fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
-                border: '1px solid #2a9d8f44',
+                border: '1px solid #7c3aed44',
               }}>
                 <Link size={9} /> Linked
               </span>
@@ -327,25 +327,25 @@ function TaskCard({
                 <Calendar size={11} />
                 {overdue ? 'Was due:' : dueToday ? 'Due today:' : 'Due:'} {formatDate(task.dueDate)}
                 {overdue  && <span className="overdue-badge">OVERDUE</span>}
-                {dueToday && !overdue && <span className="overdue-badge" style={{ background: '#e67e22' }}>TODAY</span>}
+                {dueToday && !overdue && <span className="overdue-badge" style={{ background: '#d97706' }}>TODAY</span>}
               </span>
             )}
             {assignee && (
-              <span style={{ fontSize: 12, color: isLinked ? '#2a9d8f' : '#8a7a6a', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+              <span style={{ fontSize: 12, color: isLinked ? '#7c3aed' : '#475569', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                 <User size={11} /> {assignee}
               </span>
             )}
           </div>
         </div>
 
-        <span style={{ color: '#8a7a6a', flexShrink: 0 }}>
+        <span style={{ color: '#475569', flexShrink: 0 }}>
           {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
         </span>
       </div>
 
       {/* ── Expanded area ─────────────────────────────────────────────── */}
       {expanded && (
-        <div style={{ borderTop: '1px solid #f0e6d2', background: '#fffdf8' }}>
+        <div style={{ borderTop: '1px solid #e2e8f0', background: '#ffffff' }}>
 
           {/* Action buttons row */}
           {!task.completed && (
@@ -391,7 +391,7 @@ function TaskCard({
               )}
               <button
                 className="btn btn-sm"
-                style={{ background: '#27ae60', color: '#fff', border: 'none', marginLeft: 'auto' }}
+                style={{ background: '#15803d', color: '#fff', border: 'none', marginLeft: 'auto' }}
                 onClick={() => onToggle(task.id, false)}
               >
                 <CheckCircle size={12} /> Done
@@ -410,7 +410,7 @@ function TaskCard({
           {/* ── Edit panel ──────────────────────────────────────────── */}
           {panel === 'edit' && (
             <div style={{ padding: '0 12px 14px' }}>
-              <div style={{ height: 1, background: '#f0e6d2', marginBottom: 12 }} />
+              <div style={{ height: 1, background: '#e2e8f0', marginBottom: 12 }} />
               <textarea
                 className="textarea"
                 rows={2}
@@ -451,8 +451,8 @@ function TaskCard({
           {/* ── Assign panel ──────────────────────────────────────── */}
           {panel === 'assign' && (
             <div style={{ padding: '0 12px 14px' }}>
-              <div style={{ height: 1, background: '#f0e6d2', marginBottom: 12 }} />
-              <div style={{ fontWeight: 700, fontSize: 13, color: '#4a3728', marginBottom: 10 }}>
+              <div style={{ height: 1, background: '#e2e8f0', marginBottom: 12 }} />
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#0f172a', marginBottom: 10 }}>
                 Assign Task — type a name to search your team
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
@@ -476,7 +476,7 @@ function TaskCard({
                 </div>
               </div>
               <div style={{ marginBottom: 12 }}>
-                <label className="label">Schedule Send Time <span style={{ fontWeight: 400, color: '#b5a898' }}>(optional — reminder note)</span></label>
+                <label className="label">Schedule Send Time <span style={{ fontWeight: 400, color: '#94a3b8' }}>(optional — reminder note)</span></label>
                 <input type="datetime-local" value={scheduleTime} onChange={e => setScheduleTime(e.target.value)} style={inputStyle} />
               </div>
               <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -491,7 +491,7 @@ function TaskCard({
           {/* ── Collab / Comments panel ────────────────────────────── */}
           {panel === 'collab' && (
             <div style={{ padding: '0 12px 14px' }}>
-              <div style={{ height: 1, background: '#f0e6d2', marginBottom: 4 }} />
+              <div style={{ height: 1, background: '#e2e8f0', marginBottom: 4 }} />
               <TaskCollabPanel
                 ownerUid={ownerUid}
                 task={task}
@@ -596,9 +596,9 @@ export default function TaskManager({
   const inputStyle = {
     WebkitAppearance: 'none', appearance: 'none',
     width: '100%', height: 48, padding: '0 12px',
-    border: '1px solid #d4c5a9', borderRadius: 8,
+    border: '1px solid #cbd5e1', borderRadius: 8,
     fontSize: 15, fontFamily: 'var(--font-body)',
-    background: '#fffdf5', color: '#4a3728',
+    background: '#ffffff', color: '#0f172a',
     boxSizing: 'border-box', outline: 'none',
   };
 
@@ -651,7 +651,7 @@ export default function TaskManager({
             ))}
           </select>
           {newAssignee && memberByEmail(newAssignee)?.uid && (
-            <p style={{ fontSize: 12, color: '#2a9d8f', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <p style={{ fontSize: 12, color: '#7c3aed', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
               <Link size={11} /> Linked — task will appear in their dashboard immediately.
             </p>
           )}
@@ -679,13 +679,13 @@ export default function TaskManager({
 
       {/* ── Overdue section ────────────────────────────────────────────── */}
       {overdueTasks.length > 0 && (
-        <div className="card" style={{ padding: 0, overflow: 'hidden', borderLeft: '4px solid #c0392b', marginBottom: 14 }}>
+        <div className="card" style={{ padding: 0, overflow: 'hidden', borderLeft: '4px solid #dc2626', marginBottom: 14 }}>
           <SectionHeader
             open={overdueOpen} onToggle={() => setOverdueOpen(o => !o)}
-            icon={<AlertCircle size={16} />} label="Overdue" count={overdueTasks.length} color="#c0392b"
+            icon={<AlertCircle size={16} />} label="Overdue" count={overdueTasks.length} color="#dc2626"
           />
           {overdueOpen && (
-            <div style={{ padding: '0 14px 14px', borderTop: '1px solid #f0e6d2' }}>
+            <div style={{ padding: '0 14px 14px', borderTop: '1px solid #e2e8f0' }}>
               <div style={{ marginTop: 12 }}>
                 {overdueTasks.map(t => <TaskCard key={t.id} task={t} {...taskCardProps} />)}
               </div>
@@ -701,10 +701,10 @@ export default function TaskManager({
           icon={<Clock size={16} />} label="Pending" count={pendingTasks.length}
         />
         {pendingOpen && (
-          <div style={{ padding: '0 14px 14px', borderTop: '1px solid #f0e6d2' }}>
+          <div style={{ padding: '0 14px 14px', borderTop: '1px solid #e2e8f0' }}>
             {pendingTasks.length === 0 ? (
               <div className="empty-state" style={{ padding: 24 }}>
-                <CheckCircle size={36} color="#27ae60" />
+                <CheckCircle size={36} color="#15803d" />
                 <p>All caught up! No pending tasks.</p>
               </div>
             ) : (
@@ -721,10 +721,10 @@ export default function TaskManager({
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <SectionHeader
             open={completedOpen} onToggle={() => setCompletedOpen(o => !o)}
-            icon={<CheckCircle size={16} />} label="Completed" count={completedCount} color="#27ae60"
+            icon={<CheckCircle size={16} />} label="Completed" count={completedCount} color="#15803d"
           />
           {completedOpen && (
-            <div style={{ padding: '0 14px 14px', borderTop: '1px solid #f0e6d2' }}>
+            <div style={{ padding: '0 14px 14px', borderTop: '1px solid #e2e8f0' }}>
               <div style={{ marginTop: 12 }}>
                 {completedTasks.map(t => <TaskCard key={t.id} task={t} {...taskCardProps} />)}
               </div>

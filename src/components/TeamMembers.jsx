@@ -80,9 +80,9 @@ export default function TeamMembers({ showToast }) {
 
       {workspaces.length === 0 && !creating && (
         <div className="empty-state" style={{ padding: 60, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
-          <Users size={40} color="#c9a96e" style={{ opacity: 0.5 }} />
-          <p style={{ marginTop: 12, color: '#8a7a6a', fontSize: 15, fontWeight: 600, textAlign: 'center' }}>No workspaces yet</p>
-          <p style={{ fontSize: 13, color: '#b5a898', maxWidth: 340, textAlign: 'center', lineHeight: 1.6, marginTop: 6 }}>
+          <Users size={40} color="#7c3aed" style={{ opacity: 0.5 }} />
+          <p style={{ marginTop: 12, color: '#475569', fontSize: 15, fontWeight: 600, textAlign: 'center' }}>No workspaces yet</p>
+          <p style={{ fontSize: 13, color: '#94a3b8', maxWidth: 340, textAlign: 'center', lineHeight: 1.6, marginTop: 6 }}>
             Create a workspace to start collaborating with your team.
           </p>
         </div>
@@ -94,14 +94,14 @@ export default function TeamMembers({ showToast }) {
           onMouseEnter={e => e.currentTarget.style.boxShadow = '0 2px 12px rgba(0,0,0,0.08)'}
           onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}
         >
-          <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg, #2a9d8f, #8e44ad)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 16, flexShrink: 0 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg, #7c3aed, #7c3aed)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 16, flexShrink: 0 }}>
             {(ws.name || 'W').charAt(0).toUpperCase()}
           </div>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 700, fontSize: 15, color: '#4a3728' }}>{ws.name}</div>
-            <div style={{ fontSize: 12, color: '#8a7a6a' }}>{ws.role === 'admin' ? 'Admin' : 'Member'}</div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: '#0f172a' }}>{ws.name}</div>
+            <div style={{ fontSize: 12, color: '#475569' }}>{ws.role === 'admin' ? 'Admin' : 'Member'}</div>
           </div>
-          <ChevronRight size={18} color="#b5a898" />
+          <ChevronRight size={18} color="#94a3b8" />
         </div>
       ))}
     </div>
@@ -368,25 +368,25 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
 
       {/* ── Leave requests (owner sees pending requests) ─────────────────── */}
       {isAdmin && leaveRequests.length > 0 && (
-        <div className="card" style={{ marginBottom: 16, border: '1px solid #e67e2244', background: '#fffbf5' }}>
-          <div style={{ fontWeight: 700, fontSize: 13, color: '#e67e22', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div className="card" style={{ marginBottom: 16, border: '1px solid #d9770644', background: '#fffbf5' }}>
+          <div style={{ fontWeight: 700, fontSize: 13, color: '#d97706', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
             <Clock size={14} /> Leave Requests ({leaveRequests.length})
           </div>
           {leaveRequests.map(req => {
             const busy = leaveAction[req.id];
             return (
-              <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #f0e6d2', flexWrap: 'wrap' }}>
+              <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: '#4a3728' }}>{req.memberName}</div>
-                  <div style={{ fontSize: 12, color: '#8a7a6a' }}>{req.memberEmail} · wants to leave</div>
+                  <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a' }}>{req.memberName}</div>
+                  <div style={{ fontSize: 12, color: '#475569' }}>{req.memberEmail} · wants to leave</div>
                 </div>
                 <div style={{ display: 'flex', gap: 7, flexShrink: 0 }}>
                   <button onClick={() => handleDenyLeave(req)} disabled={!!busy}
-                    style={{ padding: '6px 14px', borderRadius: 7, border: '1px solid #d4c5a9', background: '#fff', color: '#4a3728', fontSize: 12, fontWeight: 600, cursor: busy ? 'not-allowed' : 'pointer' }}>
+                    style={{ padding: '6px 14px', borderRadius: 7, border: '1px solid #cbd5e1', background: '#fff', color: '#0f172a', fontSize: 12, fontWeight: 600, cursor: busy ? 'not-allowed' : 'pointer' }}>
                     {busy === 'denying' ? '…' : 'Deny'}
                   </button>
                   <button onClick={() => handleApproveLeave(req)} disabled={!!busy}
-                    style={{ padding: '6px 14px', borderRadius: 7, border: 'none', background: '#27ae60', color: '#fff', fontSize: 12, fontWeight: 700, cursor: busy ? 'not-allowed' : 'pointer' }}>
+                    style={{ padding: '6px 14px', borderRadius: 7, border: 'none', background: '#15803d', color: '#fff', fontSize: 12, fontWeight: 700, cursor: busy ? 'not-allowed' : 'pointer' }}>
                     {busy === 'approving' ? '…' : 'Approve'}
                   </button>
                 </div>
@@ -398,7 +398,7 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
 
       {/* ── Invite link ──────────────────────────────────────────────────── */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ fontWeight: 700, fontSize: 13, color: '#4a3728', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ fontWeight: 700, fontSize: 13, color: '#0f172a', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
           <Link size={14} /> Invite
         </div>
 
@@ -408,7 +408,7 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
             onChange={e => { setInviteEmail(e.target.value); setInviteError(''); }}
             onKeyDown={e => e.key === 'Enter' && handleEmailInvite()}
             placeholder="colleague@company.com"
-            style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${inviteError ? '#c0392b55' : '#d4c5a9'}`, background: '#fff', fontSize: 13, fontFamily: 'var(--font-body)', color: '#4a3728', outline: 'none' }}
+            style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${inviteError ? '#dc262655' : '#cbd5e1'}`, background: '#fff', fontSize: 13, fontFamily: 'var(--font-body)', color: '#0f172a', outline: 'none' }}
           />
           <button className="btn btn-teal btn-sm" onClick={handleEmailInvite}
             disabled={inviteSending || !inviteEmail.trim()} style={{ flexShrink: 0, minWidth: 80 }}>
@@ -418,28 +418,28 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
           </button>
         </div>
         {inviteError && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#c0392b', marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#dc2626', marginBottom: 8 }}>
             <AlertTriangle size={12} /> {inviteError}
           </div>
         )}
-        <p style={{ fontSize: 11, color: '#b5a898', margin: '0 0 10px' }}>
+        <p style={{ fontSize: 11, color: '#94a3b8', margin: '0 0 10px' }}>
           They'll receive an in-app prompt to accept or decline.
         </p>
 
         {/* Copy link divider */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-          <div style={{ flex: 1, height: 1, background: '#e8d5b7' }} />
-          <span style={{ fontSize: 11, color: '#b5a898' }}>or share link</span>
-          <div style={{ flex: 1, height: 1, background: '#e8d5b7' }} />
+          <div style={{ flex: 1, height: 1, background: '#e2e8f0' }} />
+          <span style={{ fontSize: 11, color: '#94a3b8' }}>or share link</span>
+          <div style={{ flex: 1, height: 1, background: '#e2e8f0' }} />
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input className="input" value={inviteUrl} readOnly
-            style={{ fontSize: 12, color: '#8a7a6a', flex: 1 }} onClick={e => e.target.select()} />
+            style={{ fontSize: 12, color: '#475569', flex: 1 }} onClick={e => e.target.select()} />
           <button className="btn btn-teal btn-sm" onClick={handleCopy}>
             {copied ? <><CheckCircle size={13} /> Copied!</> : <><Copy size={13} /> Copy</>}
           </button>
         </div>
-        <p style={{ fontSize: 11, color: '#b5a898', marginTop: 6 }}>
+        <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 6 }}>
           They sign in with Microsoft and join automatically as a fallback.
         </p>
       </div>
@@ -447,10 +447,10 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
       {/* ── Members list ─────────────────────────────────────────────────── */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-          <div style={{ fontWeight: 700, fontSize: 13, color: '#4a3728', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <div style={{ fontWeight: 700, fontSize: 13, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 6 }}>
             <Users size={14} /> Members ({dedupedMembers.filter(m => !m.uid?.startsWith('pending_')).length})
             {dedupedMembers.some(m => m.uid?.startsWith('pending_')) && (
-              <span style={{ fontSize: 11, color: '#e67e22', fontWeight: 600 }}>
+              <span style={{ fontSize: 11, color: '#d97706', fontWeight: 600 }}>
                 · {dedupedMembers.filter(m => m.uid?.startsWith('pending_')).length} invited
               </span>
             )}
@@ -462,30 +462,30 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
         </div>
 
         {dedupedMembers.length === 0 && (
-          <p style={{ fontSize: 13, color: '#b5a898', padding: '10px 0' }}>No members yet.</p>
+          <p style={{ fontSize: 13, color: '#94a3b8', padding: '10px 0' }}>No members yet.</p>
         )}
 
         {dedupedMembers.map(m => {
           const isPending = m.uid?.startsWith('pending_');
           const isMe = m.uid === user.uid;
           return (
-            <div key={m.uid} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #f0e6d2' }}>
-              <div style={{ width: 36, height: 36, borderRadius: '50%', background: isPending ? '#f0e6d2' : isMe ? '#2a9d8f22' : '#c9a96e22', display: 'flex', alignItems: 'center', justifyContent: 'center', color: isPending ? '#b5a898' : isMe ? '#2a9d8f' : '#8B6914', fontWeight: 700, fontSize: 14, flexShrink: 0 }}>
+            <div key={m.uid} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #e2e8f0' }}>
+              <div style={{ width: 36, height: 36, borderRadius: '50%', background: isPending ? '#e2e8f0' : isMe ? '#7c3aed22' : '#7c3aed22', display: 'flex', alignItems: 'center', justifyContent: 'center', color: isPending ? '#94a3b8' : isMe ? '#7c3aed' : '#6d28d9', fontWeight: 700, fontSize: 14, flexShrink: 0 }}>
                 {(m.displayName || m.email || '?').charAt(0).toUpperCase()}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 14, color: '#4a3728' }}>
+                <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a' }}>
                   {m.displayName || m.email}
-                  {isPending && <span style={{ fontSize: 11, color: '#e67e22', marginLeft: 6, fontWeight: 600 }}>Invited</span>}
-                  {isMe && <span style={{ fontSize: 11, color: '#2a9d8f', marginLeft: 6 }}>You</span>}
+                  {isPending && <span style={{ fontSize: 11, color: '#d97706', marginLeft: 6, fontWeight: 600 }}>Invited</span>}
+                  {isMe && <span style={{ fontSize: 11, color: '#7c3aed', marginLeft: 6 }}>You</span>}
                 </div>
-                <div style={{ fontSize: 12, color: '#8a7a6a' }}>
+                <div style={{ fontSize: 12, color: '#475569' }}>
                   {m.email} · {m.role}
                 </div>
               </div>
               {isAdmin && !isMe && (
                 <button className="btn-icon" onClick={() => handleRemoveMember(m.uid, m.displayName)}
-                  title="Remove member" style={{ color: '#c0392b' }}>
+                  title="Remove member" style={{ color: '#dc2626' }}>
                   <Trash2 size={14} />
                 </button>
               )}
@@ -497,25 +497,25 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
       {/* ── Task summary ─────────────────────────────────────────────────── */}
       {wsTasks.length > 0 && (
         <div className="card" style={{ marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, fontSize: 13, color: '#4a3728', marginBottom: 10 }}>
+          <div style={{ fontWeight: 700, fontSize: 13, color: '#0f172a', marginBottom: 10 }}>
             Tasks ({wsTasks.length})
           </div>
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
             {['open', 'in_progress', 'review', 'done'].map(status => {
               const count = wsTasks.filter(t => (t.status || 'open') === status).length;
               if (count === 0) return null;
-              const colors = { open: '#8a7a6a', in_progress: '#2980b9', review: '#8e44ad', done: '#27ae60' };
+              const colors = { open: '#475569', in_progress: '#2563eb', review: '#7c3aed', done: '#15803d' };
               const labels = { open: 'Open', in_progress: 'In Progress', review: 'Review', done: 'Done' };
               return (
                 <div key={status} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 13 }}>
                   <span style={{ width: 8, height: 8, borderRadius: '50%', background: colors[status] }} />
-                  <span style={{ color: '#4a3728', fontWeight: 600 }}>{count}</span>
-                  <span style={{ color: '#8a7a6a' }}>{labels[status]}</span>
+                  <span style={{ color: '#0f172a', fontWeight: 600 }}>{count}</span>
+                  <span style={{ color: '#475569' }}>{labels[status]}</span>
                 </div>
               );
             })}
           </div>
-          <p style={{ fontSize: 12, color: '#b5a898' }}>
+          <p style={{ fontSize: 12, color: '#94a3b8' }}>
             Go to Tasks → Team Board to view and manage tasks.
           </p>
         </div>
@@ -525,7 +525,7 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
       {showOrgPanel && (
         <div className="card" style={{ marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
-            <div style={{ fontWeight: 700, fontSize: 13, color: '#8e44ad', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: '#7c3aed', display: 'flex', alignItems: 'center', gap: 6 }}>
               <Building2 size={14} /> Organization Directory
             </div>
             <button className="btn btn-outline btn-sm" onClick={loadOrgUsers} disabled={orgLoading}>
@@ -537,9 +537,9 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
               value={orgSearch} onChange={e => setOrgSearch(e.target.value)}
               style={{ fontSize: 13, marginBottom: 10 }} />
           )}
-          {orgLoading && <p style={{ fontSize: 13, color: '#8a7a6a' }}>Loading org users...</p>}
+          {orgLoading && <p style={{ fontSize: 13, color: '#475569' }}>Loading org users...</p>}
           {!orgLoading && orgUsers.length === 0 && (
-            <p style={{ fontSize: 13, color: '#8a7a6a' }}>
+            <p style={{ fontSize: 13, color: '#475569' }}>
               No users to add (everyone's already in this workspace or directory is empty).
             </p>
           )}
@@ -551,13 +551,13 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
                 return (u.displayName || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);
               })
               .map(u => (
-                <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid #f0e6d2' }}>
-                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#8e44ad22', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8e44ad', fontWeight: 700, fontSize: 13 }}>
+                <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid #e2e8f0' }}>
+                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#7c3aed22', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#7c3aed', fontWeight: 700, fontSize: 13 }}>
                     {(u.displayName || '?').charAt(0).toUpperCase()}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, fontSize: 13 }}>{u.displayName}</div>
-                    <div style={{ fontSize: 11, color: '#8a7a6a' }}>
+                    <div style={{ fontSize: 11, color: '#475569' }}>
                       {u.email}
                       {u.jobTitle && <> · <Briefcase size={9} style={{ display: 'inline' }} /> {u.jobTitle}</>}
                     </div>
@@ -573,14 +573,14 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
       )}
 
       {/* ── Danger zone ──────────────────────────────────────────────────── */}
-      <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #f0e6d2', display: 'flex', gap: 10 }}>
+      <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid #e2e8f0', display: 'flex', gap: 10 }}>
         {isAdmin ? (
           <button className="btn btn-red btn-sm" onClick={handleDeleteWorkspace} disabled={deleteLoading}>
             <Trash2 size={12} /> {deleteLoading ? 'Deleting…' : 'Delete Workspace'}
           </button>
         ) : (
           <button className="btn btn-outline btn-sm" onClick={handleRequestLeave} disabled={leaveLoading}
-            style={{ color: '#c0392b', borderColor: '#c0392b' }}>
+            style={{ color: '#dc2626', borderColor: '#dc2626' }}>
             <Leave size={12} /> {leaveLoading ? 'Sending request…' : 'Request to Leave'}
           </button>
         )}

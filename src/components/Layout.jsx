@@ -2,6 +2,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { BookOpen, Home, PenTool, CheckSquare, Settings, LogOut, List, Kanban } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import NotificationBell from './NotificationBell';
+import Avatar from './shared/Avatar';
 
 const formatDate = (d) => new Date(d).toLocaleDateString('en-US', {
   weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
@@ -53,24 +54,23 @@ export default function Layout({
       ? memberNavItems
       : ownerNavItems;
 
-  const headerTitle = collaboratorMode ? 'Workspace' : memberMode ? 'Team Tasks' : 'My Digital Diary';
+  const headerTitle = collaboratorMode ? 'Workspace' : memberMode ? 'Team Tasks' : 'Dhanam Workspace';
 
   return (
-    <div style={{ minHeight: '100vh' }}>
+    <div className="min-h-screen">
       {/* Header */}
       <header className="app-header">
         <h1>
-          <BookOpen size={24} />
+          <div className="w-8 h-8 rounded-lg bg-violet-600 text-white flex items-center justify-center">
+            <BookOpen size={18} />
+          </div>
           <span>{headerTitle}</span>
         </h1>
         <div className="header-info">
           {!memberMode && !collaboratorMode && pendingCount > 0 && (
-            <span className="badge" style={{ padding: '4px 10px' }}>{pendingCount} pending</span>
+            <span className="badge">{pendingCount} pending</span>
           )}
-          {user?.displayName && (
-            <span className="header-date" style={{ fontSize: 13 }}>{user.displayName}</span>
-          )}
-          <span className="header-date">{formatDate(Date.now())}</span>
+          <span className="header-date hidden md:inline">{formatDate(Date.now())}</span>
           <NotificationBell
             notifications={notifications}
             unreadCount={unreadCount}
@@ -78,8 +78,17 @@ export default function Layout({
             onMarkAllRead={onMarkAllRead || (() => {})}
             onNavigateToTasks={() => navigate('/tasks')}
           />
-          <button className="btn-icon" onClick={logout} title="Sign Out" style={{ color: 'rgba(254,249,239,0.7)' }}>
-            <LogOut size={18} />
+          {user && (
+            <Avatar
+              id={user.uid || user.email}
+              name={user.displayName}
+              email={user.email}
+              size="sm"
+              title={user.displayName || user.email}
+            />
+          )}
+          <button className="btn-icon" onClick={logout} title="Sign Out">
+            <LogOut size={16} />
           </button>
         </div>
       </header>
@@ -92,7 +101,7 @@ export default function Layout({
             className={`nav-btn ${activePage === n.id ? 'active' : ''}`}
             onClick={() => navigate(n.path)}
           >
-            <n.icon size={18} />
+            <n.icon size={16} />
             <span>{n.label}</span>
             {n.id === 'tasks' && !memberMode && !collaboratorMode && pendingCount > 0 && (
               <span className="badge">{pendingCount}</span>

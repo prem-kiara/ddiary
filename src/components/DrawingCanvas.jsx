@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { X } from 'lucide-react';
 
-const COLORS = ['#1a1a2e', '#c0392b', '#2980b9', '#27ae60', '#e67e22', '#8e44ad'];
+const COLORS = ['#1a1a2e', '#dc2626', '#2563eb', '#15803d', '#d97706', '#7c3aed'];
 const SIZES = [
   { label: 'Fine', value: 1 },
   { label: 'Medium', value: 2 },
@@ -45,10 +45,10 @@ export default function DrawingCanvas({ onSave, onClose, initialData }) {
   }, []);
 
   const drawBackground = (ctx, w, h) => {
-    ctx.fillStyle = '#fef9ef';
+    ctx.fillStyle = '#f8fafc';
     ctx.fillRect(0, 0, w, h);
     // Ruled lines
-    ctx.strokeStyle = '#e8d5b7';
+    ctx.strokeStyle = '#e2e8f0';
     ctx.lineWidth = 0.5;
     for (let y = 40; y < h; y += 32) {
       ctx.beginPath();

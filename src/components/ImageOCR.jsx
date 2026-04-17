@@ -81,7 +81,7 @@ export default function ImageOCR({ onTextExtracted, onClose }) {
     <div className="modal-overlay">
       <div className="modal-body">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h3 style={{ fontFamily: "'Caveat', cursive", fontSize: 26, color: '#4a3728' }}>
+          <h3 style={{ fontFamily: "var(--font-body)", fontSize: 26, color: '#0f172a' }}>
             Upload Handwritten Notes
           </h3>
           <button className="btn-icon" onClick={onClose}><X size={22} /></button>
@@ -89,8 +89,8 @@ export default function ImageOCR({ onTextExtracted, onClose }) {
 
         {!preview ? (
           <div className="upload-zone" onClick={() => fileRef.current?.click()}>
-            <Image size={48} color="#c9a96e" style={{ marginBottom: 12 }} />
-            <p style={{ color: '#8B6914', fontFamily: "'Georgia', serif", fontWeight: 600, marginBottom: 4 }}>
+            <Image size={48} color="#7c3aed" style={{ marginBottom: 12 }} />
+            <p style={{ color: '#6d28d9', fontFamily: "'Georgia', serif", fontWeight: 600, marginBottom: 4 }}>
               Tap to upload an image
             </p>
             <p style={{ color: '#aaa', fontSize: 13 }}>
@@ -110,17 +110,17 @@ export default function ImageOCR({ onTextExtracted, onClose }) {
             <img
               src={preview}
               alt="Preview"
-              style={{ width: '100%', borderRadius: 8, marginBottom: 12, border: '1px solid #e8d5b7', maxHeight: 300, objectFit: 'contain', background: '#f5f0e5' }}
+              style={{ width: '100%', borderRadius: 8, marginBottom: 12, border: '1px solid #e2e8f0', maxHeight: 300, objectFit: 'contain', background: '#f1f5f9' }}
             />
 
             {!extractedText && (
               <>
                 {processing && (
                   <div style={{ marginBottom: 12 }}>
-                    <div style={{ background: '#e8d5b7', borderRadius: 6, height: 8, overflow: 'hidden' }}>
-                      <div style={{ background: '#8B6914', height: '100%', width: `${progress}%`, transition: 'width 0.3s', borderRadius: 6 }} />
+                    <div style={{ background: '#e2e8f0', borderRadius: 6, height: 8, overflow: 'hidden' }}>
+                      <div style={{ background: '#6d28d9', height: '100%', width: `${progress}%`, transition: 'width 0.3s', borderRadius: 6 }} />
                     </div>
-                    <p style={{ textAlign: 'center', color: '#8a7a6a', fontSize: 13, marginTop: 6 }}>
+                    <p style={{ textAlign: 'center', color: '#475569', fontSize: 13, marginTop: 6 }}>
                       Recognizing handwriting... {progress}%
                     </p>
                   </div>

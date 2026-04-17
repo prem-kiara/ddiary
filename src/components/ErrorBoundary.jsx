@@ -33,28 +33,28 @@ export default class ErrorBoundary extends Component {
       <div style={{
         minHeight: '100vh',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: 'linear-gradient(135deg, #fef9ef 0%, #f5e6c8 50%, #ede0c8 100%)',
+        background: 'linear-gradient(135deg, #f8fafc 0%, #f5e6c8 50%, #ede0c8 100%)',
         padding: 24,
       }}>
         <div style={{
           maxWidth: 560, width: '100%',
           background: '#fff', borderRadius: 14,
-          border: '1px solid #e8d5b7',
+          border: '1px solid #e2e8f0',
           boxShadow: '0 4px 20px rgba(0,0,0,0.08)',
           padding: 32,
           fontFamily: "'Georgia', serif",
         }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>⚠️</div>
-          <h2 style={{ color: '#c0392b', marginBottom: 8, fontSize: 20 }}>
+          <h2 style={{ color: '#dc2626', marginBottom: 8, fontSize: 20 }}>
             Something went wrong
           </h2>
-          <p style={{ color: '#8a7a6a', marginBottom: 16, lineHeight: 1.6 }}>
+          <p style={{ color: '#475569', marginBottom: 16, lineHeight: 1.6 }}>
             The app ran into an error. The message below will help diagnose the issue:
           </p>
           <pre style={{
-            background: '#fdf6ec', border: '1px solid #e8d5b7',
+            background: '#fdf6ec', border: '1px solid #e2e8f0',
             borderRadius: 8, padding: '12px 16px',
-            fontSize: 12, color: '#c0392b',
+            fontSize: 12, color: '#dc2626',
             overflowX: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
             marginBottom: 20, lineHeight: 1.6,
             maxHeight: 200, overflowY: 'auto',
@@ -69,7 +69,7 @@ export default class ErrorBoundary extends Component {
               onClick={this.handleReset}
               style={{
                 padding: '10px 20px', borderRadius: 8,
-                background: '#c9a96e', color: '#fff',
+                background: '#7c3aed', color: '#fff',
                 border: 'none', cursor: 'pointer',
                 fontWeight: 700, fontSize: 14,
               }}
@@ -80,8 +80,8 @@ export default class ErrorBoundary extends Component {
               onClick={() => window.location.reload()}
               style={{
                 padding: '10px 20px', borderRadius: 8,
-                background: 'transparent', color: '#8a7a6a',
-                border: '1px solid #d4c5a9', cursor: 'pointer',
+                background: 'transparent', color: '#475569',
+                border: '1px solid #cbd5e1', cursor: 'pointer',
                 fontWeight: 600, fontSize: 14,
               }}
             >

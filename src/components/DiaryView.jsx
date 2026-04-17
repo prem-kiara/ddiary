@@ -1,4 +1,5 @@
 import { ChevronLeft, Edit3, Trash2, Archive, RotateCcw } from 'lucide-react';
+import { TagBadge } from './shared/Pills';
 
 const formatDate = (d) => {
   if (!d) return '';
@@ -20,7 +21,7 @@ function renderContent(content) {
   const paragraphs = content.split(/\n\n+/);
 
   return (
-    <div style={{ fontSize: 16, lineHeight: 2, fontFamily: 'var(--font-body)' }}>
+    <div className="text-[15px] leading-[1.75] text-slate-700">
       {paragraphs.map((para, pi) => {
         const lines = para.split('\n').filter(l => l.length > 0);
 
@@ -31,9 +32,9 @@ function renderContent(content) {
 
         if (isNumbered) {
           return (
-            <ol key={pi} style={{ paddingLeft: 24, marginBottom: 16 }}>
+            <ol key={pi} className="pl-6 mb-4 list-decimal">
               {lines.map((line, li) => (
-                <li key={li} style={{ marginBottom: 6 }}>
+                <li key={li} className="mb-1.5">
                   {line.replace(/^\d+[.)]\s/, '').trim()}
                 </li>
               ))}
@@ -43,9 +44,9 @@ function renderContent(content) {
 
         if (isBulleted) {
           return (
-            <ul key={pi} style={{ paddingLeft: 24, marginBottom: 16 }}>
+            <ul key={pi} className="pl-6 mb-4 list-disc">
               {lines.map((line, li) => (
-                <li key={li} style={{ marginBottom: 6 }}>
+                <li key={li} className="mb-1.5">
                   {line.replace(/^[-*•]\s/, '').trim()}
                 </li>
               ))}
@@ -55,9 +56,9 @@ function renderContent(content) {
 
         // Plain paragraphs / lines — each on its own line
         return (
-          <div key={pi} style={{ marginBottom: 12 }}>
+          <div key={pi} className="mb-3">
             {lines.map((line, li) => (
-              <p key={li} style={{ marginBottom: 4 }}>{line}</p>
+              <p key={li} className="mb-1">{line}</p>
             ))}
           </div>
         );
@@ -69,26 +70,29 @@ function renderContent(content) {
 export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, onUnarchive }) {
   return (
     <div className="fade-in">
-      <button className="btn btn-ghost" onClick={onBack} style={{ marginBottom: 12 }}>
+      <button className="btn btn-ghost mb-3" onClick={onBack}>
         <ChevronLeft size={18} /> Back to Diary
       </button>
 
       <div className="card">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-          <div>
-            <h2 style={{ fontFamily: "'Caveat', cursive", fontSize: 32, marginBottom: 4 }}>
-              {entry.title || 'Untitled'}
-            </h2>
-            <p style={{ color: '#8a7a6a', fontSize: 14 }}>
+        <div className="flex justify-between items-start mb-4 flex-wrap gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+              <h2 className="entry-title m-0" style={{ fontSize: 26 }}>
+                {entry.title || 'Untitled'}
+              </h2>
+              {entry.tag && <TagBadge tag={entry.tag} />}
+            </div>
+            <p className="text-sm text-slate-500 m-0">
               {formatDate(entry.createdAt)} · {formatTime(entry.createdAt)}
               {entry.updatedAt && entry.updatedAt !== entry.createdAt && (
-                <span style={{ marginLeft: 8, fontStyle: 'italic' }}>
+                <span className="ml-2 italic">
                   (edited {formatDate(entry.updatedAt)})
                 </span>
               )}
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div className="flex gap-2 flex-wrap">
             <button className="btn btn-sm btn-gold" onClick={() => onEdit(entry)}>
               <Edit3 size={14} /> Edit
             </button>
@@ -115,31 +119,22 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
           </div>
         </div>
 
-        <div style={{
-          borderTop: '1px solid #e8d5b7',
-          paddingTop: 16,
-          paddingBottom: 8,
-        }}>
+        <div className="border-t border-slate-200 pt-4 pb-2">
           {renderContent(entry.content)}
         </div>
 
         {/* Legacy drawings from old entries */}
         {entry.drawings?.length > 0 && (
-          <div style={{ marginTop: 24 }}>
-            <h4 style={{ color: '#8a7a6a', marginBottom: 10, fontSize: 14 }}>Attached Drawings</h4>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+          <div className="mt-6">
+            <h4 className="text-sm text-slate-500 mb-2.5 font-semibold">Attached Drawings</h4>
+            <div className="flex gap-3 flex-wrap">
               {entry.drawings.map((d, i) => (
                 <img
                   key={i}
                   src={d}
                   alt={`Drawing ${i + 1}`}
-                  style={{
-                    borderRadius: 8,
-                    border: '1px solid #e8d5b7',
-                    maxWidth: '100%',
-                    maxHeight: 400,
-                    cursor: 'pointer'
-                  }}
+                  className="rounded-lg border border-slate-200 max-w-full cursor-pointer"
+                  style={{ maxHeight: 400 }}
                   onClick={() => window.open(d, '_blank')}
                 />
               ))}

@@ -265,7 +265,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
               border: '1px solid var(--paper-line)',
               borderRadius: 12,
               padding: '6px 6px 8px',
-              boxShadow: '0 3px 14px rgba(139, 105, 20, 0.18)',
+              boxShadow: '0 3px 14px rgba(124, 58, 237, 0.15)',
               position: 'sticky',
               top: 120,          // stays visible while scrolling
             }}>

@@ -3,25 +3,25 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="theme-color" content="#8B6914" />
+  <meta name="theme-color" content="#7c3aed" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="description" content="Your personal digital diary with handwriting, tasks, and cloud sync" />
+  <meta name="description" content="Dhanam Workspace — diary, tasks, and collaboration in one place." />
   <link rel="manifest" href="/manifest.json" />
   <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg" />
   <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
   <link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Merriweather:ital,wght@0,300;0,400;0,700;1,300;1,400&display=swap" rel="stylesheet" />
-  <title>My Digital Diary</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <title>Dhanam Workspace</title>
 </head>
 <body>
   <div id="root"></div>
   <script>
     // Force-clear old service workers and caches for users stuck on stale versions
     (function() {
-      var APP_VERSION = '2.0.0';
+      var APP_VERSION = '3.0.0';
       var stored = localStorage.getItem('ddiary_version');
       if (stored !== APP_VERSION) {
         localStorage.setItem('ddiary_version', APP_VERSION);

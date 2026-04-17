@@ -54,8 +54,8 @@ export default function WorkspaceInvitePrompt({ showToast }) {
           <div
             key={invite.id}
             style={{
-              background:    'linear-gradient(135deg, #eaf4fb 0%, #f0f7ff 100%)',
-              border:        '1px solid #2980b955',
+              background:    'linear-gradient(135deg, #eff6ff 0%, #f0f7ff 100%)',
+              border:        '1px solid #2563eb55',
               borderRadius:  12,
               padding:       '14px 18px',
               marginBottom:  10,
@@ -69,21 +69,21 @@ export default function WorkspaceInvitePrompt({ showToast }) {
             {/* Icon */}
             <div style={{
               width: 40, height: 40, borderRadius: '50%',
-              background: '#2980b922',
+              background: '#2563eb22',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               flexShrink: 0,
             }}>
-              <Users size={20} color="#2980b9" />
+              <Users size={20} color="#2563eb" />
             </div>
 
             {/* Text */}
             <div style={{ flex: 1, minWidth: 180 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: '#4a3728', marginBottom: 2 }}>
-                <span style={{ color: '#2980b9' }}>{invite.inviterName}</span>
+              <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a', marginBottom: 2 }}>
+                <span style={{ color: '#2563eb' }}>{invite.inviterName}</span>
                 {' '}invited you to join{' '}
-                <span style={{ color: '#2a9d8f' }}>{invite.workspaceName}</span>
+                <span style={{ color: '#7c3aed' }}>{invite.workspaceName}</span>
               </div>
-              <div style={{ fontSize: 12, color: '#8a7a6a' }}>
+              <div style={{ fontSize: 12, color: '#475569' }}>
                 Accept to start collaborating on shared tasks
               </div>
             </div>
@@ -96,9 +96,9 @@ export default function WorkspaceInvitePrompt({ showToast }) {
                 style={{
                   padding:      '7px 16px',
                   borderRadius: 8,
-                  border:       '1px solid #d4c5a9',
-                  background:   busy === 'rejecting' ? '#f5f0e5' : '#fff',
-                  color:        '#8a7a6a',
+                  border:       '1px solid #cbd5e1',
+                  background:   busy === 'rejecting' ? '#f1f5f9' : '#fff',
+                  color:        '#475569',
                   fontSize:     13,
                   fontWeight:   600,
                   cursor:       busy ? 'not-allowed' : 'pointer',
@@ -122,7 +122,7 @@ export default function WorkspaceInvitePrompt({ showToast }) {
                   padding:      '7px 20px',
                   borderRadius: 8,
                   border:       'none',
-                  background:   busy === 'accepting' ? '#1f8a7c' : '#2a9d8f',
+                  background:   busy === 'accepting' ? '#6d28d9' : '#7c3aed',
                   color:        '#fff',
                   fontSize:     13,
                   fontWeight:   700,

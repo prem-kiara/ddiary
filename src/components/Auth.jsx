@@ -37,47 +37,46 @@ export default function Auth() {
     setLoading(false);
   };
 
+  // Per-flow tint. Default is violet (workspace); invites use indigo/emerald so
+  // users visually notice they're joining someone else's space.
+  const flow = isWorkspaceInvite
+    ? { icon: Layout,   iconBg: 'bg-indigo-100',  iconColor: 'text-indigo-600',  btn: 'btn-blue', title: 'Join Workspace',   subtitle: "You've been invited to a shared workspace. Sign in with your Microsoft account to start collaborating." }
+    : isMemberSignup
+    ? { icon: Users,    iconBg: 'bg-emerald-100', iconColor: 'text-emerald-600', btn: 'btn-gold', title: 'Join the Team',    subtitle: "You've been invited to collaborate on tasks. Sign in with your Microsoft account." }
+    : { icon: BookOpen, iconBg: 'bg-violet-100',  iconColor: 'text-violet-600',  btn: 'btn-gold', title: 'Dhanam Workspace', subtitle: "Sign in with your organization Microsoft account." };
+
+  const Icon = flow.icon;
+
   return (
     <div className="auth-container">
       <div className="auth-card fade-in">
-        <div style={{ textAlign: 'center', marginBottom: 8 }}>
-          {isWorkspaceInvite
-            ? <Layout size={40} color="#8e44ad" />
-            : isMemberSignup
-              ? <Users size={40} color="#2a9d8f" />
-              : <BookOpen size={40} color="#8B6914" />}
+        <div className="flex justify-center mb-3">
+          <div className={`w-14 h-14 rounded-2xl ${flow.iconBg} ${flow.iconColor} flex items-center justify-center`}>
+            <Icon size={28} strokeWidth={2} />
+          </div>
         </div>
 
-        <h1 className="auth-title">
-          {isWorkspaceInvite ? 'Join Workspace' : isMemberSignup ? 'Join the Team' : 'My Digital Diary'}
-        </h1>
-
-        <p className="auth-subtitle">
-          {isWorkspaceInvite
-            ? "You've been invited to a shared workspace. Sign in with your Microsoft account to start collaborating."
-            : isMemberSignup
-              ? "You've been invited to collaborate on tasks. Sign in with your Microsoft account."
-              : 'Sign in with your organization Microsoft account.'}
-        </p>
+        <h1 className="auth-title">{flow.title}</h1>
+        <p className="auth-subtitle">{flow.subtitle}</p>
 
         {error && <div className="auth-error">{error}</div>}
 
         <button
-          className={`btn ${isWorkspaceInvite ? 'btn-purple' : isMemberSignup ? 'btn-teal' : 'btn-gold'}`}
+          className={`btn ${flow.btn}`}
           onClick={handleMicrosoftLogin}
           disabled={loading}
           style={{
             width: '100%',
             justifyContent: 'center',
-            marginTop: 16,
-            fontSize: 16,
-            padding: 14,
+            marginTop: 8,
+            fontSize: 15,
+            padding: 12,
             display: 'flex',
             alignItems: 'center',
             gap: 10,
           }}
         >
-          <svg width="20" height="20" viewBox="0 0 21 21" fill="none">
+          <svg width="18" height="18" viewBox="0 0 21 21" fill="none">
             <rect x="1" y="1" width="9" height="9" fill="#F25022"/>
             <rect x="11" y="1" width="9" height="9" fill="#7FBA00"/>
             <rect x="1" y="11" width="9" height="9" fill="#00A4EF"/>
@@ -86,7 +85,7 @@ export default function Auth() {
           {loading ? 'Signing in...' : 'Sign in with Microsoft'}
         </button>
 
-        <p style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: '#999' }}>
+        <p className="text-center mt-5 text-xs text-slate-400">
           Uses your organization's Microsoft 365 account
         </p>
       </div>

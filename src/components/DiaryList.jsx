@@ -1,6 +1,25 @@
 import { useState } from 'react';
-import { BookOpen, Plus, Trash2, RotateCcw, Archive, ChevronRight, ChevronDown } from 'lucide-react';
+import { BookOpen, Plus, Trash2, RotateCcw, Archive, ChevronRight, ChevronDown, FileText } from 'lucide-react';
 import { formatDateTime, formatTime } from '../utils/dates';
+import { TagBadge } from './shared/Pills';
+
+// Rotating accent for the entry's left border. Stable per-entry via hash.
+const ENTRY_ACCENTS = [
+  'border-l-violet-400',
+  'border-l-amber-400',
+  'border-l-teal-400',
+  'border-l-blue-400',
+  'border-l-rose-400',
+  'border-l-emerald-400',
+  'border-l-indigo-400',
+];
+
+function pickAccent(id = '') {
+  const s = String(id);
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h * 16777619) >>> 0; }
+  return ENTRY_ACCENTS[h % ENTRY_ACCENTS.length];
+}
 
 export default function DiaryList({
   entries, trashedEntries = [], archivedEntries = [],
@@ -18,42 +37,51 @@ export default function DiaryList({
 
   return (
     <div className="fade-in">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <h2 className="section-title">Your Entries</h2>
+      <div className="flex items-center justify-between mb-5">
+        <div>
+          <h2 className="section-title mb-0">Your Entries</h2>
+          <p className="text-sm text-slate-500 mt-0.5">Your thoughts, meetings, and ideas in one place.</p>
+        </div>
         <button className="btn btn-gold" onClick={onNew}>
-          <Plus size={18} /> New Entry
+          <Plus size={16} /> New Entry
         </button>
       </div>
 
       {entries.length === 0 ? (
         <div className="card empty-state">
-          <BookOpen size={48} color="#c9a96e" />
+          <BookOpen size={40} className="text-violet-400" />
           <p>Your diary is empty.</p>
-          <p style={{ fontSize: 14, marginTop: 4 }}>Start writing your first entry!</p>
+          <p className="text-sm mt-1 text-slate-500">Start writing your first entry.</p>
         </div>
       ) : (
         entries.map(entry => {
           const isExpanded = expandedId === entry.id;
+          const accent = pickAccent(entry.id);
           return (
-            <div key={entry.id} className="card" style={{ cursor: 'default', padding: 0, overflow: 'hidden' }}>
+            <div
+              key={entry.id}
+              className={`card overflow-hidden border-l-4 ${accent}`}
+              style={{ padding: 0, cursor: 'default' }}
+            >
               {/* ── Header row (always visible) ── */}
               <div
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '14px 16px', cursor: 'pointer',
-                }}
+                className="flex items-center gap-3 px-4 py-3.5 cursor-pointer"
                 onClick={() => toggleExpand(entry.id)}
               >
-                <span style={{ fontSize: 20, flexShrink: 0 }}>📝</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <h3 className="entry-title" style={{ margin: 0 }}>{entry.title || 'Untitled'}</h3>
-                  <p className="entry-date" style={{ margin: 0 }}>
+                <div className="w-9 h-9 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center flex-shrink-0">
+                  <FileText size={17} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                    <h3 className="entry-title truncate m-0">{entry.title || 'Untitled'}</h3>
+                    {entry.tag && <TagBadge tag={entry.tag} />}
+                  </div>
+                  <p className="entry-date m-0">
                     {formatDateTime(entry.createdAt)} · {formatTime(entry.createdAt)}
                   </p>
                 </div>
-                {/* Archive button */}
                 <button
-                  className="btn-icon"
+                  className="btn-icon flex-shrink-0"
                   title="Archive this entry"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -61,44 +89,26 @@ export default function DiaryList({
                       onArchive(entry.id);
                     }
                   }}
-                  style={{ flexShrink: 0 }}
                 >
                   <Archive size={16} />
                 </button>
-                {/* Expand/collapse chevron */}
                 <button
-                  className="btn-icon"
+                  className="btn-icon flex-shrink-0"
                   title={isExpanded ? 'Collapse' : 'Expand'}
                   onClick={(e) => { e.stopPropagation(); toggleExpand(entry.id); }}
-                  style={{ color: '#8B6914', flexShrink: 0 }}
+                  style={{ color: 'var(--gold)' }}
                 >
-                  {isExpanded ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+                  {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                 </button>
               </div>
 
               {/* ── Expanded content ── */}
               {isExpanded && (
-                <div style={{
-                  borderTop: '1px solid #f0e6d2',
-                  padding: '12px 16px 16px',
-                  background: '#fffdf8',
-                }}>
-                  <p style={{
-                    fontFamily: 'var(--font-body)',
-                    fontSize: 15,
-                    lineHeight: 1.8,
-                    color: '#4a3728',
-                    whiteSpace: 'pre-wrap',
-                    margin: 0,
-                    marginBottom: 14,
-                  }}>
-                    {entry.content || <em style={{ color: '#b5a898' }}>No content</em>}
+                <div className="border-t border-slate-100 bg-slate-50/60 px-4 pt-3 pb-4">
+                  <p className="text-sm leading-relaxed text-slate-700 whitespace-pre-wrap mb-3">
+                    {entry.content || <em className="text-slate-400">No content</em>}
                   </p>
-                  <button
-                    className="btn btn-sm btn-outline"
-                    onClick={() => onView(entry)}
-                    style={{ fontSize: 13 }}
-                  >
+                  <button className="btn btn-sm btn-outline" onClick={() => onView(entry)}>
                     <ChevronRight size={14} /> Open Full Entry
                   </button>
                 </div>
@@ -110,49 +120,37 @@ export default function DiaryList({
 
       {/* ── Archived Entries ─────────────────────────────────────────── */}
       {archivedEntries.length > 0 && (
-        <div style={{ marginTop: 32 }}>
+        <div className="mt-8">
           <button
             onClick={() => setArchiveOpen(o => !o)}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 8,
-              color: '#8a7a6a', fontSize: 14, padding: '4px 0', marginBottom: 8,
-            }}
+            className="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 transition-colors mb-2"
           >
             <Archive size={14} />
             Archived ({archivedEntries.length})
-            <span style={{ fontSize: 11 }}>{archiveOpen ? '▲' : '▼'}</span>
+            {archiveOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
 
           {archiveOpen && (
-            <div className="card" style={{ background: '#f5f0e8' }}>
-              <p style={{ fontSize: 12, color: '#b5a898', marginBottom: 12 }}>
+            <div className="card bg-slate-50 border-slate-200">
+              <p className="text-xs text-slate-500 mb-3">
                 These entries are archived for reference. Unarchive to bring them back to your main diary.
               </p>
               {archivedEntries.map(entry => (
-                <div key={entry.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '10px 0', borderBottom: '1px solid rgba(0,0,0,0.06)',
-                }}>
-                  <Archive size={16} color="#b5a898" />
-                  <div style={{ flex: 1, minWidth: 0, cursor: 'pointer' }} onClick={() => onView(entry)}>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: '#6b5a4a' }}>
+                <div key={entry.id} className="flex items-center gap-3 py-2.5 border-b border-slate-200 last:border-b-0">
+                  <Archive size={16} className="text-slate-400 flex-shrink-0" />
+                  <div className="flex-1 min-w-0 cursor-pointer" onClick={() => onView(entry)}>
+                    <div className="font-semibold text-sm text-slate-700 truncate">
                       {entry.title || 'Untitled'}
                     </div>
-                    <div style={{ fontSize: 12, color: '#b5a898' }}>
-                      {formatDateTime(entry.createdAt)}
-                    </div>
+                    <div className="text-xs text-slate-500">{formatDateTime(entry.createdAt)}</div>
                     {entry.content && (
-                      <div style={{ fontSize: 13, color: '#b5a898', marginTop: 2, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical' }}>
-                        {entry.content}
-                      </div>
+                      <div className="text-xs text-slate-500 mt-0.5 line-clamp-1">{entry.content}</div>
                     )}
                   </div>
                   <button
-                    className="btn btn-sm btn-outline"
+                    className="btn btn-sm btn-outline flex-shrink-0"
                     title="Unarchive entry"
                     onClick={() => onUnarchive(entry.id)}
-                    style={{ padding: '4px 10px', flexShrink: 0 }}
                   >
                     <RotateCcw size={13} /> Unarchive
                   </button>
@@ -165,44 +163,34 @@ export default function DiaryList({
 
       {/* ── Recently Deleted ─────────────────────────────────────────── */}
       {trashedEntries.length > 0 && (
-        <div style={{ marginTop: 16 }}>
+        <div className="mt-4">
           <button
             onClick={() => setTrashOpen(o => !o)}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 8,
-              color: '#8a7a6a', fontSize: 14, padding: '4px 0', marginBottom: 8,
-            }}
+            className="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 transition-colors mb-2"
           >
             <Trash2 size={14} />
             Recently Deleted ({trashedEntries.length})
-            <span style={{ fontSize: 11 }}>{trashOpen ? '▲' : '▼'}</span>
+            {trashOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </button>
 
           {trashOpen && (
-            <div className="card" style={{ background: '#f5f0e8' }}>
-              <p style={{ fontSize: 12, color: '#b5a898', marginBottom: 12 }}>
+            <div className="card bg-slate-50 border-slate-200">
+              <p className="text-xs text-slate-500 mb-3">
                 These entries have been deleted. Restore them or permanently remove them.
               </p>
               {trashedEntries.map(entry => (
-                <div key={entry.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '10px 0', borderBottom: '1px solid rgba(0,0,0,0.06)',
-                }}>
-                  <span style={{ fontSize: 20 }}>📝</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14, color: '#6b5a4a' }}>
+                <div key={entry.id} className="flex items-center gap-3 py-2.5 border-b border-slate-200 last:border-b-0">
+                  <FileText size={16} className="text-slate-400 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-sm text-slate-700 truncate">
                       {entry.title || 'Untitled'}
                     </div>
-                    <div style={{ fontSize: 12, color: '#b5a898' }}>
-                      {formatDateTime(entry.createdAt)}
-                    </div>
+                    <div className="text-xs text-slate-500">{formatDateTime(entry.createdAt)}</div>
                   </div>
                   <button
-                    className="btn btn-sm btn-outline"
+                    className="btn btn-sm btn-outline flex-shrink-0"
                     title="Restore entry"
                     onClick={() => onRestore(entry.id)}
-                    style={{ padding: '4px 10px' }}
                   >
                     <RotateCcw size={13} /> Restore
                   </button>
@@ -215,7 +203,7 @@ export default function DiaryList({
                       }
                     }}
                   >
-                    <Trash2 size={15} color="#c0392b" />
+                    <Trash2 size={15} color="#dc2626" />
                   </button>
                 </div>
               ))}

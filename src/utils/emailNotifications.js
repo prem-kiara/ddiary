@@ -47,14 +47,14 @@ async function sendEmail({ to, subject, htmlBody }) {
 function wrapHtml(title, bodyContent) {
   return `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px;">
-      <div style="background: linear-gradient(135deg, #8B6914 0%, #b8941f 100%); padding: 20px 24px; border-radius: 12px 12px 0 0;">
+      <div style="background: linear-gradient(135deg, #6d28d9 0%, #a78bfa 100%); padding: 20px 24px; border-radius: 12px 12px 0 0;">
         <h2 style="margin: 0; color: #fff; font-size: 18px;">${title}</h2>
       </div>
-      <div style="background: #fffdf5; padding: 24px; border: 1px solid #e8dcc8; border-top: none; border-radius: 0 0 12px 12px;">
+      <div style="background: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px;">
         ${bodyContent}
-        <hr style="border: none; border-top: 1px solid #e8dcc8; margin: 24px 0 16px;" />
-        <p style="font-size: 12px; color: #8a7a6a; margin: 0;">
-          Sent from <a href="${APP_URL}" style="color: #8B6914;">DDiary</a> — Dhanam Digital Diary
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0 16px;" />
+        <p style="font-size: 12px; color: #475569; margin: 0;">
+          Sent from <a href="${APP_URL}" style="color: #6d28d9;">DDiary</a> — Dhanam Digital Diary
         </p>
       </div>
     </div>
@@ -63,8 +63,8 @@ function wrapHtml(title, bodyContent) {
 
 // ─── Priority badge ─────────────────────────────────────────────────────────
 function priorityBadge(priority) {
-  const colors = { high: '#c0392b', medium: '#e67e22', low: '#27ae60' };
-  const color = colors[priority] || '#8a7a6a';
+  const colors = { high: '#dc2626', medium: '#d97706', low: '#15803d' };
+  const color = colors[priority] || '#475569';
   return `<span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; color: #fff; background: ${color};">${(priority || 'medium').toUpperCase()}</span>`;
 }
 
@@ -87,22 +87,22 @@ export async function notifyTaskAssigned({ assigneeEmail, assigneeName, taskText
 
   const joinLink = `${APP_URL}?join=${ownerUid}`;
   const body = `
-    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       Hi${assigneeName ? ' <strong>' + assigneeName + '</strong>' : ''},
     </p>
-    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       <strong>${ownerName}</strong> has assigned you a new task:
     </p>
-    <div style="background: #f9f5ec; border-left: 4px solid #8B6914; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
-      <p style="font-size: 16px; font-weight: 600; color: #4a3728; margin: 0 0 8px;">${taskText}</p>
-      <p style="font-size: 13px; color: #8a7a6a; margin: 0;">
+    <div style="background: #f5f3ff; border-left: 4px solid #6d28d9; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
+      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px;">${taskText}</p>
+      <p style="font-size: 13px; color: #475569; margin: 0;">
         ${priorityBadge(priority)} &nbsp; Due: ${formatDue(dueDate)}
       </p>
     </div>
-    <p style="font-size: 14px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 14px; color: #0f172a; margin: 0 0 16px;">
       Open DDiary to view and update your task:
     </p>
-    <a href="${joinLink}" style="display: inline-block; background: #8B6914; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+    <a href="${joinLink}" style="display: inline-block; background: #6d28d9; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
       Open DDiary
     </a>
   `;
@@ -121,24 +121,24 @@ export async function notifyStatusChanged({ ownerEmail, ownerName, assigneeName,
   if (!ownerEmail) return false;
 
   const statusLabels = { open: 'Open', in_progress: 'In Progress', review: 'Review', done: 'Done' };
-  const statusColors = { open: '#8a7a6a', in_progress: '#2a6cb8', review: '#e67e22', done: '#27ae60' };
+  const statusColors = { open: '#475569', in_progress: '#2563eb', review: '#d97706', done: '#15803d' };
   const label = statusLabels[newStatus] || newStatus;
-  const color = statusColors[newStatus] || '#8a7a6a';
+  const color = statusColors[newStatus] || '#475569';
 
   const body = `
-    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       Hi${ownerName ? ' <strong>' + ownerName + '</strong>' : ''},
     </p>
-    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       <strong>${assigneeName || 'A team member'}</strong> updated the status of a task:
     </p>
-    <div style="background: #f9f5ec; border-left: 4px solid ${color}; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
-      <p style="font-size: 16px; font-weight: 600; color: #4a3728; margin: 0 0 8px;">${taskText}</p>
-      <p style="font-size: 14px; color: #4a3728; margin: 0;">
+    <div style="background: #f5f3ff; border-left: 4px solid ${color}; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
+      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px;">${taskText}</p>
+      <p style="font-size: 14px; color: #0f172a; margin: 0;">
         Status: <span style="display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 13px; font-weight: 600; color: #fff; background: ${color};">${label}</span>
       </p>
     </div>
-    <a href="${APP_URL}" style="display: inline-block; background: #8B6914; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+    <a href="${APP_URL}" style="display: inline-block; background: #6d28d9; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
       View in DDiary
     </a>
   `;
@@ -161,19 +161,19 @@ export async function notifyTaskCompleted({ ownerEmail, ownerName, assigneeName,
     : 'Just now';
 
   const body = `
-    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       Hi${ownerName ? ' <strong>' + ownerName + '</strong>' : ''},
     </p>
-    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       Great news! <strong>${assigneeName || 'A team member'}</strong> has completed a task:
     </p>
-    <div style="background: #e8f8f0; border-left: 4px solid #27ae60; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
-      <p style="font-size: 16px; font-weight: 600; color: #4a3728; margin: 0 0 8px; text-decoration: line-through;">${taskText}</p>
-      <p style="font-size: 13px; color: #27ae60; font-weight: 600; margin: 0;">
+    <div style="background: #f0fdf4; border-left: 4px solid #15803d; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
+      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px; text-decoration: line-through;">${taskText}</p>
+      <p style="font-size: 13px; color: #15803d; font-weight: 600; margin: 0;">
         ✓ Completed — ${completedDate}
       </p>
     </div>
-    <a href="${APP_URL}" style="display: inline-block; background: #27ae60; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+    <a href="${APP_URL}" style="display: inline-block; background: #15803d; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
       View in DDiary
     </a>
   `;
@@ -192,22 +192,22 @@ export async function notifyWorkspaceInvite({ inviteeEmail, inviteeName, inviter
   if (!inviteeEmail) return false;
 
   const body = `
-    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       Hi${inviteeName ? ' <strong>' + inviteeName + '</strong>' : ''},
     </p>
-    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       <strong>${inviterName}</strong> has invited you to join a workspace on DDiary:
     </p>
-    <div style="background: #f9f5ec; border-left: 4px solid #2a9d8f; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 20px;">
-      <p style="font-size: 18px; font-weight: 700; color: #4a3728; margin: 0;">
+    <div style="background: #f5f3ff; border-left: 4px solid #7c3aed; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 20px;">
+      <p style="font-size: 18px; font-weight: 700; color: #0f172a; margin: 0;">
         🗂 ${workspaceName}
       </p>
     </div>
-    <p style="font-size: 14px; color: #4a3728; margin: 0 0 20px; line-height: 1.6;">
+    <p style="font-size: 14px; color: #0f172a; margin: 0 0 20px; line-height: 1.6;">
       Click the button below to open DDiary and access the shared workspace board.
       You'll be able to view tasks, update statuses, and collaborate with the team.
     </p>
-    <a href="${inviteUrl}" style="display: inline-block; background: #2a9d8f; color: #fff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+    <a href="${inviteUrl}" style="display: inline-block; background: #7c3aed; color: #fff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
       Open Workspace
     </a>
   `;
@@ -229,30 +229,30 @@ export async function notifyTaskReassigned({
   if (!assigneeEmail) return false;
 
   const commentBlock = latestComment
-    ? `<div style="background: #f0f7ff; border-left: 4px solid #2a9d8f; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0;">
-        <p style="font-size: 12px; font-weight: 600; color: #2a9d8f; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.04em;">Latest comment</p>
-        <p style="font-size: 14px; color: #4a3728; margin: 0; font-style: italic; line-height: 1.5;">"${latestComment}"</p>
+    ? `<div style="background: #eff6ff; border-left: 4px solid #7c3aed; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0;">
+        <p style="font-size: 12px; font-weight: 600; color: #7c3aed; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.04em;">Latest comment</p>
+        <p style="font-size: 14px; color: #0f172a; margin: 0; font-style: italic; line-height: 1.5;">"${latestComment}"</p>
       </div>`
     : '';
 
   const body = `
-    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       Hi${assigneeName ? ' <strong>' + assigneeName + '</strong>' : ''},
     </p>
-    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       <strong>${reassignedByName}</strong> has reassigned a task to you:
     </p>
-    <div style="background: #f9f5ec; border-left: 4px solid #8B6914; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
-      <p style="font-size: 16px; font-weight: 600; color: #4a3728; margin: 0 0 8px;">${taskText}</p>
-      <p style="font-size: 13px; color: #8a7a6a; margin: 0;">
+    <div style="background: #f5f3ff; border-left: 4px solid #6d28d9; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
+      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px;">${taskText}</p>
+      <p style="font-size: 13px; color: #475569; margin: 0;">
         ${priorityBadge(priority)} &nbsp; Due: ${formatDue(dueDate)}
       </p>
     </div>
     ${commentBlock}
-    <p style="font-size: 14px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 14px; color: #0f172a; margin: 0 0 16px;">
       Open DDiary to view your task, add comments, and update the status:
     </p>
-    <a href="${workspaceUrl || 'https://dhanamdiary.web.app'}" style="display: inline-block; background: #2a9d8f; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+    <a href="${workspaceUrl || 'https://dhanamdiary.web.app'}" style="display: inline-block; background: #7c3aed; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
       Open in DDiary
     </a>
   `;
@@ -271,19 +271,19 @@ export async function notifyNewComment({ recipientEmail, recipientName, commente
   if (!recipientEmail) return false;
 
   const body = `
-    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       Hi${recipientName ? ' <strong>' + recipientName + '</strong>' : ''},
     </p>
-    <p style="font-size: 15px; color: #4a3728; margin: 0 0 16px;">
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       <strong>${commenterName}</strong> commented on a task:
     </p>
-    <div style="background: #f9f5ec; border-left: 4px solid #8e44ad; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
-      <p style="font-size: 14px; font-weight: 600; color: #4a3728; margin: 0 0 8px;">${taskText}</p>
+    <div style="background: #f5f3ff; border-left: 4px solid #7c3aed; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
+      <p style="font-size: 14px; font-weight: 600; color: #0f172a; margin: 0 0 8px;">${taskText}</p>
       <div style="background: #fff; padding: 12px; border-radius: 6px; margin-top: 8px;">
-        <p style="font-size: 14px; color: #4a3728; margin: 0; font-style: italic;">"${commentText}"</p>
+        <p style="font-size: 14px; color: #0f172a; margin: 0; font-style: italic;">"${commentText}"</p>
       </div>
     </div>
-    <a href="${APP_URL}" style="display: inline-block; background: #8B6914; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+    <a href="${APP_URL}" style="display: inline-block; background: #6d28d9; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
       Reply in DDiary
     </a>
   `;

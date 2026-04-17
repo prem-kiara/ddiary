@@ -11,10 +11,10 @@ import { logError } from '../utils/errorLogger';
 
 // ── Status config ─────────────────────────────────────────────────────────────
 const STATUSES = [
-  { value: 'open',        label: 'Open',        color: '#8a7a6a', bg: '#f5f0e5' },
-  { value: 'in_progress', label: 'In Progress', color: '#2980b9', bg: '#eaf4fb' },
-  { value: 'review',      label: 'Review',      color: '#8e44ad', bg: '#f5eef8' },
-  { value: 'done',        label: 'Done',        color: '#27ae60', bg: '#eafaf1' },
+  { value: 'open',        label: 'Open',        color: '#475569', bg: '#f1f5f9' },
+  { value: 'in_progress', label: 'In Progress', color: '#2563eb', bg: '#eff6ff' },
+  { value: 'review',      label: 'Review',      color: '#7c3aed', bg: '#f5eef8' },
+  { value: 'done',        label: 'Done',        color: '#15803d', bg: '#eafaf1' },
 ];
 
 const formatTime = (ts) => {
@@ -157,19 +157,19 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
   };
 
   const actionColor = {
-    created: '#27ae60', status_changed: '#2980b9', commented: '#8e44ad',
-    completed: '#27ae60', reassigned: '#e67e22',
+    created: '#15803d', status_changed: '#2563eb', commented: '#7c3aed',
+    completed: '#15803d', reassigned: '#d97706',
   };
 
   return (
-    <div style={{ border: '1px solid #d4c5a9', borderTop: 'none', borderRadius: '0 0 10px 10px', background: '#fffdf5', padding: '12px 16px 16px' }}>
+    <div style={{ border: '1px solid #cbd5e1', borderTop: 'none', borderRadius: '0 0 10px 10px', background: '#ffffff', padding: '12px 16px 16px' }}>
 
       {/* ── Status selector ───────────────────────────────────────────────────── */}
       <div style={{ marginBottom: hasStatusChange ? 8 : 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: '#8a7a6a', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
           Status
           {!canAct && (
-            <span style={{ fontSize: 10, color: '#b5a898', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
+            <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>
               (only the assignee can change status)
             </span>
           )}
@@ -196,7 +196,7 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
                   cursor: locked ? 'not-allowed' : 'pointer',
                   border: active ? `2px solid ${color}` : `1px solid ${color}55`,
                   background: active ? bg : 'transparent',
-                  color: active ? color : locked ? '#c9b89a' : '#8a7a6a',
+                  color: active ? color : locked ? '#94a3b8' : '#475569',
                   opacity: locked ? 0.5 : 1,
                   // Dashed border signals "staged but not saved"
                   borderStyle: isPendingChange ? 'dashed' : 'solid',
@@ -221,7 +221,7 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
               display: 'inline-flex', alignItems: 'center', gap: 5,
               padding: '5px 14px', borderRadius: 8, fontSize: 12, fontWeight: 700,
               cursor: statusSaving ? 'not-allowed' : 'pointer',
-              border: 'none', background: '#2a9d8f', color: '#fff',
+              border: 'none', background: '#7c3aed', color: '#fff',
               opacity: statusSaving ? 0.6 : 1, transition: 'opacity 0.15s',
             }}
           >
@@ -229,11 +229,11 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
           </button>
           <button
             onClick={() => setPendingStatus(null)}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#b5a898' }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#94a3b8' }}
           >
             Revert
           </button>
-          <span style={{ fontSize: 11, color: '#b5a898' }}>Unsaved change</span>
+          <span style={{ fontSize: 11, color: '#94a3b8' }}>Unsaved change</span>
         </div>
       )}
 
@@ -246,21 +246,21 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 6,
                 padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
-                cursor: 'pointer', border: '1px solid #e67e2244',
-                background: '#fdf5ec', color: '#e67e22', transition: 'all 0.2s',
+                cursor: 'pointer', border: '1px solid #d9770644',
+                background: '#fdf5ec', color: '#d97706', transition: 'all 0.2s',
               }}
             >
               <UserCheck size={13} /> Reassign Task
             </button>
           ) : (
-            <div style={{ background: '#fdf5ec', border: '1px solid #e67e2233', borderRadius: 10, padding: '12px 14px' }}>
+            <div style={{ background: '#fdf5ec', border: '1px solid #d9770633', borderRadius: 10, padding: '12px 14px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: '#e67e22', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: '#d97706', textTransform: 'uppercase', letterSpacing: '0.04em', display: 'flex', alignItems: 'center', gap: 5 }}>
                   <UserCheck size={13} /> Reassign Task
                 </span>
                 <button
                   onClick={() => { setShowReassign(false); setReassignQuery(''); setReassignPerson(null); setReassignComment(''); setReassignError(''); }}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8a7a6a', display: 'flex', padding: 2 }}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', display: 'flex', padding: 2 }}
                 >
                   <X size={14} />
                 </button>
@@ -278,34 +278,34 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
                   autoComplete="off"
                   style={{
                     width: '100%', padding: '8px 12px',
-                    border: `1px solid ${reassignPerson ? '#27ae6044' : '#e8d5b7'}`,
+                    border: `1px solid ${reassignPerson ? '#15803d44' : '#e2e8f0'}`,
                     borderRadius: 8, fontSize: 13, fontFamily: 'var(--font-body)',
-                    background: '#fffdf5', color: '#4a3728', outline: 'none', boxSizing: 'border-box',
+                    background: '#ffffff', color: '#0f172a', outline: 'none', boxSizing: 'border-box',
                   }}
                 />
                 {reassignSuggestions.length > 0 && (
                   <div style={{
                     position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 300,
-                    background: '#fff', border: '1px solid #d4c5a9', borderRadius: 8,
+                    background: '#fff', border: '1px solid #cbd5e1', borderRadius: 8,
                     boxShadow: '0 4px 16px rgba(0,0,0,0.12)', marginTop: 2, overflow: 'hidden',
                   }}>
                     {reassignSuggestions.map(p => (
                       <div
                         key={p.id || p.email}
                         onMouseDown={() => selectReassignPerson(p)}
-                        style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f0e8d8' }}
-                        onMouseEnter={e => e.currentTarget.style.background = '#f5f0e5'}
+                        style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9' }}
+                        onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
                         onMouseLeave={e => e.currentTarget.style.background = '#fff'}
                       >
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#4a3728' }}>{p.displayName}</div>
-                        <div style={{ fontSize: 11, color: '#8a7a6a' }}>{p.email}</div>
-                        {p.jobTitle && <div style={{ fontSize: 11, color: '#b5a898' }}>{p.jobTitle}</div>}
+                        <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{p.displayName}</div>
+                        <div style={{ fontSize: 11, color: '#475569' }}>{p.email}</div>
+                        {p.jobTitle && <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.jobTitle}</div>}
                       </div>
                     ))}
                   </div>
                 )}
                 {reassignPerson && (
-                  <div style={{ fontSize: 11, color: '#27ae60', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <div style={{ fontSize: 11, color: '#15803d', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
                     <CheckIcon size={11} /> Assigning to <strong>{reassignPerson.name}</strong> ({reassignPerson.email})
                   </div>
                 )}
@@ -318,15 +318,15 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
                 placeholder="Add a comment for the new assignee (optional)…"
                 rows={2}
                 style={{
-                  width: '100%', padding: '8px 12px', border: '1px solid #e8d5b7',
+                  width: '100%', padding: '8px 12px', border: '1px solid #e2e8f0',
                   borderRadius: 8, fontSize: 13, fontFamily: 'var(--font-body)',
-                  background: '#fffdf5', color: '#4a3728', resize: 'none',
+                  background: '#ffffff', color: '#0f172a', resize: 'none',
                   outline: 'none', boxSizing: 'border-box', lineHeight: 1.5, marginBottom: 8,
                 }}
               />
 
               {reassignError && (
-                <div style={{ fontSize: 12, color: '#c0392b', marginBottom: 8 }}>{reassignError}</div>
+                <div style={{ fontSize: 12, color: '#dc2626', marginBottom: 8 }}>{reassignError}</div>
               )}
 
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -337,7 +337,7 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
                     display: 'inline-flex', alignItems: 'center', gap: 6,
                     padding: '7px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700,
                     cursor: reassigning || !reassignPerson ? 'not-allowed' : 'pointer',
-                    border: 'none', background: '#e67e22', color: '#fff',
+                    border: 'none', background: '#d97706', color: '#fff',
                     opacity: reassigning || !reassignPerson ? 0.6 : 1,
                     transition: 'opacity 0.2s',
                   }}
@@ -346,7 +346,7 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
                   {reassigning ? 'Reassigning…' : 'Send & Reassign'}
                 </button>
                 {hasStatusChange && (
-                  <span style={{ fontSize: 11, color: '#2a9d8f', fontWeight: 600 }}>
+                  <span style={{ fontSize: 11, color: '#7c3aed', fontWeight: 600 }}>
                     ✓ Will also save status change
                   </span>
                 )}
@@ -357,19 +357,19 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
       )}
 
       {/* ── Tab bar ───────────────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', borderBottom: '1px solid #e8d5b7', marginBottom: 12 }}>
+      <div style={{ display: 'flex', borderBottom: '1px solid #e2e8f0', marginBottom: 12 }}>
         {[
           { key: 'comments', label: 'Comments', Icon: MessageCircle, count: comments.length },
           { key: 'activity', label: 'Activity',  Icon: ActivityIcon,  count: activity.length  },
         ].map(({ key, label, Icon, count }) => (
           <button key={key} onClick={() => setTab(key)} style={{
             background: 'none', border: 'none', cursor: 'pointer', padding: '6px 14px', fontSize: 13, fontWeight: 600,
-            color: tab === key ? '#2a9d8f' : '#8a7a6a',
-            borderBottom: tab === key ? '2px solid #2a9d8f' : '2px solid transparent',
+            color: tab === key ? '#7c3aed' : '#475569',
+            borderBottom: tab === key ? '2px solid #7c3aed' : '2px solid transparent',
             display: 'flex', alignItems: 'center', gap: 5,
           }}>
             <Icon size={13} /> {label}
-            {count > 0 && <span style={{ background: tab === key ? '#2a9d8f' : '#c9a96e', color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 8 }}>{count}</span>}
+            {count > 0 && <span style={{ background: tab === key ? '#7c3aed' : '#7c3aed', color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 5px', borderRadius: 8 }}>{count}</span>}
           </button>
         ))}
       </div>
@@ -378,18 +378,18 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
       {tab === 'comments' && (
         <div>
           <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 10 }}>
-            {comments.length === 0 && <p style={{ color: '#b5a898', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>No comments yet — be the first!</p>}
+            {comments.length === 0 && <p style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>No comments yet — be the first!</p>}
             {comments.map(c => (
-              <div key={c.id} style={{ display: 'flex', gap: 8, marginBottom: 10, padding: '8px 10px', borderRadius: 8, background: c.authorUid === user.uid ? '#eaf4fb' : '#f5f0e5' }}>
-                <div style={{ width: 28, height: 28, borderRadius: '50%', background: c.authorUid === user.uid ? '#2a9d8f22' : '#c9a96e33', color: c.authorUid === user.uid ? '#2a9d8f' : '#8B6914', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
+              <div key={c.id} style={{ display: 'flex', gap: 8, marginBottom: 10, padding: '8px 10px', borderRadius: 8, background: c.authorUid === user.uid ? '#eff6ff' : '#f1f5f9' }}>
+                <div style={{ width: 28, height: 28, borderRadius: '50%', background: c.authorUid === user.uid ? '#7c3aed22' : '#7c3aed33', color: c.authorUid === user.uid ? '#7c3aed' : '#6d28d9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
                   {(c.authorName || '?').charAt(0).toUpperCase()}
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 }}>
-                    <span style={{ fontWeight: 700, fontSize: 12, color: '#4a3728' }}>{c.authorName || 'Unknown'}</span>
-                    <span style={{ fontSize: 11, color: '#b5a898' }}>{formatTime(c.createdAt)}</span>
+                    <span style={{ fontWeight: 700, fontSize: 12, color: '#0f172a' }}>{c.authorName || 'Unknown'}</span>
+                    <span style={{ fontSize: 11, color: '#94a3b8' }}>{formatTime(c.createdAt)}</span>
                   </div>
-                  <div style={{ fontSize: 13, color: '#4a3728', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{c.text}</div>
+                  <div style={{ fontSize: 13, color: '#0f172a', lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>{c.text}</div>
                 </div>
               </div>
             ))}
@@ -399,7 +399,7 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
               value={commentText} onChange={e => setCommentText(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSaveComment(); }}
               placeholder="Write a comment… (⌘Enter to save)" rows={2}
-              style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid #d4c5a9', fontSize: 13, fontFamily: 'var(--font-body)', resize: 'none', background: '#fffdf5', color: '#4a3728', lineHeight: 1.5, outline: 'none' }}
+              style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 13, fontFamily: 'var(--font-body)', resize: 'none', background: '#ffffff', color: '#0f172a', lineHeight: 1.5, outline: 'none' }}
             />
             <button className="btn btn-teal btn-sm" onClick={handleSaveComment} disabled={saving || !commentText.trim()} style={{ flexShrink: 0, height: 36 }}>
               <Save size={13} /> {saving ? '…' : 'Save'}
@@ -411,23 +411,23 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
       {/* ── Activity ──────────────────────────────────────────────────────────── */}
       {tab === 'activity' && (
         <div style={{ maxHeight: 260, overflowY: 'auto' }}>
-          {activity.length === 0 && <p style={{ color: '#b5a898', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>No activity yet.</p>}
+          {activity.length === 0 && <p style={{ color: '#94a3b8', fontSize: 13, textAlign: 'center', padding: '12px 0' }}>No activity yet.</p>}
           {activity.map((a, i) => (
             <div key={a.id || i} style={{ display: 'flex', gap: 10, marginBottom: 10, alignItems: 'flex-start' }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: 4, flexShrink: 0 }}>
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: actionColor[a.action] || '#8a7a6a' }} />
-                {i < activity.length - 1 && <div style={{ width: 1, flex: 1, minHeight: 16, background: '#e8d5b7', marginTop: 2 }} />}
+                <div style={{ width: 8, height: 8, borderRadius: '50%', background: actionColor[a.action] || '#475569' }} />
+                {i < activity.length - 1 && <div style={{ width: 1, flex: 1, minHeight: 16, background: '#e2e8f0', marginTop: 2 }} />}
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 12, color: '#4a3728', lineHeight: 1.4 }}>
+                <div style={{ fontSize: 12, color: '#0f172a', lineHeight: 1.4 }}>
                   <span style={{ fontWeight: 700 }}>{a.actorName || 'Someone'}</span>{' '}
-                  <span style={{ color: actionColor[a.action] || '#8a7a6a', fontWeight: 600 }}>{a.action?.replace('_', ' ')}</span>
-                  {a.detail && a.action !== 'commented' && <span style={{ color: '#8a7a6a' }}> — {a.detail}</span>}
+                  <span style={{ color: actionColor[a.action] || '#475569', fontWeight: 600 }}>{a.action?.replace('_', ' ')}</span>
+                  {a.detail && a.action !== 'commented' && <span style={{ color: '#475569' }}> — {a.detail}</span>}
                 </div>
                 {a.action === 'commented' && a.detail && (
-                  <div style={{ fontSize: 12, color: '#8a7a6a', marginTop: 2, fontStyle: 'italic' }}>"{a.detail.length > 60 ? a.detail.slice(0, 60) + '…' : a.detail}"</div>
+                  <div style={{ fontSize: 12, color: '#475569', marginTop: 2, fontStyle: 'italic' }}>"{a.detail.length > 60 ? a.detail.slice(0, 60) + '…' : a.detail}"</div>
                 )}
-                <div style={{ fontSize: 11, color: '#b5a898', marginTop: 2 }}>{formatTime(a.createdAt)}</div>
+                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{formatTime(a.createdAt)}</div>
               </div>
             </div>
           ))}
@@ -436,7 +436,7 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
 
       {onClose && (
         <div style={{ marginTop: 10, textAlign: 'center' }}>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#b5a898', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: '#94a3b8', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
             <ChevronDown size={12} /> Close
           </button>
         </div>

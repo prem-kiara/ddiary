@@ -173,11 +173,11 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
 
     return (
       <div key={task.id} style={{
-        borderBottom: '1px solid #f0e6d2',
+        borderBottom: '1px solid #e2e8f0',
         marginBottom: 8,
         borderRadius: 8,
         overflow: 'hidden',
-        border: '1px solid #f0e6d2',
+        border: '1px solid #e2e8f0',
       }}>
         {/* ── Collapsed header row (always visible, clickable) ── */}
         <div
@@ -185,24 +185,24 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
           style={{
             display: 'flex', alignItems: 'center', gap: 10,
             padding: '11px 12px', cursor: 'pointer',
-            background: isExpanded ? '#fffdf5' : 'transparent',
+            background: isExpanded ? '#ffffff' : 'transparent',
             userSelect: 'none',
           }}
         >
-          <Bell size={15} color={overdue ? '#c0392b' : '#c9a96e'} style={{ flexShrink: 0 }} />
+          <Bell size={15} color={overdue ? '#dc2626' : '#7c3aed'} style={{ flexShrink: 0 }} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <span style={{ fontWeight: 600, fontSize: 14, lineHeight: 1.4, color: overdue ? '#c0392b' : '#4a3728' }}>
+              <span style={{ fontWeight: 600, fontSize: 14, lineHeight: 1.4, color: overdue ? '#dc2626' : '#0f172a' }}>
                 {task.text}
               </span>
               {task.status && task.status !== 'open' && <StatusBadge status={task.status} />}
               {task.assigneeUid && (
                 <span style={{
                   display: 'inline-flex', alignItems: 'center', gap: 3,
-                  background: '#e8f8f5', color: '#2a9d8f',
+                  background: '#e8f8f5', color: '#7c3aed',
                   fontSize: 10, fontWeight: 700,
                   padding: '2px 7px', borderRadius: 10,
-                  border: '1px solid #2a9d8f44',
+                  border: '1px solid #7c3aed44',
                 }}>
                   <Link size={9} /> Collaborative
                 </span>
@@ -216,30 +216,30 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
                 </span>
               )}
               {hasAssignee && task.assigneeName && (
-                <span style={{ fontSize: 12, color: '#2a9d8f', display: 'flex', alignItems: 'center', gap: 3 }}>
+                <span style={{ fontSize: 12, color: '#7c3aed', display: 'flex', alignItems: 'center', gap: 3 }}>
                   <UserPlus size={11} /> {task.assigneeName}
                 </span>
               )}
             </div>
           </div>
           {/* Chevron */}
-          <span style={{ color: '#8B6914', flexShrink: 0 }}>
+          <span style={{ color: '#6d28d9', flexShrink: 0 }}>
             {isExpanded ? <ChevronDown size={17} /> : <ChevronRight size={17} />}
           </span>
         </div>
 
         {/* ── Expanded detail section ── */}
         {isExpanded && (
-          <div style={{ borderTop: '1px solid #f0e6d2', padding: '12px 12px 14px', background: '#fffdf8' }}>
+          <div style={{ borderTop: '1px solid #e2e8f0', padding: '12px 12px 14px', background: '#ffffff' }}>
             {/* Full assignee details */}
             {hasAssignee && (
-              <div style={{ fontSize: 12, color: '#2a9d8f', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+              <div style={{ fontSize: 12, color: '#7c3aed', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
                 <UserPlus size={11} />
                 {task.assigneeName && <span style={{ fontWeight: 600 }}>{task.assigneeName}</span>}
-                {task.assigneeEmail && <span style={{ color: '#8a7a6a' }}>· {task.assigneeEmail}</span>}
-                {task.assigneePhone && <span style={{ color: '#8a7a6a' }}>· {task.assigneePhone}</span>}
+                {task.assigneeEmail && <span style={{ color: '#475569' }}>· {task.assigneeEmail}</span>}
+                {task.assigneePhone && <span style={{ color: '#475569' }}>· {task.assigneePhone}</span>}
                 {task.scheduledEmailTime && (
-                  <span style={{ color: '#8a7a6a' }}>· Scheduled: {new Date(task.scheduledEmailTime).toLocaleString()}</span>
+                  <span style={{ color: '#475569' }}>· Scheduled: {new Date(task.scheduledEmailTime).toLocaleString()}</span>
                 )}
               </div>
             )}
@@ -278,10 +278,10 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
             {/* Inline assign form */}
             {isAssigning && (
               <div style={{
-                background: '#f5f0e5', borderRadius: 8, padding: 16,
-                marginTop: 12, border: '1px solid #e8d5b7',
+                background: '#f1f5f9', borderRadius: 8, padding: 16,
+                marginTop: 12, border: '1px solid #e2e8f0',
               }}>
-                <div style={{ fontWeight: 600, fontSize: 14, color: '#4a3728', marginBottom: 12 }}>
+                <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a', marginBottom: 12 }}>
                   Assign Task — type a name to search your team
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
@@ -326,12 +326,12 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
                     style={{
                       WebkitAppearance: 'none', appearance: 'none',
                       width: '100%', boxSizing: 'border-box', height: 44,
-                      padding: '0 12px', border: '1px solid #d4c5a9', borderRadius: 8,
-                      fontSize: 14, fontFamily: 'var(--font-body)', background: '#fffdf5',
-                      color: '#4a3728', outline: 'none',
+                      padding: '0 12px', border: '1px solid #cbd5e1', borderRadius: 8,
+                      fontSize: 14, fontFamily: 'var(--font-body)', background: '#ffffff',
+                      color: '#0f172a', outline: 'none',
                     }}
                   />
-                  <p style={{ fontSize: 12, color: '#8a7a6a', marginTop: 4 }}>
+                  <p style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>
                     Save a scheduled time and use the Email Now / WhatsApp buttons to send when the time comes.
                   </p>
                 </div>
@@ -357,17 +357,17 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
 
       {/* ── Overdue Tasks ─────────────────────────────────────────────── */}
       {overdueTasks.length > 0 && (
-        <div className="card" style={{ padding: 0, overflow: 'hidden', borderLeft: '4px solid #c0392b' }}>
+        <div className="card" style={{ padding: 0, overflow: 'hidden', borderLeft: '4px solid #dc2626' }}>
           <SectionHeader
             open={overdueOpen}
             onToggle={() => setOverdueOpen(o => !o)}
             icon={<Clock size={18} />}
             label="Overdue Tasks"
             count={overdueTasks.length}
-            color="#c0392b"
+            color="#dc2626"
           />
           {overdueOpen && (
-            <div style={{ padding: '0 16px 16px', borderTop: '1px solid #f0e6d2' }}>
+            <div style={{ padding: '0 16px 16px', borderTop: '1px solid #e2e8f0' }}>
               <div style={{ marginTop: 14 }}>
                 {overdueTasks.map(renderTask)}
               </div>
@@ -386,10 +386,10 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
           count={pendingTasks.length}
         />
         {pendingOpen && (
-          <div style={{ padding: '0 16px 16px', borderTop: '1px solid #f0e6d2' }}>
+          <div style={{ padding: '0 16px 16px', borderTop: '1px solid #e2e8f0' }}>
             {pendingTasks.length === 0 ? (
               <div className="empty-state" style={{ padding: 24 }}>
-                <CheckCircle size={36} color="#27ae60" />
+                <CheckCircle size={36} color="#15803d" />
                 <p>All caught up! No pending tasks.</p>
               </div>
             ) : (
@@ -402,7 +402,7 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
       </div>
 
       {/* ── How Notifications Work ────────────────────────────────────── */}
-      <div className="card" style={{ padding: 0, overflow: 'hidden', background: '#f5f0e5', border: '1px dashed #c9a96e' }}>
+      <div className="card" style={{ padding: 0, overflow: 'hidden', background: '#f1f5f9', border: '1px dashed #7c3aed' }}>
         <SectionHeader
           open={helpOpen}
           onToggle={() => setHelpOpen(o => !o)}
@@ -410,8 +410,8 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
           label="How Notifications Work"
         />
         {helpOpen && (
-          <div style={{ padding: '0 16px 16px', borderTop: '1px solid #e8d5b7' }}>
-            <p style={{ color: '#8a7a6a', lineHeight: 1.7, fontSize: 13, marginTop: 12 }}>
+          <div style={{ padding: '0 16px 16px', borderTop: '1px solid #e2e8f0' }}>
+            <p style={{ color: '#475569', lineHeight: 1.7, fontSize: 13, marginTop: 12 }}>
               Click <strong>Assign</strong> on any task, type a name to search team members, and their email/phone fills automatically.
               <strong> Email Now</strong> opens Outlook (or your device mail app if Outlook isn't installed) pre-filled and ready to send.
               <strong> WhatsApp</strong> opens a pre-written message in WhatsApp. Add team members via the <strong>Team</strong> tab.

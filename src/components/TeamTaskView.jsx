@@ -16,17 +16,17 @@ const isOverdue = (dueDate) => {
   return d < new Date() && d.toDateString() !== new Date().toDateString();
 };
 
-const priorityColors = { high: '#c0392b', medium: '#e67e22', low: '#27ae60' };
+const priorityColors = { high: '#dc2626', medium: '#d97706', low: '#15803d' };
 
 /* ── Empty state ────────────────────────────────────────────────────────── */
 function Empty({ user }) {
   return (
     <div className="empty-state" style={{ padding: 40 }}>
-      <CheckSquare size={40} color="#c9a96e" />
-      <p style={{ marginTop: 10, color: '#8a7a6a', fontSize: 15 }}>
+      <CheckSquare size={40} color="#7c3aed" />
+      <p style={{ marginTop: 10, color: '#475569', fontSize: 15 }}>
         No tasks assigned to you yet.
       </p>
-      <p style={{ fontSize: 13, color: '#b5a898', maxWidth: 320, textAlign: 'center', lineHeight: 1.6 }}>
+      <p style={{ fontSize: 13, color: '#94a3b8', maxWidth: 320, textAlign: 'center', lineHeight: 1.6 }}>
         Your manager will assign tasks to <strong>{user?.email}</strong>.
         They will appear here automatically — no refresh needed.
       </p>
@@ -41,11 +41,11 @@ function TaskCard({ task }) {
 
   const overdue  = isOverdue(task.dueDate) && task.status !== 'done';
   const isDone   = task.status === 'done' || task.completed;
-  const priority = priorityColors[task.priority] || '#e67e22';
+  const priority = priorityColors[task.priority] || '#d97706';
 
   return (
     <div style={{
-      border: '1px solid #d4c5a9',
+      border: '1px solid #cbd5e1',
       borderRadius: 10,
       marginBottom: 10,
       overflow: 'hidden',
@@ -56,7 +56,7 @@ function TaskCard({ task }) {
         onClick={() => setOpen(v => !v)}
         style={{
           display: 'flex', alignItems: 'center', gap: 10,
-          width: '100%', background: '#fffdf5',
+          width: '100%', background: '#ffffff',
           border: 'none', cursor: 'pointer',
           padding: '12px 14px', textAlign: 'left',
         }}
@@ -67,7 +67,7 @@ function TaskCard({ task }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span style={{
-              fontWeight: 600, fontSize: 14, color: '#4a3728',
+              fontWeight: 600, fontSize: 14, color: '#0f172a',
               textDecoration: isDone ? 'line-through' : 'none',
             }}>
               {task.text}
@@ -80,27 +80,27 @@ function TaskCard({ task }) {
             {task.dueDate && (
               <span style={{
                 display: 'inline-flex', alignItems: 'center', gap: 3,
-                fontSize: 12, color: overdue ? '#c0392b' : '#8a7a6a',
+                fontSize: 12, color: overdue ? '#dc2626' : '#475569',
               }}>
                 <Calendar size={11} />
                 {formatDate(task.dueDate)}
                 {overdue && (
                   <span style={{
-                    background: '#c0392b', color: '#fff',
+                    background: '#dc2626', color: '#fff',
                     fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 6,
                   }}>OVERDUE</span>
                 )}
               </span>
             )}
             {(task.ownerName || task._ownerUid) && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 12, color: '#b5a898' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 12, color: '#94a3b8' }}>
                 <User size={11} /> from {task.ownerName || 'your manager'}
               </span>
             )}
           </div>
         </div>
 
-        {open ? <ChevronDown size={16} color="#8a7a6a" /> : <ChevronRight size={16} color="#8a7a6a" />}
+        {open ? <ChevronDown size={16} color="#475569" /> : <ChevronRight size={16} color="#475569" />}
       </button>
 
       {/* ── Collab Panel ───────────────────────────────────────────────── */}
@@ -138,7 +138,7 @@ export default function TeamTaskView() {
       )}
 
       {!loading && error && (
-        <div className="card" style={{ background: '#fef5f5', border: '1px solid #c0392b44', color: '#c0392b', padding: 16, fontSize: 13 }}>
+        <div className="card" style={{ background: '#fef2f2', border: '1px solid #dc262644', color: '#dc2626', padding: 16, fontSize: 13 }}>
           <strong>Could not load tasks:</strong> {error}
         </div>
       )}
@@ -148,8 +148,8 @@ export default function TeamTaskView() {
       {/* Pending tasks */}
       {!loading && pending.length > 0 && (
         <div className="card">
-          <h3 style={{ marginBottom: 14, color: '#4a3728', display: 'flex', alignItems: 'center', gap: 6, fontSize: 15 }}>
-            <Clock size={16} color="#e67e22" /> Pending Tasks ({pending.length})
+          <h3 style={{ marginBottom: 14, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 6, fontSize: 15 }}>
+            <Clock size={16} color="#d97706" /> Pending Tasks ({pending.length})
           </h3>
           {pending.map(t => <TaskCard key={t.id} task={t} />)}
         </div>
@@ -164,11 +164,11 @@ export default function TeamTaskView() {
               background: 'none', border: 'none', cursor: 'pointer',
               display: 'flex', alignItems: 'center', gap: 6,
               width: '100%', textAlign: 'left', padding: 0, marginBottom: showDone ? 14 : 0,
-              color: '#4a3728', fontSize: 15, fontWeight: 700,
+              color: '#0f172a', fontSize: 15, fontWeight: 700,
             }}
           >
             {showDone ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            <CheckCircle size={16} color="#27ae60" />
+            <CheckCircle size={16} color="#15803d" />
             Completed ({completed.length})
           </button>
           {showDone && completed.map(t => <TaskCard key={t.id} task={t} />)}

@@ -57,26 +57,26 @@ export default function MemberAutocomplete({ value, onChange, onSelect, members,
       {open && hasResults && (
         <div style={{
           position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-          background: '#fffdf5', border: '1px solid #d4c5a9', borderRadius: 8,
+          background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: 8,
           boxShadow: '0 4px 16px rgba(0,0,0,0.12)', maxHeight: 260, overflowY: 'auto', marginTop: 2,
         }}>
           {/* Local team members first */}
           {localFiltered.length > 0 && (
             <>
-              <div style={{ padding: '6px 14px', fontSize: 11, fontWeight: 700, color: '#8a7a6a', background: '#f5f0e5', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              <div style={{ padding: '6px 14px', fontSize: 11, fontWeight: 700, color: '#475569', background: '#f1f5f9', textTransform: 'uppercase', letterSpacing: 0.5 }}>
                 Team Members
               </div>
               {localFiltered.map(m => (
                 <div
                   key={m.id}
                   onClick={() => { onSelect(m); setOpen(false); setOrgResults([]); }}
-                  style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #f0e6d2' }}
-                  onMouseEnter={e => e.currentTarget.style.background = '#f5f0e5'}
+                  style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #e2e8f0' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                 >
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{m.name}{m.uid ? ' ✓' : ''}</div>
-                  {m.email && <div style={{ fontSize: 12, color: '#8a7a6a' }}>{m.email}</div>}
-                  {m.phone && <div style={{ fontSize: 12, color: '#8a7a6a' }}>{m.phone}</div>}
+                  {m.email && <div style={{ fontSize: 12, color: '#475569' }}>{m.email}</div>}
+                  {m.phone && <div style={{ fontSize: 12, color: '#475569' }}>{m.phone}</div>}
                 </div>
               ))}
             </>
@@ -96,13 +96,13 @@ export default function MemberAutocomplete({ value, onChange, onSelect, members,
                     setOpen(false);
                     setOrgResults([]);
                   }}
-                  style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #f0e6d2' }}
+                  style={{ padding: '10px 14px', cursor: 'pointer', borderBottom: '1px solid #e2e8f0' }}
                   onMouseEnter={e => e.currentTarget.style.background = '#e8f0fe'}
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                 >
                   <div style={{ fontWeight: 600, fontSize: 14 }}>{p.displayName}</div>
                   {p.email && <div style={{ fontSize: 12, color: '#2a6cb8' }}>{p.email}</div>}
-                  {p.jobTitle && <div style={{ fontSize: 11, color: '#8a7a6a', fontStyle: 'italic' }}>{p.jobTitle}</div>}
+                  {p.jobTitle && <div style={{ fontSize: 11, color: '#475569', fontStyle: 'italic' }}>{p.jobTitle}</div>}
                 </div>
               ))}
             </>
@@ -110,7 +110,7 @@ export default function MemberAutocomplete({ value, onChange, onSelect, members,
 
           {/* Loading indicator */}
           {searching && orgResults.length === 0 && localFiltered.length === 0 && (
-            <div style={{ padding: '12px 14px', fontSize: 13, color: '#8a7a6a', textAlign: 'center' }}>
+            <div style={{ padding: '12px 14px', fontSize: 13, color: '#475569', textAlign: 'center' }}>
               Searching organization...
             </div>
           )}

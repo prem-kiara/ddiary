@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { List, Kanban, User, Users } from 'lucide-react';
+import { User, Users } from 'lucide-react';
 import TaskManager from './TaskManager';
 import KanbanBoard from './KanbanBoard';
 
@@ -23,25 +23,24 @@ export default function TasksPage({
 
   return (
     <div className="fade-in">
-
-      {/* ── View toggle ───────────────────────────────────────────────────── */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 22, justifyContent: 'center' }}>
-        <ViewTab
-          icon={Users}
-          label="Team Board"
-          description="Assign & track"
-          id="board"
-          active={view === 'board'}
-          onClick={switchView}
-        />
-        <ViewTab
-          icon={User}
-          label="My Tasks"
-          description="Personal to-do list"
-          id="list"
-          active={view === 'list'}
-          onClick={switchView}
-        />
+      {/* ── Segmented view toggle ─────────────────────────────────────────── */}
+      <div className="flex justify-center mb-6">
+        <div className="inline-flex bg-slate-100 rounded-xl p-1 gap-1">
+          <SegmentTab
+            icon={Users}
+            label="Team Board"
+            id="board"
+            active={view === 'board'}
+            onClick={switchView}
+          />
+          <SegmentTab
+            icon={User}
+            label="My Tasks"
+            id="list"
+            active={view === 'list'}
+            onClick={switchView}
+          />
+        </div>
       </div>
 
       {/* ── Views ────────────────────────────────────────────────────────── */}
@@ -66,34 +65,20 @@ export default function TasksPage({
   );
 }
 
-// ── Tab button ─────────────────────────────────────────────────────────────────
-function ViewTab({ icon: Icon, label, description, id, active, onClick }) {
+// ── Segmented tab button ──────────────────────────────────────────────────────
+function SegmentTab({ icon: Icon, label, id, active, onClick }) {
   return (
     <button
       onClick={() => onClick(id)}
-      style={{
-        width: 200,
-        padding: '10px 18px', borderRadius: 12, cursor: 'pointer',
-        border: active ? '2px solid #2a9d8f' : '2px solid #e8d5b7',
-        display: 'flex', alignItems: 'center', gap: 10,
-        background: active ? '#f0faf9' : '#faf7f2',
-        transition: 'all 0.18s',
-        boxShadow: active ? '0 2px 8px rgba(42,157,143,0.15)' : 'none',
-        textAlign: 'left',
-      }}
+      className={`
+        flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all
+        ${active
+          ? 'bg-white text-violet-700 shadow-sm'
+          : 'text-slate-600 hover:text-slate-900'}
+      `}
     >
-      <div style={{
-        width: 36, height: 36, borderRadius: 8, flexShrink: 0,
-        background: active ? '#2a9d8f' : '#e8d5b7',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        transition: 'background 0.18s',
-      }}>
-        <Icon size={16} color={active ? '#fff' : '#8a7a6a'} />
-      </div>
-      <div>
-        <div style={{ fontSize: 13, fontWeight: 700, color: active ? '#2a9d8f' : '#4a3728', lineHeight: 1.2 }}>{label}</div>
-        <div style={{ fontSize: 11, color: '#8a7a6a', marginTop: 2 }}>{description}</div>
-      </div>
+      <Icon size={15} />
+      <span>{label}</span>
     </button>
   );
 }
