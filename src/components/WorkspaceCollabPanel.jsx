@@ -158,7 +158,7 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
 
   const actionColor = {
     created: '#15803d', status_changed: '#2563eb', commented: '#7c3aed',
-    completed: '#15803d', reassigned: '#d97706',
+    completed: '#15803d', reassigned: '#d97706', moved: '#0d9488',
   };
 
   return (

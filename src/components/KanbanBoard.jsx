@@ -15,6 +15,7 @@ import {
   addWorkspaceCategory, renameWorkspaceCategory, deleteWorkspaceCategory,
   addWorkspaceSubcategory, renameWorkspaceSubcategory, deleteWorkspaceSubcategory,
   promoteUncategorizedToCategory,
+  moveWorkspaceTaskCategory,
   useWorkspaceComments,
 } from '../hooks/useWorkspace';
 import { logError } from '../utils/errorLogger';
@@ -39,12 +40,238 @@ const formatDate = (d) => {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 };
 
+// ── Category Picker (visible inside TaskDetailModal, creator-only) ────────────
+//
+// Lets the workspace creator move a task between categories/subcategories and
+// create new ones inline. Writes an activity-log entry on every move.
+//
+// Props:
+//   task       — current task doc (reads task.categoryId / task.subcategoryId)
+//   workspace  — workspace doc (reads workspace.categories)
+//   user       — current Firebase user (for the activity log actor)
+//   showToast  — optional toast callback (status feedback)
+function CategoryPicker({ task, workspace, user, showToast }) {
+  const categories = workspace?.categories || [];
+  const currentCat = categories.find(c => c.id === task.categoryId) || null;
+  const currentSub = currentCat?.subcategories?.find(s => s.id === task.subcategoryId) || null;
+
+  const [newCatMode,  setNewCatMode]  = useState(false);
+  const [newCatName,  setNewCatName]  = useState('');
+  const [newSubMode,  setNewSubMode]  = useState(false);
+  const [newSubName,  setNewSubName]  = useState('');
+  const [busy,        setBusy]        = useState(false);
+
+  const toastError = (msg, err) => {
+    const detail = err?.code === 'permission-denied'
+      ? 'Permission denied — Firestore rules may be stale. Redeploy them.'
+      : (err?.message || '');
+    if (showToast) showToast(`${msg}${detail ? ` (${detail})` : ''}`, 'warning');
+  };
+
+  const move = async ({ categoryId, subcategoryId, categoryName, subcategoryName }) => {
+    setBusy(true);
+    try {
+      await moveWorkspaceTaskCategory(
+        workspace.id,
+        task.id,
+        { categoryId, subcategoryId, categoryName, subcategoryName },
+        user
+      );
+      if (showToast) {
+        const label = !categoryId
+          ? 'Uncategorized'
+          : subcategoryName ? `${categoryName} / ${subcategoryName}` : categoryName;
+        showToast(`Moved to ${label}`, 'success');
+      }
+    } catch (e) { toastError('Failed to move task', e); }
+    finally { setBusy(false); }
+  };
+
+  const handleCategorySelect = async (value) => {
+    if (value === '__new__') { setNewCatMode(true); return; }
+    if (value === '__uncat__') {
+      if (!task.categoryId) return;              // already uncategorised
+      await move({ categoryId: null, subcategoryId: null });
+      return;
+    }
+    if (value === task.categoryId) return;       // no-op
+    const cat = categories.find(c => c.id === value);
+    if (!cat) return;
+    // Moving to a new category clears any existing subcategory (it wouldn't apply)
+    await move({
+      categoryId:    cat.id,
+      subcategoryId: null,
+      categoryName:  cat.name,
+      subcategoryName: null,
+    });
+  };
+
+  const handleSubcategorySelect = async (value) => {
+    if (value === '__new__') { setNewSubMode(true); return; }
+    if (!currentCat) return;
+    const newSubId = value === '__none__' ? null : value;
+    if ((task.subcategoryId || null) === newSubId) return; // no-op
+    const sub = newSubId ? currentCat.subcategories?.find(s => s.id === newSubId) : null;
+    await move({
+      categoryId:      currentCat.id,
+      subcategoryId:   newSubId,
+      categoryName:    currentCat.name,
+      subcategoryName: sub?.name || null,
+    });
+  };
+
+  const saveNewCategory = async () => {
+    const name = newCatName.trim();
+    if (!name) { setNewCatMode(false); setNewCatName(''); return; }
+    setBusy(true);
+    try {
+      const newId = await addWorkspaceCategory(workspace.id, name);
+      await moveWorkspaceTaskCategory(
+        workspace.id,
+        task.id,
+        { categoryId: newId, subcategoryId: null, categoryName: name, subcategoryName: null },
+        user
+      );
+      if (showToast) showToast(`Category "${name}" created and task moved.`, 'success');
+      setNewCatMode(false); setNewCatName('');
+    } catch (e) { toastError('Failed to create category', e); }
+    finally { setBusy(false); }
+  };
+
+  const saveNewSubcategory = async () => {
+    const name = newSubName.trim();
+    if (!name || !currentCat) { setNewSubMode(false); setNewSubName(''); return; }
+    setBusy(true);
+    try {
+      const newSubId = await addWorkspaceSubcategory(workspace.id, currentCat.id, name);
+      await moveWorkspaceTaskCategory(
+        workspace.id,
+        task.id,
+        { categoryId: currentCat.id, subcategoryId: newSubId, categoryName: currentCat.name, subcategoryName: name },
+        user
+      );
+      if (showToast) showToast(`Sub-category "${name}" created and task moved.`, 'success');
+      setNewSubMode(false); setNewSubName('');
+    } catch (e) { toastError('Failed to create sub-category', e); }
+    finally { setBusy(false); }
+  };
+
+  const selectStyle = {
+    fontSize: 13, padding: '7px 10px', borderRadius: 8,
+    border: '1px solid #cbd5e1', background: '#ffffff', color: '#0f172a',
+    outline: 'none', cursor: busy ? 'wait' : 'pointer',
+    minWidth: 140, flex: 1,
+  };
+  const inputStyle = {
+    fontSize: 13, padding: '7px 10px', borderRadius: 8,
+    border: '1px solid #7c3aed', background: '#ffffff', color: '#0f172a',
+    outline: 'none', flex: 1, minWidth: 140,
+  };
+
+  return (
+    <div style={{ padding: '12px 18px', borderBottom: '1px solid #ede0c8', background: '#faf7ff' }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#6d28d9', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Folder size={12} /> Move to category
+      </div>
+
+      {/* Category row */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 12, color: '#475569', fontWeight: 600, minWidth: 72 }}>Category</span>
+        {newCatMode ? (
+          <>
+            <input
+              autoFocus
+              value={newCatName}
+              onChange={e => setNewCatName(e.target.value)}
+              placeholder="New category name…"
+              style={inputStyle}
+              onKeyDown={e => {
+                if (e.key === 'Enter') saveNewCategory();
+                if (e.key === 'Escape') { setNewCatMode(false); setNewCatName(''); }
+              }}
+            />
+            <button onClick={saveNewCategory} disabled={busy || !newCatName.trim()} className="btn btn-sm btn-teal">
+              {busy ? '…' : 'Create'}
+            </button>
+            <button onClick={() => { setNewCatMode(false); setNewCatName(''); }} disabled={busy} className="btn btn-sm btn-outline">
+              Cancel
+            </button>
+          </>
+        ) : (
+          <select
+            value={task.categoryId || '__uncat__'}
+            onChange={e => handleCategorySelect(e.target.value)}
+            disabled={busy}
+            style={selectStyle}
+          >
+            <option value="__uncat__">Uncategorized</option>
+            {categories.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+            <option value="__new__">+ New category…</option>
+          </select>
+        )}
+      </div>
+
+      {/* Subcategory row — only meaningful when a real category is selected */}
+      {currentCat && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, color: '#475569', fontWeight: 600, minWidth: 72 }}>Sub-category</span>
+          {newSubMode ? (
+            <>
+              <input
+                autoFocus
+                value={newSubName}
+                onChange={e => setNewSubName(e.target.value)}
+                placeholder="New sub-category name…"
+                style={inputStyle}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') saveNewSubcategory();
+                  if (e.key === 'Escape') { setNewSubMode(false); setNewSubName(''); }
+                }}
+              />
+              <button onClick={saveNewSubcategory} disabled={busy || !newSubName.trim()} className="btn btn-sm btn-teal">
+                {busy ? '…' : 'Create'}
+              </button>
+              <button onClick={() => { setNewSubMode(false); setNewSubName(''); }} disabled={busy} className="btn btn-sm btn-outline">
+                Cancel
+              </button>
+            </>
+          ) : (
+            <select
+              value={task.subcategoryId || '__none__'}
+              onChange={e => handleSubcategorySelect(e.target.value)}
+              disabled={busy}
+              style={selectStyle}
+            >
+              <option value="__none__">— None —</option>
+              {(currentCat.subcategories || []).map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+              <option value="__new__">+ New sub-category…</option>
+            </select>
+          )}
+        </div>
+      )}
+
+      {/* Small helper text */}
+      <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 8 }}>
+        {currentCat
+          ? `Currently in ${currentCat.name}${currentSub ? ` / ${currentSub.name}` : ''}.`
+          : 'This task is currently uncategorized.'}
+      </div>
+    </div>
+  );
+}
+
 // ── Task Detail Modal ─────────────────────────────────────────────────────────
-function TaskDetailModal({ task, workspaceId, members, onDelete, currentUid, isAdmin, onClose }) {
+function TaskDetailModal({ task, workspace, workspaceId, members, onDelete, currentUid, isAdmin, user, showToast, onClose }) {
   const priority  = PRIORITY_COLORS[task.priority] || '#d97706';
   const statusCfg = STATUSES.find(s => s.value === (task.status || 'open')) || STATUSES[0];
   const isOverdue = task.dueDate && task.status !== 'done' && new Date(task.dueDate) < new Date();
   const assignee  = members.find(m => m.uid === task.assigneeUid);
+  // Only the workspace creator can re-categorise tasks (any task, regardless of author).
+  const isCreator = !!(workspace && user && workspace.createdBy === user.uid);
 
   return (
     <div
@@ -115,6 +342,16 @@ function TaskDetailModal({ task, workspaceId, members, onDelete, currentUid, isA
           </div>
         </div>
 
+        {/* Category picker — only the workspace creator can re-categorise */}
+        {isCreator && (
+          <CategoryPicker
+            task={task}
+            workspace={workspace}
+            user={user}
+            showToast={showToast}
+          />
+        )}
+
         {/* Notes (if any) */}
         {task.notes && (
           <div style={{ padding: '12px 18px', borderBottom: '1px solid #ede0c8', background: '#fdf8ee' }}>
@@ -150,7 +387,7 @@ function CommentCountBadge({ workspaceId, taskId }) {
 
 // ── Uniform Task Card ─────────────────────────────────────────────────────────
 // Fixed height (~78px). Title clamped to 1 line. Click opens full detail modal.
-function TaskCard({ task, workspaceId, members, onDelete, currentUid, isAdmin }) {
+function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid, isAdmin, user, showToast }) {
   const [open, setOpen] = useState(false);
   const isOverdue = task.dueDate && task.status !== 'done' && new Date(task.dueDate) < new Date();
   const assignee  = members.find(m => m.uid === task.assigneeUid);
@@ -203,11 +440,14 @@ function TaskCard({ task, workspaceId, members, onDelete, currentUid, isAdmin })
       {open && (
         <TaskDetailModal
           task={task}
+          workspace={workspace}
           workspaceId={workspaceId}
           members={members}
           onDelete={onDelete}
           currentUid={currentUid}
           isAdmin={isAdmin}
+          user={user}
+          showToast={showToast}
           onClose={() => setOpen(false)}
         />
       )}
@@ -239,8 +479,8 @@ function StatusDots({ tasks }) {
 
 // ── Subcategory Section (collapsible, nested under category) ──────────────────
 function SubcategorySection({
-  category, subcategory, tasks, workspaceId, members,
-  onDelete, currentUid, isAdmin,
+  category, subcategory, tasks, workspace, workspaceId, members,
+  onDelete, currentUid, isAdmin, user, showToast,
   onAddTaskHere, onRename, onDeleteSub,
 }) {
   const storageKey = `ddiary_sub_${workspaceId}_${category.id}_${subcategory.id}_expanded`;
@@ -335,11 +575,14 @@ function SubcategorySection({
               <TaskCard
                 key={t.id}
                 task={t}
+                workspace={workspace}
                 workspaceId={workspaceId}
                 members={members}
                 onDelete={onDelete}
                 currentUid={currentUid}
                 isAdmin={isAdmin}
+                user={user}
+                showToast={showToast}
               />
             ))
           )}
@@ -359,7 +602,7 @@ function SubcategorySection({
 
 // ── Category Section (collapsible) ────────────────────────────────────────────
 function CategorySection({
-  category, allTasks, workspaceId, members,
+  category, allTasks, workspace, workspaceId, members,
   onDelete, currentUid, isAdmin, user, showToast,
   onAddTaskHere, // (categoryId, subcategoryId) => void
 }) {
@@ -502,11 +745,14 @@ function CategorySection({
                   <TaskCard
                     key={t.id}
                     task={t}
+                    workspace={workspace}
                     workspaceId={workspaceId}
                     members={members}
                     onDelete={onDelete}
                     currentUid={currentUid}
                     isAdmin={isAdmin}
+                    user={user}
+                    showToast={showToast}
                   />
                 ))}
               </div>
@@ -522,11 +768,14 @@ function CategorySection({
                   category={category}
                   subcategory={sub}
                   tasks={subTasks}
+                  workspace={workspace}
                   workspaceId={workspaceId}
                   members={members}
                   onDelete={onDelete}
                   currentUid={currentUid}
                   isAdmin={isAdmin}
+                  user={user}
+                  showToast={showToast}
                   onAddTaskHere={() => onAddTaskHere(category.id, sub.id)}
                   onRename={handleRenameSubcategory(sub.id)}
                   onDeleteSub={() => handleDeleteSubcategory(sub.id)}
@@ -586,24 +835,39 @@ function CategoryBoard({
   onAddTaskHere, // (categoryId, subcategoryId) => void
   filterAssignee, setFilterAssignee,
   filterStatus,   setFilterStatus,
+  showAddCategoryInitial, onAddCategoryClose,
 }) {
   const categories = (workspace?.categories || []);
   const [addingCategory, setAddingCategory] = useState(false);
   const [newCatName,     setNewCatName]     = useState('');
   const [savingCat,      setSavingCat]      = useState(false);
 
-  // Include an 'Uncategorized' bucket only if there are uncategorized tasks
+  // Trigger the inline input panel when the header "Add Category" button fires
+  useEffect(() => {
+    if (showAddCategoryInitial) setAddingCategory(true);
+  }, [showAddCategoryInitial]);
+
+  // Include an 'Uncategorized' bucket only if there are uncategorized tasks.
+  // Applies to every workspace that renders through this component — there is
+  // no other render path for the __uncat__ bucket anywhere in the app.
   const hasUncategorized = tasks.some(t => !t.categoryId);
+
+  const closeAdd = () => {
+    setAddingCategory(false);
+    setNewCatName('');
+    if (onAddCategoryClose) onAddCategoryClose();
+  };
 
   const saveNewCategory = async () => {
     const name = newCatName.trim();
-    if (!name) { setAddingCategory(false); return; }
+    if (!name) { closeAdd(); return; }
     setSavingCat(true);
     try {
       await addWorkspaceCategory(workspaceId, name);
       if (showToast) showToast(`Category "${name}" added.`, 'success');
       setNewCatName('');
       setAddingCategory(false);
+      if (onAddCategoryClose) onAddCategoryClose();
     } catch (e) {
       const detail = e?.code === 'permission-denied'
         ? 'Permission denied — Firestore rules may be out of date. Redeploy rules.'
@@ -618,6 +882,25 @@ function CategoryBoard({
 
   return (
     <div>
+      {/* ── Inline "Add Category" panel (top of board, triggered from header) ─ */}
+      {isAdmin && addingCategory && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-3 mb-3 flex items-center gap-2">
+          <FolderPlus size={16} className="text-violet-600 flex-shrink-0" />
+          <input
+            autoFocus
+            value={newCatName}
+            onChange={e => setNewCatName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') saveNewCategory(); if (e.key === 'Escape') closeAdd(); }}
+            placeholder="Category name (e.g. Credit & Underwriting)…"
+            className="flex-1 text-sm border border-slate-300 rounded-lg px-3 py-1.5 outline-none focus:border-violet-400"
+          />
+          <button onClick={saveNewCategory} disabled={savingCat || !newCatName.trim()} className="btn btn-sm btn-teal">
+            {savingCat ? 'Adding…' : 'Add'}
+          </button>
+          <button onClick={closeAdd} disabled={savingCat} className="btn btn-sm btn-outline">Cancel</button>
+        </div>
+      )}
+
       {/* ── Filter bar (compact single row: avatars left, statuses right) ─── */}
       <div className="bg-white border border-slate-200 rounded-xl px-4 py-2 mb-3">
         <div className="flex items-center gap-3 flex-wrap">
@@ -688,6 +971,7 @@ function CategoryBoard({
           key={cat.id}
           category={cat}
           allTasks={tasks}
+          workspace={workspace}
           workspaceId={workspaceId}
           members={members}
           onDelete={onDelete}
@@ -703,6 +987,7 @@ function CategoryBoard({
         <CategorySection
           category={{ id: '__uncat__', name: 'Uncategorized', subcategories: [] }}
           allTasks={tasks}
+          workspace={workspace}
           workspaceId={workspaceId}
           members={members}
           onDelete={onDelete}
@@ -714,41 +999,12 @@ function CategoryBoard({
         />
       )}
 
-      {/* + Add category */}
-      {isAdmin && (
-        <div className="mt-2">
-          {addingCategory ? (
-            <div className="bg-white border border-slate-200 rounded-2xl p-4 flex items-center gap-2">
-              <FolderPlus size={16} className="text-violet-600" />
-              <input
-                autoFocus
-                value={newCatName}
-                onChange={e => setNewCatName(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') saveNewCategory(); if (e.key === 'Escape') { setAddingCategory(false); setNewCatName(''); } }}
-                placeholder="Category name (e.g. Credit & Underwriting)…"
-                className="flex-1 text-sm border border-slate-300 rounded-lg px-3 py-1.5 outline-none focus:border-violet-400"
-              />
-              <button onClick={saveNewCategory} disabled={savingCat || !newCatName.trim()} className="btn btn-sm btn-teal">
-                {savingCat ? 'Adding…' : 'Add'}
-              </button>
-              <button onClick={() => { setAddingCategory(false); setNewCatName(''); }} disabled={savingCat} className="btn btn-sm btn-outline">Cancel</button>
-            </div>
-          ) : (
-            <button
-              onClick={() => setAddingCategory(true)}
-              className="w-full bg-white border-2 border-dashed border-slate-200 rounded-2xl px-5 py-4 text-sm font-semibold text-violet-600 hover:border-violet-300 hover:bg-violet-50/30 transition-colors flex items-center justify-center gap-2"
-            >
-              <FolderPlus size={16} /> Add Category
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Empty state when workspace has no tasks at all */}
+      {/* Empty state when workspace has no tasks at all — the "Add Category"
+          trigger lives in the workspace header, not at the bottom of the board */}
       {tasks.length === 0 && categories.length === 0 && (
         <div className="text-center py-10 text-slate-400 text-sm">
           <Folder size={32} className="mx-auto mb-2 opacity-50" />
-          No tasks yet. Add a category or click "New Task" to start.
+          No tasks yet. Click <strong>Add Category</strong> or <strong>+ Task</strong> in the header above to start.
         </div>
       )}
     </div>
@@ -1117,7 +1373,7 @@ function WorkspaceSetup({ onCreated, onCancel, showToast, title }) {
 
 // ── WorkspaceBoardContent ─────────────────────────────────────────────────────
 // The actual kanban board — rendered only when a workspace is expanded.
-function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspaces, onWorkspaceCreated, showAddTaskInitial, onAddTaskClose, isAdmin }) {
+function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspaces, onWorkspaceCreated, showAddTaskInitial, onAddTaskClose, showAddCategoryInitial, onAddCategoryClose, isAdmin }) {
   const { workspace } = useWorkspace(workspaceId);
   const { tasks, loading: tasksLoading, error } = useWorkspaceTasks(workspaceId);
   const [filterAssignee, setFilterAssignee] = useState('all');
@@ -1248,6 +1504,8 @@ function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspac
             setFilterAssignee={setFilterAssignee}
             filterStatus={filterStatus}
             setFilterStatus={setFilterStatus}
+            showAddCategoryInitial={showAddCategoryInitial}
+            onAddCategoryClose={onAddCategoryClose}
           />
         )
       }
@@ -1281,10 +1539,11 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
       return stored !== null ? stored === 'true' : isFirst;
     } catch { return isFirst; }
   });
-  const [showInvite,    setShowInvite]    = useState(false);
-  const [showAddTask,   setShowAddTask]   = useState(false);
-  const [showDelete,    setShowDelete]    = useState(false);
-  const [deleting,      setDeleting]      = useState(false);
+  const [showInvite,      setShowInvite]      = useState(false);
+  const [showAddTask,     setShowAddTask]     = useState(false);
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [showDelete,      setShowDelete]      = useState(false);
+  const [deleting,        setDeleting]        = useState(false);
 
   // Members are always loaded (shown in header chip row)
   const { members, loading: membersLoading } = useWorkspace(workspace.id);
@@ -1502,6 +1761,18 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
             <UserPlus size={13} /> Invite
           </button>
 
+          {/* Add Category (admin/creator only) — triggers the inline input
+              panel at the top of the board */}
+          {isAdmin && (
+            <button
+              onClick={() => { setExpanded(true); setShowAddCategory(true); }}
+              className="btn btn-sm btn-outline"
+              style={{ gap: 5 }}
+            >
+              <FolderPlus size={13} /> Add Category
+            </button>
+          )}
+
           {/* New task */}
           <button
             onClick={() => { setExpanded(true); setShowAddTask(true); }}
@@ -1652,6 +1923,8 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
             onWorkspaceCreated={onWorkspaceCreated}
             showAddTaskInitial={showAddTask}
             onAddTaskClose={() => setShowAddTask(false)}
+            showAddCategoryInitial={showAddCategory}
+            onAddCategoryClose={() => setShowAddCategory(false)}
             isAdmin={isAdmin}
           />
         </div>

@@ -381,11 +381,13 @@ export async function deleteWorkspaceCategory(workspaceId, categoryId) {
 
 export async function addWorkspaceSubcategory(workspaceId, categoryId, name) {
   const categories = await _readCategories(workspaceId);
+  const newId = _newId('sub');
   const next = categories.map(c => c.id === categoryId
-    ? { ...c, subcategories: [...(c.subcategories || []), { id: _newId('sub'), name: name.trim() }] }
+    ? { ...c, subcategories: [...(c.subcategories || []), { id: newId, name: name.trim() }] }
     : c
   );
   await updateDoc(doc(db, 'workspaces', workspaceId), { categories: next });
+  return newId;
 }
 
 export async function renameWorkspaceSubcategory(workspaceId, categoryId, subcategoryId, name) {
@@ -535,6 +537,48 @@ export async function updateWorkspaceTask(workspaceId, taskId, updates, actor, t
       action: 'reassigned', detail: `→ ${updates.assigneeName || updates.assigneeEmail}`,
     });
   }
+}
+
+/**
+ * Moves a task into a (category, subcategory) pair and records an activity
+ * entry like "→ Credit & Underwriting / Retail" or "→ Uncategorized".
+ *
+ * Unlike updateWorkspaceTask this helper needs the human-readable *names* for
+ * the activity log (tasks only store IDs). The caller is expected to look them
+ * up from the workspace's categories array.
+ *
+ * Either `categoryId` or `subcategoryId` can be null/undefined:
+ *   - null categoryId   → task becomes uncategorized (and subcategoryId is cleared)
+ *   - null subcategoryId → task sits directly under the category
+ */
+export async function moveWorkspaceTaskCategory(
+  workspaceId,
+  taskId,
+  { categoryId, subcategoryId, categoryName, subcategoryName },
+  actor
+) {
+  await updateDoc(doc(db, 'workspaces', workspaceId, 'tasks', taskId), {
+    categoryId:    categoryId    || null,
+    subcategoryId: categoryId ? (subcategoryId || null) : null,
+    updatedAt:     serverTimestamp(),
+  });
+
+  if (!actor) return;
+  const actorName = actor.displayName || actor.email;
+  let detail;
+  if (!categoryId) {
+    detail = '→ Uncategorized';
+  } else if (subcategoryId && subcategoryName) {
+    detail = `→ ${categoryName || 'category'} / ${subcategoryName}`;
+  } else {
+    detail = `→ ${categoryName || 'category'}`;
+  }
+  try {
+    await _logWorkspaceActivity(workspaceId, taskId, {
+      actorUid: actor.uid, actorName,
+      action: 'moved', detail,
+    });
+  } catch { /* activity log is non-fatal — the move itself already succeeded */ }
 }
 
 export async function deleteWorkspaceTask(workspaceId, taskId) {
