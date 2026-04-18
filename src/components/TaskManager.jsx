@@ -650,6 +650,7 @@ export default function TaskManager({
   const [newText, setNewText] = useState('');
 
   // ── Section collapse state ──────────────────────────────────────────────
+  const [personalOpen, setPersonalOpen] = useState(true);
   const [doneOpen, setDoneOpen] = useState(false);
 
   const memberByEmail = (email) => assigneeOptions.find(m => m.email?.toLowerCase() === email?.toLowerCase());
@@ -725,17 +726,25 @@ export default function TaskManager({
         </button>
       </div>
 
-      {/* ── Flat list of open tasks ─────────────────────────────────────── */}
+      {/* ── Personal Tasks (open items) ─────────────────────────────────── */}
       <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 14 }}>
-        {openTasks.length === 0 ? (
-          <div className="empty-state" style={{ padding: 24 }}>
-            <CheckCircle size={36} color="#15803d" />
-            <p>All caught up! No pending tasks.</p>
-          </div>
-        ) : (
-          <div style={{ padding: '12px 14px 14px' }}>
-            {openTasks.map(t => <TaskCard key={t.id} task={t} {...taskCardProps} />)}
-          </div>
+        <SectionHeader
+          open={personalOpen} onToggle={() => setPersonalOpen(o => !o)}
+          icon={<User size={16} />} label="Personal Tasks" count={openTasks.length} color="#7c3aed"
+        />
+        {personalOpen && (
+          openTasks.length === 0 ? (
+            <div className="empty-state" style={{ padding: 24, borderTop: '1px solid #e2e8f0' }}>
+              <CheckCircle size={36} color="#15803d" />
+              <p>All caught up! No pending tasks.</p>
+            </div>
+          ) : (
+            <div style={{ padding: '0 14px 14px', borderTop: '1px solid #e2e8f0' }}>
+              <div style={{ marginTop: 12 }}>
+                {openTasks.map(t => <TaskCard key={t.id} task={t} {...taskCardProps} />)}
+              </div>
+            </div>
+          )
         )}
       </div>
 
