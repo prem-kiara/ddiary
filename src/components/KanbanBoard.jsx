@@ -323,10 +323,10 @@ function TaskDetailModal({ task, workspace, workspaceId, members, onDelete, curr
               )}
               <span style={{ fontSize: 11, color: '#94a3b8' }}>Created by {task.createdByName || 'someone'}</span>
               {task.createdAt && (
-                <span style={{ fontSize: 11, color: '#94a3b8', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                <span style={{ fontSize: 11, color: '#7c3aed', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                   <Clock size={11} /> {formatShortStamp(task.createdAt)}
                   {task.status !== 'done' && (
-                    <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
+                    <span style={{ fontWeight: 600, marginLeft: 2 }}>
                       · {elapsedSince(task.createdAt, { longer: true })} open
                     </span>
                   )}
@@ -446,7 +446,8 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
             {task.createdAt && task.status !== 'done' && (
               <span
                 title={`Created ${formatShortStamp(task.createdAt)}`}
-                className="text-[11px] inline-flex items-center gap-1 text-slate-400"
+                className="text-[11px] inline-flex items-center gap-1 font-semibold"
+                style={{ color: '#7c3aed' }}
               >
                 <Clock size={11} />
                 {elapsedSince(task.createdAt)}
