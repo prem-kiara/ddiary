@@ -42,32 +42,54 @@ function CommentBadge({ ownerUid, taskId }) {
 // ── Move-to-Board sub-panel (needs its own hook for workspace members) ────────
 function MoveToBoard({ task, workspaces, onDelete, showToast, onClose, user }) {
   const [selectedWsId, setSelectedWsId] = useState(workspaces[0]?.id || '');
-  const { members: wsMembers } = useWorkspace(selectedWsId);
+  const { workspace: selectedWs, members: wsMembers } = useWorkspace(selectedWsId);
   const [moveStatus, setMoveStatus] = useState('open');
-  const [moveAssignee, setMoveAssignee] = useState('');
+  // Default assignee = task owner (current user). Required — no "Unassigned" option.
+  const [moveAssignee, setMoveAssignee] = useState(user?.uid || '');
+  const [moveCategoryId, setMoveCategoryId] = useState('');
+  const [moveSubcategoryId, setMoveSubcategoryId] = useState('');
+  const [movePriority, setMovePriority] = useState('medium');
+  const [moveDue, setMoveDue] = useState('');
   const [moveSaving, setMoveSaving] = useState(false);
 
-  // Pre-fill assignee when workspace changes
+  const categories = selectedWs?.categories || [];
+  const activeSubs = categories.find(c => c.id === moveCategoryId)?.subcategories || [];
+
+  // Pre-fill assignee when workspace changes; reset category picker.
+  // Preference order: existing assignee (if they're a workspace member) → task owner (current user).
   useEffect(() => {
-    const matched = wsMembers?.find(
+    if (!wsMembers) return;
+    const matched = wsMembers.find(
       m => m.email?.toLowerCase() === task.assigneeEmail?.toLowerCase()
     );
-    setMoveAssignee(matched?.uid || '');
-  }, [selectedWsId, wsMembers, task.assigneeEmail]);
+    const ownerMember = wsMembers.find(m => m.uid === user?.uid);
+    setMoveAssignee(matched?.uid || ownerMember?.uid || user?.uid || '');
+    setMoveCategoryId('');
+    setMoveSubcategoryId('');
+  }, [selectedWsId, wsMembers, task.assigneeEmail, user?.uid]);
+
+  // If user switches category, reset the sub-category selection.
+  useEffect(() => { setMoveSubcategoryId(''); }, [moveCategoryId]);
 
   const handleMove = async () => {
     if (!selectedWsId) return;
+    if (!moveAssignee) {
+      showToast('Please pick an assignee before moving to Team Board.', 'warning');
+      return;
+    }
     setMoveSaving(true);
     try {
       const wsAssignee = wsMembers?.find(m => m.uid === moveAssignee);
       await addWorkspaceTask(selectedWsId, {
         text:          task.text,
         status:        moveStatus,
-        priority:      task.priority || 'medium',
-        dueDate:       task.dueDate  || null,
+        priority:      movePriority || 'medium',
+        dueDate:       moveDue ? new Date(moveDue).toISOString() : null,
         assigneeUid:   wsAssignee?.uid   || null,
         assigneeEmail: wsAssignee?.email?.toLowerCase() || null,
         assigneeName:  wsAssignee?.displayName || null,
+        categoryId:    moveCategoryId    || null,
+        subcategoryId: moveSubcategoryId || null,
       }, {
         uid:         user.uid,
         email:       user.email,
@@ -77,7 +99,10 @@ function MoveToBoard({ task, workspaces, onDelete, showToast, onClose, user }) {
       showToast('Task moved to Team Board!', 'success');
     } catch (e) {
       console.error(e);
-      showToast('Failed to move task. Please try again.', 'warning');
+      const detail = e?.code === 'permission-denied'
+        ? 'Permission denied — redeploy Firestore rules.'
+        : (e?.message || 'Please try again.');
+      showToast(`Failed to move task. ${detail}`, 'warning');
       setMoveSaving(false);
     }
   };
@@ -94,6 +119,8 @@ function MoveToBoard({ task, workspaces, onDelete, showToast, onClose, user }) {
         <p style={{ fontSize: 12, color: '#0f172a', marginBottom: 12, lineHeight: 1.5 }}>
           This task will be removed from My Tasks and added to the Team Board Kanban.
         </p>
+
+        {/* Workspace picker (only when more than one option) */}
         {workspaces.length > 1 && (
           <div style={{ marginBottom: 12 }}>
             <label className="label">Workspace</label>
@@ -104,9 +131,40 @@ function MoveToBoard({ task, workspaces, onDelete, showToast, onClose, user }) {
             </select>
           </div>
         )}
+
+        {/* Category + Sub-category (only if the workspace has categories) */}
+        {categories.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+            <div>
+              <label className="label">Category</label>
+              <select value={moveCategoryId} onChange={e => setMoveCategoryId(e.target.value)} style={selStyle}>
+                <option value="">Uncategorised</option>
+                {categories.map(c => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">Sub-category</label>
+              <select
+                value={moveSubcategoryId}
+                onChange={e => setMoveSubcategoryId(e.target.value)}
+                style={selStyle}
+                disabled={!moveCategoryId || activeSubs.length === 0}
+              >
+                <option value="">{moveCategoryId ? (activeSubs.length ? '— None —' : 'No sub-categories') : 'Pick a category first'}</option>
+                {activeSubs.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
+
+        {/* Status + Assignee */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
           <div>
-            <label className="label">Column</label>
+            <label className="label">Status</label>
             <select value={moveStatus} onChange={e => setMoveStatus(e.target.value)} style={selStyle}>
               <option value="open">Open</option>
               <option value="in_progress">In Progress</option>
@@ -115,26 +173,59 @@ function MoveToBoard({ task, workspaces, onDelete, showToast, onClose, user }) {
             </select>
           </div>
           <div>
-            <label className="label">Assign to</label>
-            <select value={moveAssignee} onChange={e => setMoveAssignee(e.target.value)} style={selStyle}>
-              <option value="">Unassigned</option>
+            <label className="label">
+              Assign to <span style={{ color: '#dc2626' }}>*</span>
+            </label>
+            <select
+              value={moveAssignee}
+              onChange={e => setMoveAssignee(e.target.value)}
+              style={{
+                ...selStyle,
+                borderColor: moveAssignee ? '#cbd5e1' : '#dc262688',
+              }}
+              required
+            >
+              {!moveAssignee && <option value="" disabled>— Pick someone —</option>}
               {(wsMembers || []).map(m => (
                 <option key={m.uid} value={m.uid}>
-                  {m.displayName || m.email}
+                  {m.uid === user?.uid ? 'Me' : (m.displayName || m.email)}
+                  {m.uid === user?.uid ? ` (${m.displayName || m.email})` : ''}
                 </option>
               ))}
             </select>
           </div>
         </div>
+
+        {/* Priority + Due date */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+          <div>
+            <label className="label">Priority</label>
+            <select value={movePriority} onChange={e => setMovePriority(e.target.value)} style={selStyle}>
+              <option value="high">🔴 High</option>
+              <option value="medium">🟡 Medium</option>
+              <option value="low">🟢 Low</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Due date</label>
+            <input type="date" value={moveDue} onChange={e => setMoveDue(e.target.value)} style={selStyle} />
+          </div>
+        </div>
+
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button className="btn btn-sm btn-outline" onClick={onClose}>
             <X size={13} /> Cancel
           </button>
           <button
             className="btn btn-sm"
-            style={{ background: '#2563eb', color: '#fff', border: 'none' }}
+            style={{
+              background: '#2563eb', color: '#fff', border: 'none',
+              opacity: (!moveAssignee || moveSaving) ? 0.5 : 1,
+              cursor:  (!moveAssignee || moveSaving) ? 'not-allowed' : 'pointer',
+            }}
             onClick={handleMove}
-            disabled={moveSaving}
+            disabled={moveSaving || !moveAssignee}
+            title={!moveAssignee ? 'Pick an assignee first' : undefined}
           >
             {moveSaving ? 'Moving…' : <><ArrowUpRight size={13} /> Move to Team Board</>}
           </button>
@@ -555,11 +646,8 @@ export default function TaskManager({
     return combined;
   }, [members, orgUsers]);
 
-  // ── Add form state ──────────────────────────────────────────────────────
-  const [newText,     setNewText]     = useState('');
-  const [newDue,      setNewDue]      = useState(toDateInputValue());
-  const [newPriority, setNewPriority] = useState('high');
-  const [newAssignee, setNewAssignee] = useState('');
+  // ── Add form state (personal tasks — text-only) ─────────────────────────
+  const [newText, setNewText] = useState('');
 
   // ── Section collapse state ──────────────────────────────────────────────
   const [overdueOpen,    setOverdueOpen]    = useState(true);
@@ -575,21 +663,17 @@ export default function TaskManager({
   const pendingCount   = tasks.filter(t => !t.completed).length;
   const completedCount = completedTasks.length;
 
-  // ── Add task ────────────────────────────────────────────────────────────
+  // ── Add task (personal — minimal payload) ──────────────────────────────
   const handleAdd = async () => {
     if (!newText.trim()) return;
-    const m = memberByEmail(newAssignee);
     try {
       await onAdd({
-        text:          newText.trim(),
-        dueDate:       newDue ? new Date(newDue).toISOString() : null,
-        priority:      newPriority,
-        assigneeEmail: m?.email || null,
-        assigneeName:  m?.name  || null,
-        assigneePhone: m?.phone || null,
+        text:     newText.trim(),
+        dueDate:  null,
+        priority: 'medium',
       });
-      setNewText(''); setNewDue(toDateInputValue()); setNewPriority('high'); setNewAssignee('');
-      showToast(m ? `Task assigned to ${m.name}!` : 'Task added!', 'success');
+      setNewText('');
+      showToast('Task added!', 'success');
     } catch { showToast('Failed to add task', 'warning'); }
   };
 
@@ -614,7 +698,7 @@ export default function TaskManager({
     <div className="fade-in">
       <h2 className="section-title">Tasks & To-Dos</h2>
 
-      {/* ── Add task form ──────────────────────────────────────────────── */}
+      {/* ── Add task form (personal — text only) ──────────────────────── */}
       <div className="card">
         <label className="label">New Task</label>
         <textarea
@@ -626,36 +710,9 @@ export default function TaskManager({
           onKeyDown={e => { if (e.key === 'Enter' && e.metaKey) handleAdd(); }}
           style={{ minHeight: 'unset', height: 'auto', resize: 'none', marginBottom: 12, fontFamily: 'var(--font-body)', fontSize: 15, backgroundImage: 'none', lineHeight: 1.6 }}
         />
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-          <div>
-            <label className="label">Due Date</label>
-            <input type="date" value={newDue} onChange={e => setNewDue(e.target.value)} style={inputStyle} />
-          </div>
-          <div>
-            <label className="label">Priority</label>
-            <select value={newPriority} onChange={e => setNewPriority(e.target.value)} style={inputStyle}>
-              <option value="high">🔴 High</option>
-              <option value="medium">🟡 Medium</option>
-              <option value="low">🟢 Low</option>
-            </select>
-          </div>
-        </div>
-        <div style={{ marginBottom: 10 }}>
-          <label className="label"><User size={12} style={{ display: 'inline', marginRight: 4 }} />Assign to</label>
-          <select value={newAssignee} onChange={e => setNewAssignee(e.target.value)} style={inputStyle}>
-            <option value="">— No assignee —</option>
-            {assigneeOptions.map(m => (
-              <option key={m.email} value={m.email}>
-                {m.name}{m.email ? ` (${m.email})` : ''}
-              </option>
-            ))}
-          </select>
-          {newAssignee && memberByEmail(newAssignee)?.uid && (
-            <p style={{ fontSize: 12, color: '#7c3aed', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Link size={11} /> Linked — task will appear in their dashboard immediately.
-            </p>
-          )}
-        </div>
+        <p style={{ fontSize: 12, color: '#94a3b8', marginTop: 0, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.5 }}>
+          <User size={12} /> Personal task. Need to assign it or pin a due date? Add it and click <strong>Team&nbsp;Board</strong> on the task card to move it over.
+        </p>
         <button className="btn btn-gold" onClick={handleAdd} style={{ width: '100%', justifyContent: 'center' }}>
           <Plus size={16} /> Add Task
         </button>

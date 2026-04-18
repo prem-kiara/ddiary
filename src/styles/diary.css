@@ -409,13 +409,17 @@ body {
   border: 1px solid var(--paper-line);
   background: #ffffff;
 }
-.stat-card.pending   { background: #fef3c7; border-color: #fde68a; }
-.stat-card.completed { background: #dcfce7; border-color: #bbf7d0; }
-.stat-card.overdue   { background: #fee2e2; border-color: #fecaca; }
+/* Muted, slate-based palette — low saturation, consistent with app chrome */
+.stat-card.pending   { background: #f8fafc; border-color: #e2e8f0; }
+.stat-card.completed { background: #f5f3ff; border-color: #e9d5ff; }
+.stat-card.overdue   { background: #fff1f2; border-color: #fecdd3; }
 .stat-number { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
-.stat-card.pending   .stat-number { color: #b45309; }
-.stat-card.completed .stat-number { color: #15803d; }
-.stat-card.overdue   .stat-number { color: var(--red); }
+.stat-card.pending   .stat-number { color: #334155; }
+.stat-card.completed .stat-number { color: #7c3aed; }
+.stat-card.overdue   .stat-number { color: #be123c; }
+.stat-card.pending   .stat-label  { color: #64748b; }
+.stat-card.completed .stat-label  { color: #6d28d9; }
+.stat-card.overdue   .stat-label  { color: #9f1239; }
 .stat-label { font-size: 12px; color: var(--ink-light); margin-top: 2px; font-weight: 500; }
 
 /* ─── Modal ───────────────────────────────────────────────────────────────── */

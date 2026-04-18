@@ -123,11 +123,13 @@ export default function DiaryList({
         <div className="mt-8">
           <button
             onClick={() => setArchiveOpen(o => !o)}
-            className="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 transition-colors mb-2"
+            className="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 transition-colors mb-2 w-full text-left"
           >
             <Archive size={14} />
-            Archived ({archivedEntries.length})
-            {archiveOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <span className="flex-1">Archived ({archivedEntries.length})</span>
+            <span className="text-slate-400 flex">
+              {archiveOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </span>
           </button>
 
           {archiveOpen && (
@@ -166,11 +168,13 @@ export default function DiaryList({
         <div className="mt-4">
           <button
             onClick={() => setTrashOpen(o => !o)}
-            className="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 transition-colors mb-2"
+            className="flex items-center gap-2 text-sm text-slate-600 hover:text-slate-900 transition-colors mb-2 w-full text-left"
           >
             <Trash2 size={14} />
-            Recently Deleted ({trashedEntries.length})
-            {trashOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <span className="flex-1">Recently Deleted ({trashedEntries.length})</span>
+            <span className="text-slate-400 flex">
+              {trashOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </span>
           </button>
 
           {trashOpen && (

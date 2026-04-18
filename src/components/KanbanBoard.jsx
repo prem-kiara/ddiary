@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
-  Plus, X, ChevronDown, ChevronRight, User, Calendar, Send, Mail,
-  Circle, Clock, Eye, CheckCircle, Trash2, Link, Copy, Check as CheckIcon,
-  Users, Edit2, Briefcase, UserPlus, AlertTriangle,
+  Plus, X, ChevronDown, ChevronRight, User, Calendar, Send,
+  Circle, Clock, Eye, CheckCircle, Trash2, Copy, Check as CheckIcon,
+  Users, Edit2, Briefcase, UserPlus, AlertTriangle, MessageSquare,
+  Folder, FolderPlus,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -11,12 +12,18 @@ import {
   createWorkspace, renameWorkspace, addWorkspaceMember,
   deleteWorkspace,
   createWorkspaceInvite, getExistingInvite,
+  addWorkspaceCategory, renameWorkspaceCategory, deleteWorkspaceCategory,
+  addWorkspaceSubcategory, renameWorkspaceSubcategory, deleteWorkspaceSubcategory,
+  promoteUncategorizedToCategory,
+  useWorkspaceComments,
 } from '../hooks/useWorkspace';
 import { logError } from '../utils/errorLogger';
 import WorkspaceCollabPanel from './WorkspaceCollabPanel';
 import WorkspaceInvitePrompt from './WorkspaceInvitePrompt';
 import { notifyWorkspaceInvite, notifyTaskAssigned } from '../utils/emailNotifications';
 import { fetchAllOrgUsers, searchOrgPeopleDebounced } from '../utils/graphPeopleSearch';
+import Avatar from './shared/Avatar';
+import { StatusPill, PriorityPill } from './shared/Pills';
 
 // ── Status config ─────────────────────────────────────────────────────────────
 const STATUSES = [
@@ -130,84 +137,66 @@ function TaskDetailModal({ task, workspaceId, members, onDelete, currentUid, isA
   );
 }
 
-// ── Kanban Card ───────────────────────────────────────────────────────────────
-function KanbanCard({ task, workspaceId, members, onDelete, currentUid, isAdmin }) {
+// ── Task comment count (tiny hook-wrapper used by TaskCard) ───────────────────
+function CommentCountBadge({ workspaceId, taskId }) {
+  const { comments } = useWorkspaceComments(workspaceId, taskId);
+  if (!comments || comments.length === 0) return null;
+  return (
+    <span className="inline-flex items-center gap-1 text-slate-400 text-[11px]">
+      <MessageSquare size={11} /> {comments.length}
+    </span>
+  );
+}
+
+// ── Uniform Task Card ─────────────────────────────────────────────────────────
+// Fixed height (~78px). Title clamped to 1 line. Click opens full detail modal.
+function TaskCard({ task, workspaceId, members, onDelete, currentUid, isAdmin }) {
   const [open, setOpen] = useState(false);
-  const priority  = PRIORITY_COLORS[task.priority] || '#d97706';
-  const statusCfg = STATUSES.find(s => s.value === (task.status || 'open')) || STATUSES[0];
   const isOverdue = task.dueDate && task.status !== 'done' && new Date(task.dueDate) < new Date();
   const assignee  = members.find(m => m.uid === task.assigneeUid);
+  const assigneeName = assignee?.displayName || task.assigneeName || null;
+  const assigneeId   = assignee?.uid || task.assigneeEmail || assigneeName || 'unassigned';
 
   return (
     <>
       <div
         onClick={() => setOpen(true)}
+        className="group relative bg-white border border-slate-200 rounded-xl px-4 py-3 cursor-pointer hover:shadow-sm hover:border-slate-300 transition"
         style={{
-          marginBottom: 8,
-          borderRadius: 10,
-          border: '1px solid #cbd5e1',
-          opacity: task.status === 'done' ? 0.72 : 1,
-          background: '#ffffff',
-          cursor: 'pointer',
-          display: 'flex',
-          gap: 8,
-          alignItems: 'stretch',
-          height: 88,
-          overflow: 'hidden',
-          transition: 'box-shadow 0.15s, transform 0.1s',
+          height: 78,
+          opacity: task.status === 'done' ? 0.7 : 1,
           boxSizing: 'border-box',
         }}
-        onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(0,0,0,0.10)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
-        onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.transform = 'none'; }}
       >
-        {/* Priority stripe */}
-        <div style={{ width: 4, background: priority, flexShrink: 0, borderRadius: '10px 0 0 10px' }} />
-
-        {/* Content */}
-        <div style={{ flex: 1, minWidth: 0, padding: '10px 8px 10px 4px', display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', gap: 5 }}>
-          {/* Task title — clamp to 2 lines */}
-          <div style={{
-            fontSize: 13, fontWeight: 600, color: '#0f172a', lineHeight: 1.35,
-            overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
-          }}>
+        {/* Title row: title (truncated) + assignee avatar */}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0 text-[14px] font-semibold text-slate-900 leading-snug truncate">
             {task.text}
           </div>
-
-          {/* Meta row */}
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'nowrap', overflow: 'hidden' }}>
-            {task.dueDate && (
-              <span style={{ fontSize: 10, color: isOverdue ? '#dc2626' : '#475569', display: 'inline-flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
-                <Calendar size={9} />
-                {formatDate(task.dueDate)}
-                {isOverdue && <span style={{ background: '#dc2626', color: '#fff', fontSize: 8, fontWeight: 700, padding: '1px 3px', borderRadius: 3 }}>!</span>}
-              </span>
-            )}
-            {(assignee || task.assigneeName) && (
-              <span style={{ fontSize: 10, color: '#7c3aed', display: 'inline-flex', alignItems: 'center', gap: 2, minWidth: 0, overflow: 'hidden' }}>
-                <User size={9} style={{ flexShrink: 0 }} />
-                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {assignee?.displayName || task.assigneeName}
-                </span>
-              </span>
-            )}
-          </div>
+          {assigneeName ? (
+            <Avatar id={assigneeId} name={assigneeName} email={task.assigneeEmail} size="sm" title={assigneeName} />
+          ) : (
+            <span className="w-7 h-7 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center flex-shrink-0" title="Unassigned">
+              <User size={13} />
+            </span>
+          )}
         </div>
 
-        {/* Right side: delete + expand hint */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', padding: '8px 8px 8px 0', flexShrink: 0 }}>
-          {task.createdBy === currentUid
-            ? (
-              <button
-                onClick={e => { e.stopPropagation(); onDelete(task.id); }}
-                title="Delete task"
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#dc262655', padding: 3, borderRadius: 4, display: 'flex' }}
-              >
-                <Trash2 size={11} />
-              </button>
-            )
-            : <span />
-          }
-          <ChevronRight size={12} color="#94a3b8" />
+        {/* Meta row: status + priority pills (left) — due date + comment count (right) */}
+        <div className="flex items-center justify-between gap-2 mt-2">
+          <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+            <StatusPill status={task.status || 'open'} />
+            <PriorityPill priority={task.priority || 'medium'} />
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {task.dueDate && (
+              <span className={`text-[11px] inline-flex items-center gap-1 ${isOverdue ? 'text-red-600 font-semibold' : 'text-slate-500'}`}>
+                <Calendar size={11} />
+                Due {formatDate(task.dueDate)}
+              </span>
+            )}
+            <CommentCountBadge workspaceId={workspaceId} taskId={task.id} />
+          </div>
         </div>
       </div>
 
@@ -226,28 +215,561 @@ function KanbanCard({ task, workspaceId, members, onDelete, currentUid, isAdmin 
   );
 }
 
-// ── Kanban Column ─────────────────────────────────────────────────────────────
-function KanbanColumn({ status, tasks, workspaceId, members, onDelete, currentUid, isAdmin }) {
-  const { Icon, label, color, bg } = status;
+// ── Status-distribution dots (shown on collapsed category/subcategory) ────────
+function StatusDots({ tasks }) {
+  if (!tasks || tasks.length === 0) return null;
+  // Only show dots for statuses that have at least one task; preserves order
   return (
-    <div style={{ minWidth: 252, flex: '0 0 252px', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 10, padding: '8px 4px', borderBottom: `2px solid ${color}33` }}>
-        <Icon size={14} color={color} />
-        <span style={{ fontWeight: 700, fontSize: 13, color: '#0f172a' }}>{label}</span>
-        <span style={{ background: bg, color, border: `1px solid ${color}44`, fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 10, marginLeft: 'auto' }}>
-          {tasks.length}
+    <span className="inline-flex items-center gap-1">
+      {STATUSES.map(s => {
+        const count = tasks.filter(t => (t.status || 'open') === s.value).length;
+        if (count === 0) return null;
+        return (
+          <span
+            key={s.value}
+            className="w-2 h-2 rounded-full"
+            style={{ background: s.color }}
+            title={`${count} ${s.label}`}
+          />
+        );
+      })}
+    </span>
+  );
+}
+
+// ── Subcategory Section (collapsible, nested under category) ──────────────────
+function SubcategorySection({
+  category, subcategory, tasks, workspaceId, members,
+  onDelete, currentUid, isAdmin,
+  onAddTaskHere, onRename, onDeleteSub,
+}) {
+  const storageKey = `ddiary_sub_${workspaceId}_${category.id}_${subcategory.id}_expanded`;
+  const [expanded, setExpanded] = useState(() => {
+    try { return localStorage.getItem(storageKey) === '1'; } catch { return false; }
+  });
+  const toggleExpanded = () => {
+    setExpanded(v => {
+      const next = !v;
+      try { localStorage.setItem(storageKey, next ? '1' : '0'); } catch {}
+      return next;
+    });
+  };
+
+  const [renaming,   setRenaming]   = useState(false);
+  const [renameText, setRenameText] = useState(subcategory.name);
+
+  const handleRename = async () => {
+    if (!renameText.trim() || renameText.trim() === subcategory.name) { setRenaming(false); return; }
+    try { await onRename(renameText.trim()); } catch { /* toast handled upstream */ }
+    setRenaming(false);
+  };
+
+  return (
+    <div className="border-t border-slate-100">
+      {/* ── Subcategory header (collapsible — chevron on right, like category) ── */}
+      <div
+        onClick={renaming ? undefined : toggleExpanded}
+        className={`flex items-center gap-2 px-4 py-2.5 bg-slate-50 select-none
+          ${renaming ? '' : 'cursor-pointer hover:bg-slate-100 transition-colors'}`}
+        style={{ paddingLeft: 28 /* visual nesting under category */ }}
+      >
+        {/* Label cluster — takes remaining space */}
+        <div className="flex items-center gap-2 flex-1 min-w-0 flex-wrap">
+          {renaming ? (
+            <input
+              autoFocus
+              value={renameText}
+              onChange={e => setRenameText(e.target.value)}
+              onClick={e => e.stopPropagation()}
+              onBlur={handleRename}
+              onKeyDown={e => { if (e.key === 'Enter') handleRename(); if (e.key === 'Escape') setRenaming(false); }}
+              className="text-xs font-bold uppercase tracking-wider text-slate-900 bg-white border border-violet-400 rounded px-2 py-0.5 outline-none"
+            />
+          ) : (
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-700">
+              {subcategory.name}
+            </span>
+          )}
+          <span className="text-xs text-slate-500 font-medium">({tasks.length})</span>
+          {!expanded && <StatusDots tasks={tasks} />}
+        </div>
+
+        {/* Action cluster — edit/delete admin tools */}
+        {isAdmin && !renaming && (
+          <span className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
+            <button
+              onClick={() => { setRenameText(subcategory.name); setRenaming(true); }}
+              title="Rename sub-category"
+              className="text-slate-400 hover:text-violet-600 p-0.5"
+            >
+              <Edit2 size={12} />
+            </button>
+            <button
+              onClick={() => {
+                if (window.confirm(`Delete sub-category "${subcategory.name}"? Tasks inside will be moved to the category root.`)) onDeleteSub();
+              }}
+              title="Delete sub-category"
+              className="text-slate-400 hover:text-red-500 p-0.5"
+            >
+              <Trash2 size={12} />
+            </button>
+          </span>
+        )}
+
+        {/* Chevron — always right-aligned, matching CategorySection + SectionHeader */}
+        <span className="text-slate-400 shrink-0">
+          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
       </div>
-      {tasks.length === 0
-        ? <div style={{ border: '2px dashed #e2e8f0', borderRadius: 10, padding: '20px 12px', textAlign: 'center', color: '#94a3b8', fontSize: 12 }}>No tasks here</div>
-        : tasks.map(t => <KanbanCard key={t.id} task={t} workspaceId={workspaceId} members={members} onDelete={onDelete} currentUid={currentUid} isAdmin={isAdmin} />)
+
+      {/* ── Expanded body (task cards) ──────────────────────────────────── */}
+      {expanded && (
+        <div className="px-4 pt-3 pb-3 flex flex-col gap-2" style={{ paddingLeft: 28 }}>
+          {tasks.length === 0 ? (
+            <div className="border-2 border-dashed border-slate-200 rounded-xl px-3 text-center text-slate-400 text-xs flex items-center justify-center"
+                 style={{ height: 78 }}>
+              No tasks here
+            </div>
+          ) : (
+            tasks.map(t => (
+              <TaskCard
+                key={t.id}
+                task={t}
+                workspaceId={workspaceId}
+                members={members}
+                onDelete={onDelete}
+                currentUid={currentUid}
+                isAdmin={isAdmin}
+              />
+            ))
+          )}
+
+          {/* Add task in this subcategory */}
+          <button
+            onClick={onAddTaskHere}
+            className="text-left text-xs font-semibold text-violet-600 hover:text-violet-800 px-1 py-1"
+          >
+            + Add task{subcategory.name ? ` in ${subcategory.name}` : ''}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Category Section (collapsible) ────────────────────────────────────────────
+function CategorySection({
+  category, allTasks, workspaceId, members,
+  onDelete, currentUid, isAdmin, user, showToast,
+  onAddTaskHere, // (categoryId, subcategoryId) => void
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [renaming,   setRenaming]   = useState(false);
+  const [renameText, setRenameText] = useState(category.name || '');
+  const [addingSub,  setAddingSub]  = useState(false);
+  const [newSubName, setNewSubName] = useState('');
+
+  // Virtual "category" for uncategorized bucket
+  const isUncategorized = category.id === '__uncat__';
+
+  const catTasks  = isUncategorized
+    ? allTasks.filter(t => !t.categoryId)
+    : allTasks.filter(t => t.categoryId === category.id);
+
+  const subs = category.subcategories || [];
+  const tasksNoSub = isUncategorized
+    ? catTasks
+    : catTasks.filter(t => !t.subcategoryId || !subs.some(s => s.id === t.subcategoryId));
+
+  const toastError = (msg, err) => {
+    const detail = err?.code === 'permission-denied'
+      ? 'Permission denied — Firestore rules may be out of date. Redeploy rules.'
+      : (err?.message || '');
+    if (showToast) showToast(`${msg}${detail ? ` (${detail})` : ''}`, 'warning');
+  };
+
+  const saveRename = async () => {
+    const name = renameText.trim();
+    if (!name || name === category.name) { setRenaming(false); return; }
+    try {
+      if (isUncategorized) {
+        // Promote: creates a real category + moves all uncategorized tasks into it
+        await promoteUncategorizedToCategory(workspaceId, name);
+        if (showToast) showToast(`Category "${name}" created — uncategorized tasks moved in.`, 'success');
+      } else {
+        await renameWorkspaceCategory(workspaceId, category.id, name);
       }
+    } catch (e) { toastError(isUncategorized ? 'Failed to create category' : 'Failed to rename category', e); }
+    setRenaming(false);
+  };
+
+  const saveNewSub = async () => {
+    const sub = newSubName.trim();
+    if (!sub) { setAddingSub(false); return; }
+    try {
+      if (isUncategorized) {
+        // Promote: creates a new category named "Uncategorized Items" (or keeps the prior label if present)
+        // plus the sub-category, and moves all uncategorized tasks into it.
+        const parentName = category.name && category.name !== 'Uncategorized' ? category.name : 'General';
+        await promoteUncategorizedToCategory(workspaceId, parentName, sub);
+        if (showToast) showToast(`Sub-category "${sub}" created under "${parentName}".`, 'success');
+      } else {
+        await addWorkspaceSubcategory(workspaceId, category.id, sub);
+      }
+    } catch (e) { toastError('Failed to add sub-category', e); }
+    setNewSubName('');
+    setAddingSub(false);
+  };
+
+  const handleDeleteCategory = async () => {
+    if (!window.confirm(`Delete category "${category.name}"? Tasks inside will become uncategorized.`)) return;
+    try { await deleteWorkspaceCategory(workspaceId, category.id); }
+    catch (e) { toastError('Failed to delete category', e); }
+  };
+
+  const handleDeleteSubcategory = async (subId) => {
+    try { await deleteWorkspaceSubcategory(workspaceId, category.id, subId); }
+    catch (e) { toastError('Failed to delete sub-category', e); }
+  };
+
+  const handleRenameSubcategory = (subId) => async (newName) => {
+    await renameWorkspaceSubcategory(workspaceId, category.id, subId, newName);
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden mb-3">
+      {/* ── Category header ────────────────────────────────────────────────── */}
+      <div
+        onClick={() => setExpanded(v => !v)}
+        className="flex items-center gap-3 px-5 py-4 cursor-pointer hover:bg-slate-50 transition-colors select-none"
+      >
+        <div className="flex-1 min-w-0 flex items-center gap-3 flex-wrap">
+          {renaming ? (
+            <input
+              autoFocus
+              value={renameText}
+              onChange={e => setRenameText(e.target.value)}
+              onClick={e => e.stopPropagation()}
+              onBlur={saveRename}
+              onKeyDown={e => { if (e.key === 'Enter') saveRename(); if (e.key === 'Escape') setRenaming(false); }}
+              className="text-base font-bold text-slate-900 border border-violet-400 rounded px-2 py-0.5 outline-none"
+            />
+          ) : (
+            <span className="text-base font-bold text-slate-900">
+              {category.name}
+            </span>
+          )}
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs font-semibold">
+            {catTasks.length} task{catTasks.length === 1 ? '' : 's'}
+          </span>
+          <StatusDots tasks={catTasks} />
+        </div>
+
+        {isAdmin && !renaming && (
+          <div className="flex items-center gap-1 flex-shrink-0" onClick={e => e.stopPropagation()}>
+            <button
+              onClick={() => { setRenameText(isUncategorized ? '' : category.name); setRenaming(true); }}
+              title={isUncategorized ? 'Promote to category' : 'Rename category'}
+              className="text-slate-400 hover:text-violet-600 p-1.5"
+            >
+              <Edit2 size={14} />
+            </button>
+            {!isUncategorized && (
+              <button
+                onClick={handleDeleteCategory}
+                title="Delete category"
+                className="text-slate-400 hover:text-red-500 p-1.5"
+              >
+                <Trash2 size={14} />
+              </button>
+            )}
+          </div>
+        )}
+
+        <span className="text-slate-400 flex-shrink-0">
+          {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+        </span>
+      </div>
+
+      {/* ── Expanded body ──────────────────────────────────────────────────── */}
+      {expanded && (
+        <div>
+          {/* Tasks directly under the category (no subcategory), shown only if there are none or there are some. */}
+          {tasksNoSub.length > 0 && (
+            <div className="group/sub">
+              <div className="px-5 pt-3 pb-3 flex flex-col gap-2 border-t border-slate-100">
+                {tasksNoSub.map(t => (
+                  <TaskCard
+                    key={t.id}
+                    task={t}
+                    workspaceId={workspaceId}
+                    members={members}
+                    onDelete={onDelete}
+                    currentUid={currentUid}
+                    isAdmin={isAdmin}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Subcategories */}
+          {!isUncategorized && subs.map(sub => {
+            const subTasks = allTasks.filter(t => t.categoryId === category.id && t.subcategoryId === sub.id);
+            return (
+              <div key={sub.id} className="group/sub">
+                <SubcategorySection
+                  category={category}
+                  subcategory={sub}
+                  tasks={subTasks}
+                  workspaceId={workspaceId}
+                  members={members}
+                  onDelete={onDelete}
+                  currentUid={currentUid}
+                  isAdmin={isAdmin}
+                  onAddTaskHere={() => onAddTaskHere(category.id, sub.id)}
+                  onRename={handleRenameSubcategory(sub.id)}
+                  onDeleteSub={() => handleDeleteSubcategory(sub.id)}
+                />
+              </div>
+            );
+          })}
+
+          {/* Add task (for category root, when it has no subcategories yet) */}
+          {tasksNoSub.length === 0 && subs.length === 0 && !isUncategorized && (
+            <div className="px-5 py-4 border-t border-slate-100 text-center">
+              <p className="text-xs text-slate-500 mb-2">No tasks or sub-categories yet.</p>
+            </div>
+          )}
+
+          {/* + Add a task directly under the category (or into the Uncategorized bucket) */}
+          <div className="px-5 pb-3 pt-1 border-t border-slate-100">
+            <button
+              onClick={() => onAddTaskHere(isUncategorized ? null : category.id, null)}
+              className="text-left text-xs font-semibold text-violet-600 hover:text-violet-800 px-1 py-1 mr-3"
+            >
+              + Add task{isUncategorized ? '' : ` in ${category.name}`}
+            </button>
+            {isAdmin && !addingSub && (
+              <button
+                onClick={() => setAddingSub(true)}
+                className="text-left text-xs font-semibold text-violet-600 hover:text-violet-800 px-1 py-1"
+              >
+                + Sub-category
+              </button>
+            )}
+            {isAdmin && addingSub && (
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  autoFocus
+                  value={newSubName}
+                  onChange={e => setNewSubName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveNewSub(); if (e.key === 'Escape') { setAddingSub(false); setNewSubName(''); } }}
+                  placeholder={isUncategorized ? 'Sub-category name (promotes Uncategorized)…' : 'Sub-category name…'}
+                  className="text-sm border border-slate-300 rounded-lg px-3 py-1.5 outline-none focus:border-violet-400 flex-1 max-w-xs"
+                />
+                <button onClick={saveNewSub} className="btn btn-sm btn-teal">Add</button>
+                <button onClick={() => { setAddingSub(false); setNewSubName(''); }} className="btn btn-sm btn-outline">Cancel</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Category Board (replaces the 4-column Kanban) ─────────────────────────────
+function CategoryBoard({
+  workspace, workspaceId, tasks, members,
+  onDelete, currentUid, isAdmin, user, showToast,
+  onAddTaskHere, // (categoryId, subcategoryId) => void
+  onAddTopLevel, // () => void
+  filterAssignee, setFilterAssignee,
+  filterStatus,   setFilterStatus,
+}) {
+  const categories = (workspace?.categories || []);
+  const [addingCategory, setAddingCategory] = useState(false);
+  const [newCatName,     setNewCatName]     = useState('');
+  const [savingCat,      setSavingCat]      = useState(false);
+
+  // Include an 'Uncategorized' bucket only if there are uncategorized tasks
+  const hasUncategorized = tasks.some(t => !t.categoryId);
+
+  const saveNewCategory = async () => {
+    const name = newCatName.trim();
+    if (!name) { setAddingCategory(false); return; }
+    setSavingCat(true);
+    try {
+      await addWorkspaceCategory(workspaceId, name);
+      if (showToast) showToast(`Category "${name}" added.`, 'success');
+      setNewCatName('');
+      setAddingCategory(false);
+    } catch (e) {
+      const detail = e?.code === 'permission-denied'
+        ? 'Permission denied — Firestore rules may be out of date. Redeploy rules.'
+        : (e?.message || 'Unknown error');
+      if (showToast) showToast(`Failed to add category. ${detail}`, 'warning');
+    } finally {
+      setSavingCat(false);
+    }
+  };
+
+  const filterMembers = members.slice(0, 8); // limit to 8 avatars in filter bar
+
+  return (
+    <div>
+      {/* ── Filter bar (single row: avatars left, statuses right-aligned) ─── */}
+      <div className="bg-white border border-slate-200 rounded-2xl px-5 py-3 mb-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Left cluster — member avatars */}
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <span className="text-sm text-slate-500 font-medium mr-1 shrink-0">Filter:</span>
+            {filterMembers.map(m => {
+              const active = filterAssignee === m.uid;
+              return (
+                <button
+                  key={m.uid}
+                  onClick={() => setFilterAssignee(active ? 'all' : m.uid)}
+                  title={m.displayName || m.email}
+                  className={`relative rounded-full transition shrink-0 ${active ? 'ring-2 ring-violet-500 ring-offset-2' : 'opacity-80 hover:opacity-100'}`}
+                >
+                  <Avatar id={m.uid} name={m.displayName} email={m.email} size="sm" />
+                </button>
+              );
+            })}
+            {filterAssignee !== 'all' && (
+              <button
+                onClick={() => setFilterAssignee('all')}
+                className="text-xs text-slate-500 hover:text-slate-900"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {/* Right cluster — status pills, pushed to the right with ml-auto */}
+          <div className="flex items-center gap-2 flex-wrap ml-auto justify-end">
+            {STATUSES.map(s => {
+              const active = filterStatus === s.value;
+              return (
+                <button
+                  key={s.value}
+                  onClick={() => setFilterStatus(active ? 'all' : s.value)}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition shrink-0
+                    ${active ? 'ring-1 ring-offset-1' : 'opacity-90 hover:opacity-100'}`}
+                  style={{
+                    background: s.bg,
+                    color: s.color,
+                    borderColor: active ? s.color : 'transparent',
+                    borderWidth: 1,
+                    borderStyle: 'solid',
+                  }}
+                >
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.color }} />
+                  {s.label}
+                </button>
+              );
+            })}
+            {filterStatus !== 'all' && (
+              <button
+                onClick={() => setFilterStatus('all')}
+                className="text-xs text-slate-500 hover:text-slate-900"
+              >
+                Clear
+              </button>
+            )}
+
+            <button
+              onClick={onAddTopLevel}
+              className="btn btn-teal btn-sm shrink-0"
+              style={{ gap: 5 }}
+            >
+              <Plus size={14} /> New Task
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Categories ─────────────────────────────────────────────────────── */}
+      {categories.map(cat => (
+        <CategorySection
+          key={cat.id}
+          category={cat}
+          allTasks={tasks}
+          workspaceId={workspaceId}
+          members={members}
+          onDelete={onDelete}
+          currentUid={currentUid}
+          isAdmin={isAdmin}
+          user={user}
+          showToast={showToast}
+          onAddTaskHere={onAddTaskHere}
+        />
+      ))}
+
+      {hasUncategorized && (
+        <CategorySection
+          category={{ id: '__uncat__', name: 'Uncategorized', subcategories: [] }}
+          allTasks={tasks}
+          workspaceId={workspaceId}
+          members={members}
+          onDelete={onDelete}
+          currentUid={currentUid}
+          isAdmin={isAdmin}
+          user={user}
+          showToast={showToast}
+          onAddTaskHere={onAddTaskHere}
+        />
+      )}
+
+      {/* + Add category */}
+      {isAdmin && (
+        <div className="mt-2">
+          {addingCategory ? (
+            <div className="bg-white border border-slate-200 rounded-2xl p-4 flex items-center gap-2">
+              <FolderPlus size={16} className="text-violet-600" />
+              <input
+                autoFocus
+                value={newCatName}
+                onChange={e => setNewCatName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') saveNewCategory(); if (e.key === 'Escape') { setAddingCategory(false); setNewCatName(''); } }}
+                placeholder="Category name (e.g. Credit & Underwriting)…"
+                className="flex-1 text-sm border border-slate-300 rounded-lg px-3 py-1.5 outline-none focus:border-violet-400"
+              />
+              <button onClick={saveNewCategory} disabled={savingCat || !newCatName.trim()} className="btn btn-sm btn-teal">
+                {savingCat ? 'Adding…' : 'Add'}
+              </button>
+              <button onClick={() => { setAddingCategory(false); setNewCatName(''); }} disabled={savingCat} className="btn btn-sm btn-outline">Cancel</button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setAddingCategory(true)}
+              className="w-full bg-white border-2 border-dashed border-slate-200 rounded-2xl px-5 py-4 text-sm font-semibold text-violet-600 hover:border-violet-300 hover:bg-violet-50/30 transition-colors flex items-center justify-center gap-2"
+            >
+              <FolderPlus size={16} /> Add Category
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Empty state when workspace has no tasks at all */}
+      {tasks.length === 0 && categories.length === 0 && (
+        <div className="text-center py-10 text-slate-400 text-sm">
+          <Folder size={32} className="mx-auto mb-2 opacity-50" />
+          No tasks yet. Add a category or click "New Task" to start.
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Add Task Modal ────────────────────────────────────────────────────────────
-function AddTaskModal({ onClose, onAdd, members, workspaces, currentWorkspaceId, showToast }) {
+function AddTaskModal({
+  onClose, onAdd, members, workspaces, currentWorkspaceId, showToast,
+  categories = [],  // categories of the CURRENT workspace, for the picker
+  initialCategoryId = null, initialSubcategoryId = null, categoryContextLabel = null,
+}) {
   const [text,          setText]          = useState('');
   const [notes,         setNotes]         = useState('');
   const [status,        setStatus]        = useState('open');
@@ -255,6 +777,8 @@ function AddTaskModal({ onClose, onAdd, members, workspaces, currentWorkspaceId,
   const [dueDate,       setDueDate]       = useState('');
   const [assigneeEmail, setAssigneeEmail] = useState('');
   const [saving,        setSaving]        = useState(false);
+  const [categoryId,    setCategoryId]    = useState(initialCategoryId || '');
+  const [subcategoryId, setSubcategoryId] = useState(initialSubcategoryId || '');
 
   const [wsMode,       setWsMode]       = useState(workspaces.length ? 'existing' : 'new');
   const [selectedWsId, setSelectedWsId] = useState(currentWorkspaceId || workspaces[0]?.id || '');
@@ -292,26 +816,40 @@ function AddTaskModal({ onClose, onAdd, members, workspaces, currentWorkspaceId,
     setSaving(true);
     try {
       const person = assigneeOptions.find(p => p.email?.toLowerCase() === assigneeEmail.toLowerCase());
-      await onAdd(
-        {
-          text: text.trim(),
-          notes: notes.trim() || null,
-          status,
-          priority,
-          dueDate:       dueDate ? new Date(dueDate).toISOString() : null,
-          assigneeUid:   person?.uid   || null,
-          assigneeEmail: person?.email?.toLowerCase() || null,
-          assigneeName:  person?.name  || null,
-        },
-        {
-          targetWorkspaceId: wsMode === 'existing' ? selectedWsId : null,
-          newWorkspaceName:  wsMode === 'new'      ? newWsName.trim() : null,
-        }
+      // Hard timeout so the button can never freeze forever. If Firestore is
+      // slow or the write is stuck behind an offline queue, we surface it.
+      const ADD_TIMEOUT_MS = 25000;
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Timed out after 25s. Check your connection or Firestore rules and try again.')), ADD_TIMEOUT_MS)
       );
+      await Promise.race([
+        onAdd(
+          {
+            text: text.trim(),
+            notes: notes.trim() || null,
+            status,
+            priority,
+            dueDate:       dueDate ? new Date(dueDate).toISOString() : null,
+            assigneeUid:   person?.uid   || null,
+            assigneeEmail: person?.email?.toLowerCase() || null,
+            assigneeName:  person?.name  || null,
+            categoryId:    categoryId    || null,
+            subcategoryId: subcategoryId || null,
+          },
+          {
+            targetWorkspaceId: wsMode === 'existing' ? selectedWsId : null,
+            newWorkspaceName:  wsMode === 'new'      ? newWsName.trim() : null,
+          }
+        ),
+        timeout,
+      ]);
       onClose();
     } catch (e) {
       logError(e, { location: 'KanbanBoard:AddTaskModal', action: 'addTask' });
-      if (showToast) showToast('Failed to add task. Please try again.', 'warning');
+      const detail = e?.code === 'permission-denied'
+        ? 'Permission denied — Firestore rules may be out of date. Redeploy with `firebase deploy --only firestore:rules`.'
+        : (e?.message || 'Unknown error');
+      if (showToast) showToast(`Failed to add task. ${detail}`, 'warning');
     } finally {
       setSaving(false);
     }
@@ -328,7 +866,14 @@ function AddTaskModal({ onClose, onAdd, members, workspaces, currentWorkspaceId,
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: 16, padding: 28, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-          <h3 style={{ margin: 0, color: '#0f172a', fontSize: 17, fontWeight: 700 }}>New Task</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <h3 style={{ margin: 0, color: '#0f172a', fontSize: 17, fontWeight: 700 }}>New Task</h3>
+            {categoryContextLabel && (
+              <span style={{ fontSize: 12, color: '#7c3aed', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <Folder size={11} /> Adding to <strong style={{ marginLeft: 2 }}>{categoryContextLabel}</strong>
+              </span>
+            )}
+          </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569' }}><X size={20} /></button>
         </div>
 
@@ -372,10 +917,50 @@ function AddTaskModal({ onClose, onAdd, members, workspaces, currentWorkspaceId,
             )}
           </div>
 
-          {/* Column + Priority */}
+          {/* Category + Sub-category (only when the target workspace has them defined) */}
+          {(() => {
+            const activeCats = wsMode === 'existing'
+              ? (workspaces.find(w => w.id === selectedWsId)?.categories || categories || [])
+              : [];
+            if (wsMode !== 'existing' || activeCats.length === 0) return null;
+            const activeSubs = activeCats.find(c => c.id === categoryId)?.subcategories || [];
+            return (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <div>
+                <label style={labelStyle}>Category</label>
+                <select
+                  value={categoryId}
+                  onChange={e => { setCategoryId(e.target.value); setSubcategoryId(''); }}
+                  style={inputStyle}
+                >
+                  <option value="">Uncategorized</option>
+                  {activeCats.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Sub-category</label>
+                <select
+                  value={subcategoryId}
+                  onChange={e => setSubcategoryId(e.target.value)}
+                  style={inputStyle}
+                  disabled={!categoryId || activeSubs.length === 0}
+                >
+                  <option value="">—</option>
+                  {activeSubs.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            );
+          })()}
+
+          {/* Status + Priority */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
-              <label style={labelStyle}>Column</label>
+              <label style={labelStyle}>Status</label>
               <select value={status} onChange={e => setStatus(e.target.value)} style={inputStyle}>
                 {STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
               </select>
@@ -539,18 +1124,39 @@ function WorkspaceSetup({ onCreated, onCancel, showToast, title }) {
 // ── WorkspaceBoardContent ─────────────────────────────────────────────────────
 // The actual kanban board — rendered only when a workspace is expanded.
 function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspaces, onWorkspaceCreated, showAddTaskInitial, onAddTaskClose, isAdmin }) {
+  const { workspace } = useWorkspace(workspaceId);
   const { tasks, loading: tasksLoading, error } = useWorkspaceTasks(workspaceId);
   const [filterAssignee, setFilterAssignee] = useState('all');
+  const [filterStatus,   setFilterStatus]   = useState('all');
   const [showAddTask, setShowAddTask]       = useState(showAddTaskInitial || false);
+  // When "+ Add task" is clicked inside a category/subcategory, remember where
+  // so AddTaskModal can pre-fill categoryId/subcategoryId.
+  const [addTaskContext, setAddTaskContext] = useState({ categoryId: null, subcategoryId: null });
+
+  // Sync with parent-triggered add (e.g. WorkspaceItem header "Task" button)
+  useEffect(() => {
+    if (showAddTaskInitial) {
+      setAddTaskContext({ categoryId: null, subcategoryId: null });
+      setShowAddTask(true);
+    }
+  }, [showAddTaskInitial]);
 
   const handleAddTask = async (taskData, wsOptions = {}) => {
     let targetWsId = workspaceId;
     try {
       if (wsOptions.newWorkspaceName) {
-        const newId = await createWorkspace(
-          user.uid, user.email, user.displayName || user.email, wsOptions.newWorkspaceName
-        );
-        if (onWorkspaceCreated) await onWorkspaceCreated(newId);
+        let newId;
+        try {
+          newId = await createWorkspace(
+            user.uid, user.email, user.displayName || user.email, wsOptions.newWorkspaceName
+          );
+        } catch (err) {
+          err.message = `Could not create workspace: ${err?.message || err}`;
+          throw err;
+        }
+        if (onWorkspaceCreated) {
+          try { await onWorkspaceCreated(newId); } catch { /* non-fatal */ }
+        }
         if (showToast) showToast(`Workspace "${wsOptions.newWorkspaceName}" created!`, 'success');
         targetWsId = newId;
       } else if (wsOptions.targetWorkspaceId && wsOptions.targetWorkspaceId !== workspaceId) {
@@ -593,75 +1199,83 @@ function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspac
     if (onAddTaskClose) onAddTaskClose();
   };
 
-  const filteredTasks = filterAssignee === 'all'
-    ? tasks
-    : filterAssignee === 'unassigned'
-      ? tasks.filter(t => !t.assigneeUid && !t.assigneeEmail)
-      : tasks.filter(t => t.assigneeUid === filterAssignee);
+  // Apply both assignee AND status filters.
+  const filteredTasks = tasks.filter(t => {
+    if (filterAssignee !== 'all') {
+      if (filterAssignee === 'unassigned') {
+        if (t.assigneeUid || t.assigneeEmail) return false;
+      } else if (t.assigneeUid !== filterAssignee) {
+        return false;
+      }
+    }
+    if (filterStatus !== 'all' && (t.status || 'open') !== filterStatus) return false;
+    return true;
+  });
 
-  const tasksByStatus = (status) => filteredTasks.filter(t => (t.status || 'open') === status);
+  // "+ Add task in X" handler — opens modal pre-filled with category context
+  const handleAddTaskHere = (categoryId, subcategoryId) => {
+    setAddTaskContext({ categoryId, subcategoryId });
+    setShowAddTask(true);
+  };
 
-  const filterMembers = [
-    { uid: 'all',        displayName: 'All tasks'  },
-    { uid: 'unassigned', displayName: 'Unassigned' },
-    ...members,
-  ];
+  const handleAddTopLevel = () => {
+    setAddTaskContext({ categoryId: null, subcategoryId: null });
+    setShowAddTask(true);
+  };
+
+  // Build a human label for the category context shown in the modal header
+  const categoryContextLabel = (() => {
+    if (!addTaskContext.categoryId) return null;
+    const cat = (workspace?.categories || []).find(c => c.id === addTaskContext.categoryId);
+    if (!cat) return null;
+    const sub = (cat.subcategories || []).find(s => s.id === addTaskContext.subcategoryId);
+    return sub ? `${cat.name} › ${sub.name}` : cat.name;
+  })();
 
   return (
     <div style={{ paddingTop: 14 }}>
-      {/* Filter bar */}
-      <div style={{ display: 'flex', gap: 6, marginBottom: 14, alignItems: 'center', flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 12, color: '#475569', fontWeight: 600 }}>View:</span>
-        {filterMembers.map(m => (
-          <button key={m.uid} onClick={() => setFilterAssignee(m.uid)}
-            style={{
-              padding: '4px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600, cursor: 'pointer',
-              background: filterAssignee === m.uid ? '#7c3aed' : '#f1f5f9',
-              color:      filterAssignee === m.uid ? '#fff'     : '#0f172a',
-              border:     filterAssignee === m.uid ? '1px solid #7c3aed' : '1px solid #cbd5e1',
-              transition: 'all 0.15s',
-            }}
-          >{m.displayName || m.email}</button>
-        ))}
-      </div>
-
       {error && (
         <div style={{ background: '#fef2f2', border: '1px solid #dc262644', color: '#dc2626', borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 13 }}>
           <strong>Error:</strong> {error}
         </div>
       )}
 
-      {/* Kanban columns */}
+      {/* Nested-accordion category board (replaces the 4-column Kanban) */}
       {tasksLoading
         ? <div style={{ padding: '20px 0', color: '#475569', fontSize: 13 }}>Loading tasks…</div>
         : (
-          <div style={{ overflowX: 'auto', paddingBottom: 20, marginLeft: -4, paddingLeft: 4 }}>
-            <div style={{ display: 'flex', gap: 14, minWidth: 'max-content', alignItems: 'flex-start' }}>
-              {STATUSES.map(status => (
-                <KanbanColumn
-                  key={status.value}
-                  status={status}
-                  tasks={tasksByStatus(status.value)}
-                  workspaceId={workspaceId}
-                  members={members}
-                  onDelete={handleDelete}
-                  currentUid={user.uid}
-                  isAdmin={isAdmin}
-                />
-              ))}
-            </div>
-          </div>
+          <CategoryBoard
+            workspace={workspace}
+            workspaceId={workspaceId}
+            tasks={filteredTasks}
+            members={members}
+            onDelete={handleDelete}
+            currentUid={user.uid}
+            isAdmin={isAdmin}
+            user={user}
+            showToast={showToast}
+            onAddTaskHere={handleAddTaskHere}
+            onAddTopLevel={handleAddTopLevel}
+            filterAssignee={filterAssignee}
+            setFilterAssignee={setFilterAssignee}
+            filterStatus={filterStatus}
+            setFilterStatus={setFilterStatus}
+          />
         )
       }
 
-      {(showAddTask || showAddTaskInitial) && (
+      {showAddTask && (
         <AddTaskModal
           onClose={closeAddTask}
           onAdd={handleAddTask}
           members={members}
           workspaces={workspaces}
           currentWorkspaceId={workspaceId}
+          categories={workspace?.categories || []}
           showToast={showToast}
+          initialCategoryId={addTaskContext.categoryId}
+          initialSubcategoryId={addTaskContext.subcategoryId}
+          categoryContextLabel={categoryContextLabel}
         />
       )}
     </div>
@@ -819,12 +1433,14 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
     <div
       className="card"
       style={{
-        marginBottom:  12,
+        marginBottom:  10,
         padding:       0,
         overflow:      'hidden',
-        border:        expanded ? '1px solid #94a3b8' : '1px solid #e2e8f0',
-        transition:    'border-color 0.2s, box-shadow 0.2s',
-        boxShadow:     expanded ? '0 2px 12px rgba(0,0,0,0.08)' : '0 1px 4px rgba(0,0,0,0.04)',
+        // Lighter chrome — the workspace reads as a section header in the tree,
+        // not a heavy outer box. Categories inside inherit this look.
+        border:        '1px solid #e2e8f0',
+        transition:    'border-color 0.2s',
+        boxShadow:     'none',
       }}
     >
       {/* ── Header row ───────────────────────────────────────────────────────── */}
@@ -842,11 +1458,6 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
           userSelect:    'none',
         }}
       >
-        {/* Expand / collapse chevron */}
-        <div style={{ color: '#7c3aed', flexShrink: 0, display: 'flex' }}>
-          {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-        </div>
-
         {/* Workspace name / rename */}
         {renaming ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }} onClick={e => e.stopPropagation()}>
@@ -921,6 +1532,11 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
               <Trash2 size={13} />
             </button>
           )}
+        </div>
+
+        {/* Expand / collapse chevron — always right-aligned for consistency */}
+        <div style={{ color: '#475569', flexShrink: 0, display: 'flex', marginLeft: 4 }}>
+          {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
         </div>
       </div>
 
@@ -1034,8 +1650,10 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
       )}
 
       {/* ── Expanded board content ────────────────────────────────────────────── */}
+      {/* Categories are nested inside the workspace — a small left indent makes
+          the tree hierarchy visually legible without another card wrapper. */}
       {expanded && (
-        <div style={{ padding: '0 18px 18px' }}>
+        <div style={{ padding: '0 14px 14px 18px', background: '#ffffff' }}>
           <WorkspaceBoardContent
             workspaceId={workspace.id}
             members={members}
@@ -1063,16 +1681,31 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
     return <div className="empty-state fade-in"><p>Loading workspaces…</p></div>;
   }
 
-  // Handler for AddTaskModal when creating from the header or empty state
+  // Handler for AddTaskModal when creating from the header or empty state.
+  // Each async step is wrapped so a hang/denial bubbles up with a clear label.
   const handleTopLevelAdd = async (taskData, wsOptions) => {
     let wsId = wsOptions.targetWorkspaceId || workspaces[0]?.id || null;
-    if (wsOptions.newWorkspaceName) {
-      wsId = await createWorkspace(user.uid, user.email, user.displayName || user.email, wsOptions.newWorkspaceName);
-      if (onWorkspaceCreated) await onWorkspaceCreated(wsId);
-      if (showToast) showToast(`Workspace "${wsOptions.newWorkspaceName}" created!`, 'success');
+    try {
+      if (wsOptions.newWorkspaceName) {
+        wsId = await createWorkspace(user.uid, user.email, user.displayName || user.email, wsOptions.newWorkspaceName);
+        if (onWorkspaceCreated) {
+          try { await onWorkspaceCreated(wsId); } catch { /* non-fatal */ }
+        }
+        if (showToast) showToast(`Workspace "${wsOptions.newWorkspaceName}" created!`, 'success');
+      }
+    } catch (e) {
+      e.message = `Could not create workspace: ${e?.message || e}`;
+      throw e;
     }
     if (wsId) {
-      await addWorkspaceTask(wsId, taskData, { uid: user.uid, email: user.email, displayName: user.displayName || user.email });
+      try {
+        await addWorkspaceTask(wsId, taskData, {
+          uid: user.uid, email: user.email, displayName: user.displayName || user.email,
+        });
+      } catch (e) {
+        e.message = `Workspace created, but task add failed: ${e?.message || e}`;
+        throw e;
+      }
       if (taskData.assigneeEmail) {
         notifyTaskAssigned({
           assigneeEmail: taskData.assigneeEmail,

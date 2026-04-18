@@ -99,18 +99,22 @@ service cloud.firestore {
         return request.auth != null &&
           exists(/databases/$(database)/documents/workspaces/$(workspaceId)/members/$(request.auth.uid));
       }
-      function isWorkspaceAdmin() {
+      function isWorkspaceCreator() {
         return request.auth != null &&
-          (isWorkspaceMember()
-           || get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.createdBy == request.auth.uid);
+          get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.createdBy == request.auth.uid;
+      }
+      // Creator bypass guards against the common race where the workspace doc
+      // exists but the member doc hasn't been written / replicated yet, and
+      // against legacy workspaces that never got a member entry.
+      function canAccessWorkspace() {
+        return isWorkspaceMember() || isWorkspaceCreator();
       }
 
       // ── Workspace doc ────────────────────────────────────────────────────
-      // Creator bypass handles race: workspace doc exists before member doc is written.
-      allow read:           if isWorkspaceMember()
+      allow read:           if canAccessWorkspace()
                              || (request.auth != null && resource.data.createdBy == request.auth.uid);
       allow create:         if request.auth != null;
-      allow update, delete: if isWorkspaceAdmin();
+      allow update, delete: if canAccessWorkspace();
 
       // ── Members sub-collection ───────────────────────────────────────────
       // Read is open to authenticated users so useMyWorkspaces collection-group
@@ -118,31 +122,31 @@ service cloud.firestore {
       match /members/{uid} {
         allow read:           if request.auth != null;
         allow create, update: if request.auth != null;        // joining / invite acceptance
-        allow delete:         if isWorkspaceAdmin()           // admin removes others
+        allow delete:         if canAccessWorkspace()         // admin/creator removes others
                                || request.auth.uid == uid;   // member removes themselves (leave)
       }
 
       // ── Tasks sub-collection ─────────────────────────────────────────────
-      // All members can read ALL tasks in their workspace (not just assigned ones).
-      // Any member can update a task — the UI restricts status changes to the assignee.
-      // This keeps rules simple and avoids get() / email case-sensitivity issues.
+      // All members (or the workspace creator) can read ALL tasks in their
+      // workspace. Any member can update a task — the UI restricts status
+      // changes to the assignee. Keeps rules simple + resilient to races.
       match /tasks/{taskId} {
-        allow read, create:   if isWorkspaceMember();
-        allow update:         if isWorkspaceMember();
-        allow delete:         if isWorkspaceMember()
+        allow read, create:   if canAccessWorkspace();
+        allow update:         if canAccessWorkspace();
+        allow delete:         if canAccessWorkspace()
                                && (resource.data.createdBy == request.auth.uid
-                                   || isWorkspaceAdmin());
+                                   || isWorkspaceCreator());
 
-        // Comments — any workspace member can read/create; only author can edit/delete
+        // Comments — workspace members/creator can read/create; only author can edit/delete
         match /comments/{commentId} {
-          allow read, create:   if isWorkspaceMember();
+          allow read, create:   if canAccessWorkspace();
           allow update, delete: if request.auth != null
                                 && request.auth.uid == resource.data.authorUid;
         }
 
-        // Activity log — members can read/create; immutable once written
+        // Activity log — members/creator can read/create; immutable once written
         match /activity/{activityId} {
-          allow read, create:   if isWorkspaceMember();
+          allow read, create:   if canAccessWorkspace();
           allow update, delete: if false;
         }
       }

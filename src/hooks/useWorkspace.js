@@ -180,13 +180,42 @@ export function useWorkspaceTasks(workspaceId) {
   useEffect(() => {
     if (!workspaceId) { setTasks([]); setLoading(false); return; }
 
-    const q = query(
-      collection(db, 'workspaces', workspaceId, 'tasks'),
-      orderBy('createdAt', 'desc')
-    );
+    // NOTE: we intentionally don't `orderBy('createdAt', 'desc')` here.
+    //
+    // Firestore orderBy on a field that uses `serverTimestamp()` can hide a
+    // just-created doc from the local snapshot while the server round-trip is
+    // pending — the local copy has `createdAt: null` until resolved, and an
+    // orderBy on that field briefly drops the doc. This is the root cause of
+    // the "new sub-category task doesn't show up until I navigate away and
+    // come back" glitch.
+    //
+    // Instead we fetch unordered and sort client-side, using `serverTimestamps:
+    // 'estimate'` so pending writes show up with a plausible timestamp right
+    // away.
+    const q = query(collection(db, 'workspaces', workspaceId, 'tasks'));
+
+    const toDate = (ts) => {
+      if (!ts) return 0;
+      if (typeof ts === 'number') return ts;
+      if (typeof ts === 'string') return new Date(ts).getTime() || 0;
+      if (typeof ts.toMillis === 'function') return ts.toMillis();
+      if (typeof ts.toDate   === 'function') return ts.toDate().getTime();
+      return 0;
+    };
 
     const unsub = onSnapshot(q,
-      (snap) => { setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); setError(null); },
+      (snap) => {
+        const rows = snap.docs.map(d => ({
+          id: d.id,
+          // `estimate` → pending server timestamps are filled in with the
+          // local estimated time, so just-added tasks render immediately.
+          ...d.data({ serverTimestamps: 'estimate' }),
+        }));
+        rows.sort((a, b) => toDate(b.createdAt) - toDate(a.createdAt));
+        setTasks(rows);
+        setLoading(false);
+        setError(null);
+      },
       (err)  => { setError(err.message); setLoading(false); }
     );
     return unsub;
@@ -250,6 +279,140 @@ export async function createWorkspace(uid, email, displayName, name) {
 
 export async function renameWorkspace(workspaceId, name) {
   await updateDoc(doc(db, 'workspaces', workspaceId), { name });
+}
+
+/**
+ * Self-heal: make sure `actor` is a member of the workspace. Used before any
+ * write so a legacy workspace (or a failed initial member write) doesn't leave
+ * the creator locked out. No-op if the member doc already exists.
+ */
+export async function ensureWorkspaceMember(workspaceId, actor, role = 'admin') {
+  if (!actor?.uid) return;
+  const ref = doc(db, 'workspaces', workspaceId, 'members', actor.uid);
+  const snap = await getDoc(ref);
+  if (snap.exists()) return;
+  await setDoc(ref, {
+    uid:         actor.uid,
+    email:       actor.email || null,
+    displayName: actor.displayName || actor.email || 'Member',
+    role,
+    joinedAt:    serverTimestamp(),
+  });
+}
+
+// ─── Categories & Subcategories ──────────────────────────────────────────────
+// Categories live as an array on the workspace document:
+//   categories: [{ id, name, subcategories: [{ id, name }] }, ...]
+// Tasks reference them via categoryId and subcategoryId (both optional).
+
+function _newId(prefix = 'c') {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
+async function _readCategories(workspaceId) {
+  const snap = await getDoc(doc(db, 'workspaces', workspaceId));
+  if (!snap.exists()) return [];
+  return Array.isArray(snap.data().categories) ? snap.data().categories : [];
+}
+
+export async function addWorkspaceCategory(workspaceId, name) {
+  const categories = await _readCategories(workspaceId);
+  const newId = _newId('cat');
+  const next = [...categories, { id: newId, name: name.trim(), subcategories: [] }];
+  await updateDoc(doc(db, 'workspaces', workspaceId), { categories: next });
+  return newId;
+}
+
+/**
+ * Converts the virtual "Uncategorized" bucket into a real category:
+ *   1. Adds a new category with `name`
+ *   2. Moves every task that has no categoryId into it (optionally into a
+ *      specific subcategory if `subcategoryName` is provided, which is also
+ *      created under the new category)
+ * Returns { categoryId, subcategoryId }.
+ */
+export async function promoteUncategorizedToCategory(workspaceId, name, subcategoryName = null) {
+  const categories = await _readCategories(workspaceId);
+  const categoryId = _newId('cat');
+  const subcategoryId = subcategoryName ? _newId('sub') : null;
+  const newCat = {
+    id: categoryId,
+    name: name.trim(),
+    subcategories: subcategoryName
+      ? [{ id: subcategoryId, name: subcategoryName.trim() }]
+      : [],
+  };
+  await updateDoc(doc(db, 'workspaces', workspaceId), { categories: [...categories, newCat] });
+
+  // Best-effort: move every uncategorized task into the new category/sub.
+  try {
+    const tasksSnap = await getDocs(collection(db, 'workspaces', workspaceId, 'tasks'));
+    const uncat = tasksSnap.docs.filter(d => !d.data().categoryId);
+    await Promise.all(uncat.map(d =>
+      updateDoc(d.ref, { categoryId, subcategoryId, updatedAt: serverTimestamp() }).catch(() => {})
+    ));
+  } catch { /* non-fatal */ }
+
+  return { categoryId, subcategoryId };
+}
+
+export async function renameWorkspaceCategory(workspaceId, categoryId, name) {
+  const categories = await _readCategories(workspaceId);
+  const next = categories.map(c => c.id === categoryId ? { ...c, name: name.trim() } : c);
+  await updateDoc(doc(db, 'workspaces', workspaceId), { categories: next });
+}
+
+export async function deleteWorkspaceCategory(workspaceId, categoryId) {
+  const categories = await _readCategories(workspaceId);
+  const next = categories.filter(c => c.id !== categoryId);
+  await updateDoc(doc(db, 'workspaces', workspaceId), { categories: next });
+  // Unassign tasks that referenced this category (best-effort)
+  try {
+    const tasksSnap = await getDocs(
+      query(collection(db, 'workspaces', workspaceId, 'tasks'), where('categoryId', '==', categoryId))
+    );
+    await Promise.all(
+      tasksSnap.docs.map(d =>
+        updateDoc(d.ref, { categoryId: null, subcategoryId: null }).catch(() => {})
+      )
+    );
+  } catch { /* non-fatal */ }
+}
+
+export async function addWorkspaceSubcategory(workspaceId, categoryId, name) {
+  const categories = await _readCategories(workspaceId);
+  const next = categories.map(c => c.id === categoryId
+    ? { ...c, subcategories: [...(c.subcategories || []), { id: _newId('sub'), name: name.trim() }] }
+    : c
+  );
+  await updateDoc(doc(db, 'workspaces', workspaceId), { categories: next });
+}
+
+export async function renameWorkspaceSubcategory(workspaceId, categoryId, subcategoryId, name) {
+  const categories = await _readCategories(workspaceId);
+  const next = categories.map(c => c.id === categoryId
+    ? { ...c, subcategories: (c.subcategories || []).map(s => s.id === subcategoryId ? { ...s, name: name.trim() } : s) }
+    : c
+  );
+  await updateDoc(doc(db, 'workspaces', workspaceId), { categories: next });
+}
+
+export async function deleteWorkspaceSubcategory(workspaceId, categoryId, subcategoryId) {
+  const categories = await _readCategories(workspaceId);
+  const next = categories.map(c => c.id === categoryId
+    ? { ...c, subcategories: (c.subcategories || []).filter(s => s.id !== subcategoryId) }
+    : c
+  );
+  await updateDoc(doc(db, 'workspaces', workspaceId), { categories: next });
+  // Unassign tasks that referenced this subcategory (best-effort)
+  try {
+    const tasksSnap = await getDocs(
+      query(collection(db, 'workspaces', workspaceId, 'tasks'), where('subcategoryId', '==', subcategoryId))
+    );
+    await Promise.all(
+      tasksSnap.docs.map(d => updateDoc(d.ref, { subcategoryId: null }).catch(() => {}))
+    );
+  } catch { /* non-fatal */ }
 }
 
 export async function addWorkspaceMember(workspaceId, { uid, email, displayName, role = 'member' }) {
@@ -321,6 +484,9 @@ export async function deleteWorkspace(workspaceId) {
 }
 
 export async function addWorkspaceTask(workspaceId, task, actor) {
+  // Self-heal: if the actor was silently dropped from members (or the doc was
+  // never written), fix it before the task create so rules don't reject us.
+  try { await ensureWorkspaceMember(workspaceId, actor); } catch { /* non-fatal */ }
   const assigneeEmail = task.assigneeEmail?.toLowerCase() || null;
   const ref = await addDoc(collection(db, 'workspaces', workspaceId, 'tasks'), {
     text:           task.text?.trim() || '',
@@ -331,16 +497,22 @@ export async function addWorkspaceTask(workspaceId, task, actor) {
     assigneeUid:    task.assigneeUid   || null,
     assigneeEmail,
     assigneeName:   task.assigneeName  || null,
+    categoryId:     task.categoryId     || null,
+    subcategoryId:  task.subcategoryId  || null,
     createdBy:      actor.uid,
     createdByEmail: actor.email,
     createdByName:  actor.displayName || actor.email,
     createdAt:      serverTimestamp(),
     updatedAt:      serverTimestamp(),
   });
-  await _logWorkspaceActivity(workspaceId, ref.id, {
-    actorUid: actor.uid, actorName: actor.displayName || actor.email,
-    action: 'created', detail: task.text,
-  });
+  // Activity log is best-effort — if rules reject it (e.g. stale rules, race on
+  // just-written member doc), the task create itself must still count as success.
+  try {
+    await _logWorkspaceActivity(workspaceId, ref.id, {
+      actorUid: actor.uid, actorName: actor.displayName || actor.email,
+      action: 'created', detail: task.text,
+    });
+  } catch { /* non-fatal */ }
   return ref;
 }
 

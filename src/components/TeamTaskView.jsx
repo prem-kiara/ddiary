@@ -124,7 +124,8 @@ export default function TeamTaskView() {
   const pending    = tasks.filter(t => (t.status || 'open') !== 'done' && !t.completed);
   const completed  = tasks.filter(t => (t.status === 'done') || t.completed);
 
-  const [showDone, setShowDone] = useState(false);
+  const [showPending, setShowPending] = useState(true);
+  const [showDone,    setShowDone]    = useState(false);
 
   // Don't render anything if there are no assigned tasks and we're not loading
   if (!loading && tasks.length === 0 && !error) return null;
@@ -145,17 +146,29 @@ export default function TeamTaskView() {
 
       {!loading && !error && tasks.length === 0 && <Empty user={user} />}
 
-      {/* Pending tasks */}
+      {/* Pending tasks — chevron right-aligned for consistency */}
       {!loading && pending.length > 0 && (
         <div className="card">
-          <h3 style={{ marginBottom: 14, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 6, fontSize: 15 }}>
-            <Clock size={16} color="#d97706" /> Pending Tasks ({pending.length})
-          </h3>
-          {pending.map(t => <TaskCard key={t.id} task={t} />)}
+          <button
+            onClick={() => setShowPending(v => !v)}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 6,
+              width: '100%', textAlign: 'left', padding: 0, marginBottom: showPending ? 14 : 0,
+              color: '#0f172a', fontSize: 15, fontWeight: 700,
+            }}
+          >
+            <Clock size={16} color="#d97706" />
+            <span style={{ flex: 1 }}>Pending Tasks ({pending.length})</span>
+            <span style={{ color: '#475569', display: 'flex' }}>
+              {showPending ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </span>
+          </button>
+          {showPending && pending.map(t => <TaskCard key={t.id} task={t} />)}
         </div>
       )}
 
-      {/* Completed tasks (collapsible) */}
+      {/* Completed tasks — chevron right-aligned for consistency */}
       {!loading && completed.length > 0 && (
         <div className="card">
           <button
@@ -167,9 +180,11 @@ export default function TeamTaskView() {
               color: '#0f172a', fontSize: 15, fontWeight: 700,
             }}
           >
-            {showDone ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
             <CheckCircle size={16} color="#15803d" />
-            Completed ({completed.length})
+            <span style={{ flex: 1 }}>Completed ({completed.length})</span>
+            <span style={{ color: '#475569', display: 'flex' }}>
+              {showDone ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </span>
           </button>
           {showDone && completed.map(t => <TaskCard key={t.id} task={t} />)}
         </div>
