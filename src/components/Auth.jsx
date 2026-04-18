@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BookOpen, Users, Layout } from 'lucide-react';
+import { Users, Layout as LayoutIcon } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Auth() {
@@ -40,21 +40,34 @@ export default function Auth() {
   // Per-flow tint. Default is violet (workspace); invites use indigo/emerald so
   // users visually notice they're joining someone else's space.
   const flow = isWorkspaceInvite
-    ? { icon: Layout,   iconBg: 'bg-indigo-100',  iconColor: 'text-indigo-600',  btn: 'btn-blue', title: 'Join Workspace',   subtitle: "You've been invited to a shared workspace. Sign in with your Microsoft account to start collaborating." }
+    ? { icon: LayoutIcon, iconBg: 'bg-indigo-100',  iconColor: 'text-indigo-600',  btn: 'btn-blue', title: 'Join Workspace',   subtitle: "You've been invited to a shared workspace. Sign in with your Microsoft account to start collaborating." }
     : isMemberSignup
-    ? { icon: Users,    iconBg: 'bg-emerald-100', iconColor: 'text-emerald-600', btn: 'btn-gold', title: 'Join the Team',    subtitle: "You've been invited to collaborate on tasks. Sign in with your Microsoft account." }
-    : { icon: BookOpen, iconBg: 'bg-violet-100',  iconColor: 'text-violet-600',  btn: 'btn-gold', title: 'Dhanam Workspace', subtitle: "Sign in with your organization Microsoft account." };
+    ? { icon: Users,      iconBg: 'bg-emerald-100', iconColor: 'text-emerald-600', btn: 'btn-gold', title: 'Join the Team',    subtitle: "You've been invited to collaborate on tasks. Sign in with your Microsoft account." }
+    : { icon: null,       iconBg: '',               iconColor: '',                 btn: 'btn-gold', title: 'Dhanam Workspace', subtitle: "Sign in with your organization Microsoft account." };
 
   const Icon = flow.icon;
 
   return (
     <div className="auth-container">
       <div className="auth-card fade-in">
+        {/* Brand logo — shown on every auth flow */}
         <div className="flex justify-center mb-3">
-          <div className={`w-14 h-14 rounded-2xl ${flow.iconBg} ${flow.iconColor} flex items-center justify-center`}>
-            <Icon size={28} strokeWidth={2} />
-          </div>
+          <img
+            src="/Logo.png"
+            alt="Dhanam"
+            className="h-16 w-auto object-contain"
+            draggable={false}
+          />
         </div>
+
+        {/* Flow-specific accent icon (only for invite flows) */}
+        {Icon && (
+          <div className="flex justify-center mb-3">
+            <div className={`w-10 h-10 rounded-xl ${flow.iconBg} ${flow.iconColor} flex items-center justify-center`}>
+              <Icon size={20} strokeWidth={2} />
+            </div>
+          </div>
+        )}
 
         <h1 className="auth-title">{flow.title}</h1>
         <p className="auth-subtitle">{flow.subtitle}</p>

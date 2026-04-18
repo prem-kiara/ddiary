@@ -59,7 +59,7 @@ export default function TasksPage({
             showToast={showToast}
           />
           {/* Assigned to Me — personal tasks assigned by someone else (not workspace tasks) */}
-          <TeamTaskView />
+          <TeamTaskView showToast={showToast} />
         </>
       )}
 

@@ -44,18 +44,24 @@ async function sendEmail({ to, subject, htmlBody }) {
 }
 
 // ─── Email wrapper (styled) ─────────────────────────────────────────────────
+const LOGO_URL = `${APP_URL}/logo-email.png`;
+
 function wrapHtml(title, bodyContent) {
   return `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px;">
-      <div style="background: linear-gradient(135deg, #6d28d9 0%, #a78bfa 100%); padding: 20px 24px; border-radius: 12px 12px 0 0;">
-        <h2 style="margin: 0; color: #fff; font-size: 18px;">${title}</h2>
+      <div style="background: linear-gradient(135deg, #6d28d9 0%, #a78bfa 100%); padding: 20px 24px; border-radius: 12px 12px 0 0; display: flex; align-items: center; gap: 12px;">
+        <img src="${LOGO_URL}" alt="Dhanam" width="40" height="40" style="display: inline-block; vertical-align: middle; background: #ffffff; border-radius: 8px; padding: 4px; margin-right: 10px;" />
+        <h2 style="margin: 0; color: #fff; font-size: 18px; display: inline-block; vertical-align: middle;">${title}</h2>
       </div>
       <div style="background: #ffffff; padding: 24px; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px;">
         ${bodyContent}
         <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0 16px;" />
-        <p style="font-size: 12px; color: #475569; margin: 0;">
-          Sent from <a href="${APP_URL}" style="color: #6d28d9;">DDiary</a> — Dhanam Digital Diary
-        </p>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <img src="${LOGO_URL}" alt="Dhanam" width="20" height="20" style="display: inline-block; vertical-align: middle; margin-right: 6px;" />
+          <p style="font-size: 12px; color: #475569; margin: 0; display: inline-block; vertical-align: middle;">
+            Sent from <a href="${APP_URL}" style="color: #6d28d9;">Dhanam Workspace</a> — Dhanam Investment and Finance
+          </p>
+        </div>
       </div>
     </div>
   `;

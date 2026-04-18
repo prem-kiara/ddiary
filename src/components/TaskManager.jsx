@@ -45,7 +45,30 @@ function CommentBadge({ ownerUid, taskId }) {
 
 
 // ── Move-to-Board sub-panel (needs its own hook for workspace members) ────────
-function MoveToBoard({ task, workspaces, orgAssignees, onDelete, showToast, onClose, user }) {
+//
+// Props:
+//   task            — the source task being moved
+//   workspaces      — list of workspaces the user belongs to
+//   orgAssignees    — merged org directory for the assignee picker
+//   onDelete        — default "finalize" callback: deletes the source task
+//                     (used when moving a Personal task)
+//   onFinalize      — OPTIONAL override: when provided, called instead of
+//                     onDelete(task.id) after the workspace task is created.
+//                     Used by "Send to Team Board" from Assigned-to-Me so the
+//                     source task gets annotated with movedToWorkspace instead
+//                     of deleted (the source task isn't ours to delete).
+//                     Receives the new workspace task ID as its first arg.
+//   headerLabel     — OPTIONAL visual title override (default "Move to Team Board")
+//   helpText        — OPTIONAL help copy override
+//   showToast       — toast helper
+//   onClose         — close callback
+//   user            — current user
+export function MoveToBoard({
+  task, workspaces, orgAssignees,
+  onDelete, onFinalize,
+  headerLabel, helpText,
+  showToast, onClose, user,
+}) {
   const [selectedWsId, setSelectedWsId] = useState(workspaces[0]?.id || '');
   const { workspace: selectedWs, members: wsMembers } = useWorkspace(selectedWsId);
   const [moveStatus, setMoveStatus] = useState('open');
@@ -56,6 +79,10 @@ function MoveToBoard({ task, workspaces, orgAssignees, onDelete, showToast, onCl
   const [moveSubcategoryId, setMoveSubcategoryId] = useState('');
   const [movePriority, setMovePriority] = useState('medium');
   const [moveDue, setMoveDue] = useState('');
+  // Notes/comments that will be carried onto the workspace task so the team
+  // sees the context for why it was moved. Seeded from any existing notes on
+  // the source task — user can edit or clear before moving.
+  const [moveNotes, setMoveNotes] = useState(task.notes || '');
   const [moveSaving, setMoveSaving] = useState(false);
 
   const categories = selectedWs?.categories || [];
@@ -170,8 +197,9 @@ function MoveToBoard({ task, workspaces, orgAssignees, onDelete, showToast, onCl
       }
 
       // ── Add the task.
-      await addWorkspaceTask(selectedWsId, {
+      const newTaskRef = await addWorkspaceTask(selectedWsId, {
         text:          task.text,
+        notes:         moveNotes?.trim() || null,
         status:        moveStatus,
         priority:      movePriority || 'medium',
         dueDate:       moveDue ? new Date(moveDue).toISOString() : null,
@@ -206,7 +234,18 @@ function MoveToBoard({ task, workspaces, orgAssignees, onDelete, showToast, onCl
         } catch (mailErr) { console.warn('notifyTaskAssigned failed', mailErr); }
       }
 
-      await onDelete(task.id);
+      // Finalize the source task: custom callback if caller supplied one
+      // (e.g. annotate 'movedToWorkspace' when the source is in someone
+      // else's collection), otherwise default to delete.
+      if (onFinalize) {
+        await onFinalize(task.id, {
+          workspaceId:   selectedWsId,
+          workspaceName: wsName,
+          workspaceTaskId: newTaskRef?.id || null,
+        });
+      } else {
+        await onDelete(task.id);
+      }
       showToast(
         !wsMember && !isSelf
           ? `Task moved and invite sent to ${assigneeName}!`
@@ -230,10 +269,10 @@ function MoveToBoard({ task, workspaces, orgAssignees, onDelete, showToast, onCl
       <div style={{ height: 1, background: '#e2e8f0', marginBottom: 12 }} />
       <div style={{ background: '#eff6ff', border: '1px solid #2563eb44', borderRadius: 10, padding: '14px 16px' }}>
         <div style={{ fontWeight: 700, fontSize: 13, color: '#2563eb', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <ArrowUpRight size={14} /> Move to Team Board
+          <ArrowUpRight size={14} /> {headerLabel || 'Move to Team Board'}
         </div>
         <p style={{ fontSize: 12, color: '#0f172a', marginBottom: 12, lineHeight: 1.5 }}>
-          This task will be removed from My Tasks and added to the Team Board Kanban.
+          {helpText || 'This task will be removed from My Tasks and added to the Team Board Kanban.'}
         </p>
 
         {/* Workspace picker (only when more than one option) */}
@@ -334,6 +373,27 @@ function MoveToBoard({ task, workspaces, orgAssignees, onDelete, showToast, onCl
             <label className="label">Due date</label>
             <input type="date" value={moveDue} onChange={e => setMoveDue(e.target.value)} style={selStyle} />
           </div>
+        </div>
+
+        {/* Notes / comments — carried onto the workspace task so the team
+            sees context for why this was moved. Optional. */}
+        <div style={{ marginBottom: 12 }}>
+          <label className="label">
+            Notes <span style={{ fontWeight: 400, color: '#94a3b8' }}>(optional — shown on the Team Board card)</span>
+          </label>
+          <textarea
+            value={moveNotes}
+            onChange={e => setMoveNotes(e.target.value)}
+            rows={3}
+            placeholder="Add any context or comments for the team…"
+            style={{
+              width: '100%', padding: '8px 10px', border: '1px solid #cbd5e1',
+              borderRadius: 8, fontSize: 13, fontFamily: 'var(--font-body)',
+              background: '#ffffff', color: '#0f172a',
+              resize: 'vertical', minHeight: 64, outline: 'none',
+              boxSizing: 'border-box', lineHeight: 1.5,
+            }}
+          />
         </div>
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -532,6 +592,25 @@ function TaskCard({
                 border: '1px solid #7c3aed44',
               }}>
                 <Link size={9} /> Linked
+              </span>
+            )}
+            {/* Shown on the owner's card when the assignee has pushed this
+                task onto a Team Board. Keeps the owner aware that the task
+                is now being tracked on the shared Kanban — click the card to
+                read the activity log for details. */}
+            {task.movedToWorkspace && (
+              <span
+                title={`Moved by ${task.movedToWorkspace.movedByName || 'assignee'} on ${
+                  task.movedToWorkspace.movedAt ? new Date(task.movedToWorkspace.movedAt).toLocaleDateString() : 'an earlier date'
+                }`}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                  background: '#eff6ff', color: '#2563eb',
+                  fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
+                  border: '1px solid #2563eb44',
+                }}
+              >
+                <ArrowUpRight size={9} /> Moved to {task.movedToWorkspace.workspaceName || 'Team Board'}
               </span>
             )}
           </div>

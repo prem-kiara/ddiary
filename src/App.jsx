@@ -113,8 +113,8 @@ function DiaryApp() {
       try {
         new Notification(n.title || 'DDiary', {
           body: n.body || '',
-          icon: '/icons/icon-192x192.png',
-          badge: '/icons/icon-72x72.png',
+          icon: '/icons/icon-192.png',
+          badge: '/icons/icon-72.png',
           tag: n.id,
         });
       } catch { /* some browsers don't support Notification constructor */ }

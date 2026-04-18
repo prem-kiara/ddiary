@@ -8,6 +8,7 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { createLogger, logError } from '../utils/errorLogger';
 import {
+  writeNotification,
   notifyInApp_TaskAssigned,
   notifyInApp_StatusChanged,
   notifyInApp_Comment,
@@ -470,9 +471,14 @@ export function useAssignedTasks() {
       }));
       // Keep only personal tasks (in someone else's users/{uid}/tasks).
       // Workspace tasks are shown inside the workspace itself, not in "Assigned to Me".
+      // Also hide any task that I've already pushed to a Team Board via
+      // "Send to Team Board" — it lives as a workspace card now; no point
+      // showing it in my assigned list too. The original owner still sees
+      // it in their personal tasks (with a "moved to X" badge).
       setTasks(data.filter(t =>
         t._parentCollection === 'users' &&
-        t.ownerId !== user.uid
+        t.ownerId !== user.uid &&
+        !t.movedToWorkspace
       ));
       setLoading(false);
       setError(null);
@@ -647,6 +653,146 @@ export async function updateTaskStatus(ownerUid, taskId, { status, actorUid, act
       taskId,
       ownerUid,
     }).catch(err => logError(err, { location: 'updateTaskStatus', action: 'notify' }));
+  }
+}
+
+/**
+ * Reassign a task that was assigned to me onto someone else.
+ *
+ * The task lives in the ORIGINAL OWNER'S tasks collection
+ * (users/{ownerUid}/tasks/{taskId}) — I'm only allowed to update it because
+ * Firestore rules let any current assignee update. We write the new
+ * assignee fields, log a "reassigned" activity entry, and fire:
+ *   - in-app + email notification to the NEW assignee (so they see it)
+ *   - in-app notification to the ORIGINAL OWNER (so they know I handed it off)
+ *
+ * After the update, the task naturally disappears from my "Assigned to Me"
+ * (because the collection-group query filters by assigneeEmail == my email).
+ */
+export async function reassignAssignedTask(ownerUid, taskId, {
+  newAssigneeEmail, newAssigneeName, newAssigneeUid,
+  actor,             // { uid, email, displayName } — the current user (me)
+  ownerEmail,        // original owner's email (for notification) — auto-looked-up if absent
+  ownerName,         // original owner's display name
+  taskText,          // for the notification body
+}) {
+  const emailLower = newAssigneeEmail?.trim().toLowerCase() || null;
+  if (!emailLower) throw new Error('reassignAssignedTask: newAssigneeEmail is required');
+
+  // Best-effort owner-email lookup so in-app notification actually lands.
+  if (!ownerEmail && ownerUid && ownerUid !== actor?.uid) {
+    try {
+      const snap = await getDoc(doc(db, 'users', ownerUid));
+      if (snap.exists()) ownerEmail = snap.data().email || null;
+    } catch { /* non-fatal */ }
+  }
+
+  await updateDoc(doc(db, 'users', ownerUid, 'tasks', taskId), {
+    assigneeEmail: emailLower,
+    assigneeName:  newAssigneeName || null,
+    assigneeUid:   newAssigneeUid  || null,
+    updatedAt:     serverTimestamp(),
+  });
+
+  // Activity log — best-effort
+  try {
+    await _logActivity(ownerUid, taskId, {
+      actorUid:  actor.uid,
+      actorName: actor.displayName || actor.email,
+      action:    'reassigned',
+      detail:    `Reassigned to ${newAssigneeName || emailLower}`,
+    });
+  } catch { /* non-fatal */ }
+
+  // Notify the NEW assignee (email + in-app)
+  try {
+    const { notifyTaskAssigned } = await import('../utils/emailNotifications');
+    notifyTaskAssigned({
+      assigneeEmail: emailLower,
+      assigneeName:  newAssigneeName || null,
+      taskText:      taskText || 'A task',
+      ownerName:     actor.displayName || actor.email,
+      ownerUid,
+    }).catch(err => console.warn('reassignAssignedTask:notifyTaskAssigned', err));
+  } catch { /* non-fatal */ }
+
+  notifyInApp_Reassigned({
+    assigneeEmail: emailLower,
+    assigneeName:  newAssigneeName || null,
+    taskText:      taskText || 'A task',
+    ownerName:     actor.displayName || actor.email,
+    ownerUid,
+    taskId,
+  }).catch(err => console.warn('reassignAssignedTask:notifyInApp_Reassigned', err));
+
+  // Notify the ORIGINAL OWNER in-app so they know I handed it off.
+  // (Only notify if we know their email and it's not the same person.)
+  if (ownerEmail && ownerEmail.toLowerCase() !== actor.email?.toLowerCase()) {
+    writeNotification({
+      recipientEmail: ownerEmail,
+      type:           'reassigned_by_assignee',
+      title:          'Task reassigned',
+      body:           `${actor.displayName || actor.email} reassigned "${taskText || 'a task'}" to ${newAssigneeName || emailLower}`,
+      senderName:     actor.displayName || actor.email,
+      taskId,
+      ownerUid,
+    }).catch(err => console.warn('reassignAssignedTask:notifyOwner', err));
+  }
+}
+
+/**
+ * Mark a task (that lives in someone else's collection) as having been
+ * pushed to a Team Board. The original owner still sees it in their
+ * personal list with a "Moved to X Board" badge; it's hidden from the
+ * assignee's "Assigned to Me" via the useAssignedTasks filter.
+ */
+export async function markTaskMovedToWorkspace(ownerUid, taskId, {
+  workspaceId, workspaceName, workspaceTaskId,
+  actor,   // { uid, email, displayName } — the current user (me)
+  ownerEmail, ownerName, taskText,
+}) {
+  // Best-effort owner-email lookup so in-app notification actually lands.
+  if (!ownerEmail && ownerUid && ownerUid !== actor?.uid) {
+    try {
+      const snap = await getDoc(doc(db, 'users', ownerUid));
+      if (snap.exists()) ownerEmail = snap.data().email || null;
+    } catch { /* non-fatal */ }
+  }
+
+  await updateDoc(doc(db, 'users', ownerUid, 'tasks', taskId), {
+    movedToWorkspace: {
+      workspaceId,
+      workspaceName:    workspaceName || null,
+      workspaceTaskId:  workspaceTaskId || null,
+      movedAt:          new Date().toISOString(),
+      movedByUid:       actor.uid,
+      movedByName:      actor.displayName || actor.email,
+    },
+    updatedAt: serverTimestamp(),
+  });
+
+  // Activity log — best-effort
+  try {
+    await _logActivity(ownerUid, taskId, {
+      actorUid:  actor.uid,
+      actorName: actor.displayName || actor.email,
+      action:    'moved',
+      detail:    `→ ${workspaceName || 'Team Board'}`,
+    });
+  } catch { /* non-fatal */ }
+
+  // Notify the original owner in-app so they know the task moved.
+  if (ownerEmail && ownerEmail.toLowerCase() !== actor.email?.toLowerCase()) {
+    writeNotification({
+      recipientEmail: ownerEmail,
+      type:           'moved_to_workspace',
+      title:          'Task moved to Team Board',
+      body:           `${actor.displayName || actor.email} moved "${taskText || 'a task'}" to "${workspaceName || 'a Team Board'}"`,
+      senderName:     actor.displayName || actor.email,
+      taskId,
+      ownerUid,
+      workspaceId,
+    }).catch(err => console.warn('markTaskMovedToWorkspace:notifyOwner', err));
   }
 }
 

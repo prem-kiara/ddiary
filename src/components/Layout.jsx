@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
-import { BookOpen, Home, PenTool, CheckSquare, Settings, LogOut, List, Kanban } from 'lucide-react';
+import { Home, PenTool, CheckSquare, Settings, LogOut, List, Kanban } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import NotificationBell from './NotificationBell';
 import Avatar from './shared/Avatar';
@@ -61,9 +61,12 @@ export default function Layout({
       {/* Header */}
       <header className="app-header">
         <h1>
-          <div className="w-8 h-8 rounded-lg bg-violet-600 text-white flex items-center justify-center">
-            <BookOpen size={18} />
-          </div>
+          <img
+            src="/Logo.png"
+            alt="Dhanam"
+            className="h-8 w-auto object-contain shrink-0"
+            draggable={false}
+          />
           <span>{headerTitle}</span>
         </h1>
         <div className="header-info">
