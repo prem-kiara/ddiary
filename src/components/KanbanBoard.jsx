@@ -396,16 +396,14 @@ function CommentCountBadge({ workspaceId, taskId }) {
   );
 }
 
-// ── Uniform Task Card (inline-collapsible) ───────────────────────────────────
-// Collapsed: a single-line header with title (ellipsis) + status + priority +
-// created timestamp/elapsed + assignee avatar + chevron. Clicking the header
-// expands the card inline to show ONLY the Comments + Activity tab pair via
-// WorkspaceCollabPanel in compact mode. A small "Open full details" link in
-// the expanded body still provides access to the full TaskDetailModal (used
-// for editing description, assignee, due date, etc.).
+// ── Uniform Task Card (single-line summary; click opens full detail modal) ──
+// Collapsed summary on one line: title (ellipsis) + status + priority +
+// created timestamp/elapsed + due date + comment count + assignee avatar.
+// Clicking the card opens the full TaskDetailModal (status controls,
+// category move, notes, reassign, comments, activity — with all existing
+// notifications intact).
 function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid, isAdmin, user, showToast }) {
-  const [expanded, setExpanded] = useState(false);   // inline collapse state
-  const [showModal, setShowModal] = useState(false); // full-detail modal
+  const [open, setOpen] = useState(false);
   const isOverdue = task.dueDate && task.status !== 'done' && new Date(task.dueDate) < new Date();
   const assignee     = members.find(m => m.uid === task.assigneeUid);
   const assigneeName = assignee?.displayName || task.assigneeName || null;
@@ -414,116 +412,81 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
   return (
     <>
       <div
-        className="bg-white border border-slate-200 rounded-xl overflow-visible"
+        onClick={() => setOpen(true)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true); } }}
+        className="group relative bg-white border border-slate-200 rounded-xl px-4 py-2.5 cursor-pointer hover:shadow-sm hover:border-slate-300 transition flex items-center gap-2.5"
         style={{
           opacity: task.status === 'done' ? 0.7 : 1,
           boxSizing: 'border-box',
         }}
       >
-        {/* ── Collapsed single-line header ─────────────────────────── */}
-        <div
-          onClick={() => setExpanded(v => !v)}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpanded(v => !v); } }}
-          className="flex items-center gap-2.5 px-4 py-2.5 cursor-pointer hover:bg-slate-50 transition-colors"
+        {/* Title — flexes + truncates so everything else stays on the line */}
+        <span
+          title={task.text}
+          className="flex-1 min-w-0 text-[14px] font-semibold text-slate-900 leading-snug truncate"
         >
-          {/* Chevron */}
-          <span className="text-slate-400 flex-shrink-0">
-            {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          </span>
+          {task.text}
+        </span>
 
-          {/* Title — flexes + truncates */}
+        {/* Status pill */}
+        <span className="flex-shrink-0">
+          <StatusPill status={task.status || 'open'} />
+        </span>
+
+        {/* Priority pill */}
+        <span className="flex-shrink-0">
+          <PriorityPill priority={task.priority || 'medium'} />
+        </span>
+
+        {/* Created timestamp + elapsed (two-tone gray + violet) */}
+        {task.createdAt && (
           <span
-            title={task.text}
-            className="flex-1 min-w-0 text-[14px] font-semibold text-slate-900 leading-snug truncate"
+            title={`Created ${formatShortStamp(task.createdAt)}`}
+            className="flex-shrink-0 inline-flex items-center gap-1"
+            style={{ fontSize: 11, color: '#94a3b8' }}
           >
-            {task.text}
+            <Clock size={10} />
+            <span>{formatShortStamp(task.createdAt)}</span>
+            {task.status !== 'done' && (
+              <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
+                · {elapsedSince(task.createdAt)} open
+              </span>
+            )}
           </span>
+        )}
 
-          {/* Status pill */}
-          <span className="flex-shrink-0">
-            <StatusPill status={task.status || 'open'} />
+        {/* Due date */}
+        {task.dueDate && (
+          <span
+            className={`flex-shrink-0 text-[11px] inline-flex items-center gap-1 ${isOverdue ? 'text-red-600 font-semibold' : 'text-slate-500'}`}
+            title={`Due ${formatDate(task.dueDate)}`}
+          >
+            <Calendar size={11} />
+            {formatDate(task.dueDate)}
           </span>
+        )}
 
-          {/* Priority pill */}
-          <span className="flex-shrink-0">
-            <PriorityPill priority={task.priority || 'medium'} />
+        {/* Comment count (only renders when > 0) */}
+        <span className="flex-shrink-0">
+          <CommentCountBadge workspaceId={workspaceId} taskId={task.id} />
+        </span>
+
+        {/* Assignee avatar */}
+        {assigneeName ? (
+          <Avatar id={assigneeId} name={assigneeName} email={task.assigneeEmail} size="sm" title={assigneeName} />
+        ) : (
+          <span
+            className="w-7 h-7 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center flex-shrink-0"
+            title="Unassigned"
+          >
+            <User size={13} />
           </span>
-
-          {/* Created timestamp + elapsed (two-tone) */}
-          {task.createdAt && (
-            <span
-              title={`Created ${formatShortStamp(task.createdAt)}`}
-              className="flex-shrink-0 inline-flex items-center gap-1"
-              style={{ fontSize: 11, color: '#94a3b8' }}
-            >
-              <Clock size={10} />
-              <span>{formatShortStamp(task.createdAt)}</span>
-              {task.status !== 'done' && (
-                <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
-                  · {elapsedSince(task.createdAt)} open
-                </span>
-              )}
-            </span>
-          )}
-
-          {/* Due date (only if present) */}
-          {task.dueDate && (
-            <span
-              className={`flex-shrink-0 text-[11px] inline-flex items-center gap-1 ${isOverdue ? 'text-red-600 font-semibold' : 'text-slate-500'}`}
-              title={`Due ${formatDate(task.dueDate)}`}
-            >
-              <Calendar size={11} />
-              {formatDate(task.dueDate)}
-            </span>
-          )}
-
-          {/* Comment count (only if > 0) */}
-          <span className="flex-shrink-0">
-            <CommentCountBadge workspaceId={workspaceId} taskId={task.id} />
-          </span>
-
-          {/* Assignee avatar */}
-          {assigneeName ? (
-            <Avatar id={assigneeId} name={assigneeName} email={task.assigneeEmail} size="sm" title={assigneeName} />
-          ) : (
-            <span
-              className="w-7 h-7 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center flex-shrink-0"
-              title="Unassigned"
-            >
-              <User size={13} />
-            </span>
-          )}
-        </div>
-
-        {/* ── Expanded: Comments + Activity only ───────────────────── */}
-        {expanded && (
-          <div className="border-t border-slate-100">
-            <WorkspaceCollabPanel
-              workspaceId={workspaceId}
-              task={task}
-              isAdmin={isAdmin}
-              compact
-              onClose={() => setExpanded(false)}
-            />
-            {/* Escape hatch to the full-detail modal for editing description,
-                assignee, due date, and destructive actions. Subtle so the
-                expanded view stays focused on comments / activity. */}
-            <div className="px-4 pb-3 pt-0 flex justify-end">
-              <button
-                onClick={(e) => { e.stopPropagation(); setShowModal(true); }}
-                className="text-[11px] text-slate-400 hover:text-violet-600 inline-flex items-center gap-1"
-                title="Open full task details"
-              >
-                <Edit2 size={10} /> Open full details
-              </button>
-            </div>
-          </div>
         )}
       </div>
 
-      {showModal && (
+      {open && (
         <TaskDetailModal
           task={task}
           workspace={workspace}
@@ -534,7 +497,7 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
           isAdmin={isAdmin}
           user={user}
           showToast={showToast}
-          onClose={() => setShowModal(false)}
+          onClose={() => setOpen(false)}
         />
       )}
     </>
