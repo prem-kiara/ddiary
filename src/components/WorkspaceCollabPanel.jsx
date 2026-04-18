@@ -24,7 +24,11 @@ const formatTime = (ts) => {
 };
 
 // ── Workspace Collab Panel ────────────────────────────────────────────────────
-export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = false, onClose }) {
+// `compact` = true → hide the status selector and Reassign UI, render only the
+//   Comments/Activity tab pair. Used by the inline-collapsible task card in
+//   the Team Board view, where status/reassign live elsewhere (status badge
+//   popover on the card header, reassign lives in the full-detail modal).
+export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = false, onClose, compact = false }) {
   const { user } = useAuth();
   const { comments } = useWorkspaceComments(workspaceId, task.id);
   const { activity }  = useWorkspaceActivity(workspaceId, task.id);
@@ -164,7 +168,8 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
   return (
     <div style={{ border: '1px solid #cbd5e1', borderTop: 'none', borderRadius: '0 0 10px 10px', background: '#ffffff', padding: '12px 16px 16px' }}>
 
-      {/* ── Status selector ───────────────────────────────────────────────────── */}
+      {/* ── Status selector (hidden in compact mode) ─────────────────────────── */}
+      {!compact && (
       <div style={{ marginBottom: hasStatusChange ? 8 : 14 }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
           Status
@@ -211,8 +216,10 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
         </div>
       </div>
 
+      )}
+
       {/* Save status button — only shown when there's a staged change */}
-      {hasStatusChange && (
+      {!compact && hasStatusChange && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
           <button
             onClick={handleSaveStatus}
@@ -237,8 +244,8 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
         </div>
       )}
 
-      {/* ── Reassign section — only shown to assignee or admin ────────────────── */}
-      {canAct && (
+      {/* ── Reassign section — hidden in compact mode ────────────────────────── */}
+      {!compact && canAct && (
         <div style={{ marginBottom: 14 }}>
           {!showReassign ? (
             <button
