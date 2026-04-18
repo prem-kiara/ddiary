@@ -633,14 +633,14 @@ function TaskCard({
               <span
                 title={`Created ${formatShortStamp(task.createdAt)}`}
                 style={{
-                  fontSize: 11, color: '#7c3aed',
+                  fontSize: 11, color: '#94a3b8',
                   display: 'inline-flex', alignItems: 'center', gap: 3,
                 }}
               >
                 <Clock size={10} />
                 <span>{formatShortStamp(task.createdAt)}</span>
                 {!task.completed && (
-                  <span style={{ fontWeight: 600, marginLeft: 2 }}>
+                  <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
                     · {elapsedSince(task.createdAt)} open
                   </span>
                 )}

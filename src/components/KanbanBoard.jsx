@@ -323,10 +323,10 @@ function TaskDetailModal({ task, workspace, workspaceId, members, onDelete, curr
               )}
               <span style={{ fontSize: 11, color: '#94a3b8' }}>Created by {task.createdByName || 'someone'}</span>
               {task.createdAt && (
-                <span style={{ fontSize: 11, color: '#7c3aed', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                <span style={{ fontSize: 11, color: '#94a3b8', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                   <Clock size={11} /> {formatShortStamp(task.createdAt)}
                   {task.status !== 'done' && (
-                    <span style={{ fontWeight: 600, marginLeft: 2 }}>
+                    <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
                       · {elapsedSince(task.createdAt, { longer: true })} open
                     </span>
                   )}
@@ -411,7 +411,9 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
         onClick={() => setOpen(true)}
         className="group relative bg-white border border-slate-200 rounded-xl px-4 py-3 cursor-pointer hover:shadow-sm hover:border-slate-300 transition"
         style={{
-          height: 78,
+          // Card height is now content-driven so the created/elapsed timestamp
+          // row (added below the meta row) fits cleanly. Padding keeps the
+          // visual rhythm close to the previous fixed 78px look.
           opacity: task.status === 'done' ? 0.7 : 1,
           boxSizing: 'border-box',
         }}
@@ -443,19 +445,26 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
                 Due {formatDate(task.dueDate)}
               </span>
             )}
-            {task.createdAt && task.status !== 'done' && (
-              <span
-                title={`Created ${formatShortStamp(task.createdAt)}`}
-                className="text-[11px] inline-flex items-center gap-1 font-semibold"
-                style={{ color: '#7c3aed' }}
-              >
-                <Clock size={11} />
-                {elapsedSince(task.createdAt)}
-              </span>
-            )}
             <CommentCountBadge workspaceId={workspaceId} taskId={task.id} />
           </div>
         </div>
+
+        {/* Created timestamp + elapsed — same two-tone treatment as My Tasks */}
+        {task.createdAt && (
+          <div
+            title={`Created ${formatShortStamp(task.createdAt)}`}
+            className="mt-1.5 inline-flex items-center gap-1"
+            style={{ fontSize: 11, color: '#94a3b8' }}
+          >
+            <Clock size={10} />
+            <span>{formatShortStamp(task.createdAt)}</span>
+            {task.status !== 'done' && (
+              <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
+                · {elapsedSince(task.createdAt)} open
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {open && (
