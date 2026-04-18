@@ -1,6 +1,7 @@
 {
   "projects": {
-    "prod": "ddiary-a72ca"
+    "prod": "ddiary-a72ca",
+    "Prod": "ddiary-a72ca"
   },
   "targets": {
     "ddiary-a72ca": {

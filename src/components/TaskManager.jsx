@@ -9,7 +9,12 @@ import { useAuth } from '../contexts/AuthContext';
 import { useUserDirectory } from '../hooks/useFirestore';
 import TaskCollabPanel, { StatusBadge } from './TaskCollabPanel';
 import { useTaskComments } from '../hooks/useFirestore';
-import { useMyWorkspaces, useWorkspace, addWorkspaceTask } from '../hooks/useWorkspace';
+import {
+  useMyWorkspaces, useWorkspace,
+  addWorkspaceTask, addWorkspaceMember,
+  createWorkspaceInvite, getExistingInvite,
+} from '../hooks/useWorkspace';
+import { notifyWorkspaceInvite, notifyTaskAssigned } from '../utils/emailNotifications';
 import MemberAutocomplete from './shared/MemberAutocomplete';
 import SectionHeader from './shared/SectionHeader';
 import { fetchAllOrgUsers } from '../utils/graphPeopleSearch';
@@ -40,12 +45,13 @@ function CommentBadge({ ownerUid, taskId }) {
 
 
 // ── Move-to-Board sub-panel (needs its own hook for workspace members) ────────
-function MoveToBoard({ task, workspaces, onDelete, showToast, onClose, user }) {
+function MoveToBoard({ task, workspaces, orgAssignees, onDelete, showToast, onClose, user }) {
   const [selectedWsId, setSelectedWsId] = useState(workspaces[0]?.id || '');
   const { workspace: selectedWs, members: wsMembers } = useWorkspace(selectedWsId);
   const [moveStatus, setMoveStatus] = useState('open');
-  // Default assignee = task owner (current user). Required — no "Unassigned" option.
-  const [moveAssignee, setMoveAssignee] = useState(user?.uid || '');
+  // Selected assignee is tracked by email — works for both workspace members
+  // (who have UIDs) and M365 org users (who don't, until they sign in).
+  const [moveAssigneeEmail, setMoveAssigneeEmail] = useState(user?.email?.toLowerCase() || '');
   const [moveCategoryId, setMoveCategoryId] = useState('');
   const [moveSubcategoryId, setMoveSubcategoryId] = useState('');
   const [movePriority, setMovePriority] = useState('medium');
@@ -55,48 +61,158 @@ function MoveToBoard({ task, workspaces, onDelete, showToast, onClose, user }) {
   const categories = selectedWs?.categories || [];
   const activeSubs = categories.find(c => c.id === moveCategoryId)?.subcategories || [];
 
+  // ── Merge workspace members (already joined) with the full org directory.
+  // Workspace members come first (they're the fastest path — they can already
+  // see the task). Org users come after, deduped by email. Members are marked
+  // so the UI can show a subtle "(workspace member)" hint.
+  const assigneeOptions = useMemo(() => {
+    const seen = new Set();
+    const list = [];
+    for (const m of (wsMembers || [])) {
+      const key = m.email?.toLowerCase();
+      if (!key || key.startsWith('pending_')) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.push({
+        email: key,
+        name:  m.displayName || m.email,
+        isMember: true,
+      });
+    }
+    for (const p of (orgAssignees || [])) {
+      const key = p.email?.toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      list.push({ email: key, name: p.name || p.email, isMember: false });
+    }
+    // Always ensure "Me" is present (edge case: user isn't yet in the workspace).
+    const myKey = user?.email?.toLowerCase();
+    if (myKey && !seen.has(myKey)) {
+      list.unshift({ email: myKey, name: user.displayName || user.email, isMember: false });
+    }
+    return list;
+  }, [wsMembers, orgAssignees, user]);
+
   // Pre-fill assignee when workspace changes; reset category picker.
-  // Preference order: existing assignee (if they're a workspace member) → task owner (current user).
+  // Preference: existing task assignee (if they're in the dropdown) → current user.
   useEffect(() => {
-    if (!wsMembers) return;
-    const matched = wsMembers.find(
-      m => m.email?.toLowerCase() === task.assigneeEmail?.toLowerCase()
-    );
-    const ownerMember = wsMembers.find(m => m.uid === user?.uid);
-    setMoveAssignee(matched?.uid || ownerMember?.uid || user?.uid || '');
+    if (!assigneeOptions.length) return;
+    const taskEmail = task.assigneeEmail?.toLowerCase();
+    const matched = taskEmail && assigneeOptions.find(o => o.email === taskEmail);
+    const me      = user?.email?.toLowerCase();
+    setMoveAssigneeEmail(matched?.email || me || assigneeOptions[0]?.email || '');
     setMoveCategoryId('');
     setMoveSubcategoryId('');
-  }, [selectedWsId, wsMembers, task.assigneeEmail, user?.uid]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedWsId, assigneeOptions.length]);
 
   // If user switches category, reset the sub-category selection.
   useEffect(() => { setMoveSubcategoryId(''); }, [moveCategoryId]);
 
   const handleMove = async () => {
     if (!selectedWsId) return;
-    if (!moveAssignee) {
+    if (!moveAssigneeEmail) {
       showToast('Please pick an assignee before moving to Team Board.', 'warning');
       return;
     }
     setMoveSaving(true);
     try {
-      const wsAssignee = wsMembers?.find(m => m.uid === moveAssignee);
+      const chosen       = assigneeOptions.find(o => o.email === moveAssigneeEmail);
+      const wsMember     = wsMembers?.find(m => m.email?.toLowerCase() === moveAssigneeEmail);
+      const assigneeName = chosen?.name || wsMember?.displayName || moveAssigneeEmail.split('@')[0];
+      const isSelf       = moveAssigneeEmail === user?.email?.toLowerCase();
+      const ownerName    = user.displayName || user.email;
+      const wsName       = selectedWs?.name || workspaces.find(w => w.id === selectedWsId)?.name || 'workspace';
+
+      // ── If the picked assignee isn't a workspace member yet, pre-create a
+      //    pending_* placeholder member doc so:
+      //      (a) Firestore rules let them read the task once they sign in
+      //      (b) claimPendingMemberships() swaps the placeholder for their real UID
+      //    + create a proper workspace invite doc and email the invite.
+      let sentInviteEmail = false;
+      if (!wsMember) {
+        const safe = moveAssigneeEmail.replace(/[^a-zA-Z0-9]/g, '_');
+        await addWorkspaceMember(selectedWsId, {
+          uid:         `pending_${safe}`,
+          email:       moveAssigneeEmail,
+          displayName: assigneeName,
+          role:        'member',
+        });
+
+        // Create a workspace invite — skip if one is already pending.
+        try {
+          const existing = await getExistingInvite(selectedWsId, moveAssigneeEmail);
+          if (!existing || existing.status !== 'pending') {
+            await createWorkspaceInvite({
+              workspaceId:   selectedWsId,
+              workspaceName: wsName,
+              inviterUid:    user.uid,
+              inviterEmail:  user.email,
+              inviterName:   ownerName,
+              inviteeEmail:  moveAssigneeEmail,
+            });
+          }
+        } catch (inviteErr) { /* non-fatal — move still proceeds */ console.warn('createWorkspaceInvite failed', inviteErr); }
+
+        // Send the invite email (best-effort).
+        if (!isSelf) {
+          try {
+            await notifyWorkspaceInvite({
+              inviteeEmail: moveAssigneeEmail,
+              inviteeName:  assigneeName,
+              inviterName:  ownerName,
+              workspaceName: wsName,
+              inviteUrl:    `${window.location.origin}?workspace=${selectedWsId}`,
+            });
+            sentInviteEmail = true;
+          } catch (mailErr) { console.warn('notifyWorkspaceInvite failed', mailErr); }
+        }
+      }
+
+      // ── Add the task.
       await addWorkspaceTask(selectedWsId, {
         text:          task.text,
         status:        moveStatus,
         priority:      movePriority || 'medium',
         dueDate:       moveDue ? new Date(moveDue).toISOString() : null,
-        assigneeUid:   wsAssignee?.uid   || null,
-        assigneeEmail: wsAssignee?.email?.toLowerCase() || null,
-        assigneeName:  wsAssignee?.displayName || null,
+        // Only set a UID when the assignee is already a real member (pending_* UIDs
+        // aren't real Firebase UIDs, so we leave assigneeUid null and let the
+        // collectionGroup query match by email instead).
+        assigneeUid:   (wsMember && !wsMember.uid?.startsWith('pending_')) ? wsMember.uid : null,
+        assigneeEmail: moveAssigneeEmail,
+        assigneeName:  assigneeName,
         categoryId:    moveCategoryId    || null,
         subcategoryId: moveSubcategoryId || null,
       }, {
         uid:         user.uid,
         email:       user.email,
-        displayName: user.displayName || user.email,
+        displayName: ownerName,
       });
+
+      // ── Notify the assignee about the new task (skip when assigning to self).
+      //    If we already sent an invite email, the invite email itself covers it;
+      //    otherwise send the dedicated task-assigned email.
+      if (!isSelf && !sentInviteEmail) {
+        try {
+          await notifyTaskAssigned({
+            assigneeEmail: moveAssigneeEmail,
+            assigneeName:  assigneeName,
+            taskText:      task.text,
+            dueDate:       moveDue || null,
+            priority:      movePriority || 'medium',
+            ownerName:     ownerName,
+            ownerUid:      user.uid,
+          });
+        } catch (mailErr) { console.warn('notifyTaskAssigned failed', mailErr); }
+      }
+
       await onDelete(task.id);
-      showToast('Task moved to Team Board!', 'success');
+      showToast(
+        !wsMember && !isSelf
+          ? `Task moved and invite sent to ${assigneeName}!`
+          : 'Task moved to Team Board!',
+        'success'
+      );
     } catch (e) {
       console.error(e);
       const detail = e?.code === 'permission-denied'
@@ -177,22 +293,30 @@ function MoveToBoard({ task, workspaces, onDelete, showToast, onClose, user }) {
               Assign to <span style={{ color: '#dc2626' }}>*</span>
             </label>
             <select
-              value={moveAssignee}
-              onChange={e => setMoveAssignee(e.target.value)}
+              value={moveAssigneeEmail}
+              onChange={e => setMoveAssigneeEmail(e.target.value)}
               style={{
                 ...selStyle,
-                borderColor: moveAssignee ? '#cbd5e1' : '#dc262688',
+                borderColor: moveAssigneeEmail ? '#cbd5e1' : '#dc262688',
               }}
               required
             >
-              {!moveAssignee && <option value="" disabled>— Pick someone —</option>}
-              {(wsMembers || []).map(m => (
-                <option key={m.uid} value={m.uid}>
-                  {m.uid === user?.uid ? 'Me' : (m.displayName || m.email)}
-                  {m.uid === user?.uid ? ` (${m.displayName || m.email})` : ''}
-                </option>
-              ))}
+              {!moveAssigneeEmail && <option value="" disabled>— Pick someone —</option>}
+              {assigneeOptions.map(o => {
+                const isMe = o.email === user?.email?.toLowerCase();
+                return (
+                  <option key={o.email} value={o.email}>
+                    {isMe ? `Me (${o.name})` : o.name}
+                    {!o.isMember && !isMe ? ' — will be invited' : ''}
+                  </option>
+                );
+              })}
             </select>
+            {moveAssigneeEmail && !assigneeOptions.find(o => o.email === moveAssigneeEmail)?.isMember && moveAssigneeEmail !== user?.email?.toLowerCase() && (
+              <p style={{ fontSize: 11, color: '#7c3aed', marginTop: 4, lineHeight: 1.4 }}>
+                They'll be added to this workspace so they can see the task.
+              </p>
+            )}
           </div>
         </div>
 
@@ -220,12 +344,12 @@ function MoveToBoard({ task, workspaces, onDelete, showToast, onClose, user }) {
             className="btn btn-sm"
             style={{
               background: '#2563eb', color: '#fff', border: 'none',
-              opacity: (!moveAssignee || moveSaving) ? 0.5 : 1,
-              cursor:  (!moveAssignee || moveSaving) ? 'not-allowed' : 'pointer',
+              opacity: (!moveAssigneeEmail || moveSaving) ? 0.5 : 1,
+              cursor:  (!moveAssigneeEmail || moveSaving) ? 'not-allowed' : 'pointer',
             }}
             onClick={handleMove}
-            disabled={moveSaving || !moveAssignee}
-            title={!moveAssignee ? 'Pick an assignee first' : undefined}
+            disabled={moveSaving || !moveAssigneeEmail}
+            title={!moveAssigneeEmail ? 'Pick an assignee first' : undefined}
           >
             {moveSaving ? 'Moving…' : <><ArrowUpRight size={13} /> Move to Team Board</>}
           </button>
@@ -240,7 +364,7 @@ function TaskCard({
   task, members, directory,
   onToggle, onUpdate, onDelete,
   showToast, ownerUid,
-  workspaces, hasWorkspace,
+  workspaces, hasWorkspace, orgAssignees,
 }) {
   const { user } = useAuth();
   const overdue   = !task.completed && isOverdue(task.dueDate);
@@ -597,6 +721,7 @@ function TaskCard({
             <MoveToBoard
               task={task}
               workspaces={workspaces}
+              orgAssignees={orgAssignees}
               onDelete={onDelete}
               showToast={showToast}
               onClose={() => setPanel(null)}
@@ -700,6 +825,7 @@ export default function TaskManager({
     members, directory, onToggle, onUpdate, onDelete, showToast, ownerUid: user?.uid,
     workspaces,
     hasWorkspace:     workspaces.length > 0,
+    orgAssignees:     assigneeOptions,
   };
 
   return (
