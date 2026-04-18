@@ -25,6 +25,7 @@ import { notifyWorkspaceInvite, notifyTaskAssigned } from '../utils/emailNotific
 import { fetchAllOrgUsers, searchOrgPeopleDebounced } from '../utils/graphPeopleSearch';
 import Avatar from './shared/Avatar';
 import { StatusPill, PriorityPill } from './shared/Pills';
+import { formatShortStamp, elapsedSince } from '../utils/dates';
 
 // ── Status config ─────────────────────────────────────────────────────────────
 const STATUSES = [
@@ -321,6 +322,16 @@ function TaskDetailModal({ task, workspace, workspaceId, members, onDelete, curr
                 </span>
               )}
               <span style={{ fontSize: 11, color: '#94a3b8' }}>Created by {task.createdByName || 'someone'}</span>
+              {task.createdAt && (
+                <span style={{ fontSize: 11, color: '#94a3b8', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                  <Clock size={11} /> {formatShortStamp(task.createdAt)}
+                  {task.status !== 'done' && (
+                    <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
+                      · {elapsedSince(task.createdAt, { longer: true })} open
+                    </span>
+                  )}
+                </span>
+              )}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
@@ -430,6 +441,15 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
               <span className={`text-[11px] inline-flex items-center gap-1 ${isOverdue ? 'text-red-600 font-semibold' : 'text-slate-500'}`}>
                 <Calendar size={11} />
                 Due {formatDate(task.dueDate)}
+              </span>
+            )}
+            {task.createdAt && task.status !== 'done' && (
+              <span
+                title={`Created ${formatShortStamp(task.createdAt)}`}
+                className="text-[11px] inline-flex items-center gap-1 text-slate-400"
+              >
+                <Clock size={11} />
+                {elapsedSince(task.createdAt)}
               </span>
             )}
             <CommentCountBadge workspaceId={workspaceId} taskId={task.id} />

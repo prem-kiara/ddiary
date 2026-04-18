@@ -2,9 +2,9 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Plus, Bell, Calendar, CheckSquare, Edit2, Check, X,
   User, Link, Mail, MessageCircle, ChevronDown, ChevronRight,
-  CheckCircle, UserPlus, Send, ArrowUpRight,
+  CheckCircle, UserPlus, Send, ArrowUpRight, Clock,
 } from 'lucide-react';
-import { formatDate, isOverdue, isDueToday, toDateInputValue } from '../utils/dates';
+import { formatDate, isOverdue, isDueToday, toDateInputValue, formatShortStamp, elapsedSince } from '../utils/dates';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserDirectory } from '../hooks/useFirestore';
 import TaskCollabPanel, { StatusBadge } from './TaskCollabPanel';
@@ -614,8 +614,8 @@ function TaskCard({
               </span>
             )}
           </div>
-          {/* Meta: due date + assignee */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 2 }}>
+          {/* Meta: due date + assignee + created stamp */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 2, alignItems: 'center' }}>
             {task.dueDate && (
               <span className={`task-due ${overdue ? 'overdue' : ''}`} style={{ fontSize: 12, margin: 0 }}>
                 <Calendar size={11} />
@@ -627,6 +627,25 @@ function TaskCard({
             {assignee && (
               <span style={{ fontSize: 12, color: isLinked ? '#7c3aed' : '#475569', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                 <User size={11} /> {assignee}
+              </span>
+            )}
+            {task.createdAt && (
+              <span
+                title={`Created ${formatShortStamp(task.createdAt)}`}
+                style={{
+                  fontSize: 11, color: '#94a3b8',
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                }}
+              >
+                <Clock size={10} />
+                <span>{formatShortStamp(task.createdAt)}</span>
+                {!task.completed && (
+                  <span style={{
+                    color: '#7c3aed', fontWeight: 600, marginLeft: 2,
+                  }}>
+                    · {elapsedSince(task.createdAt)} open
+                  </span>
+                )}
               </span>
             )}
           </div>

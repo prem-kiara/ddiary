@@ -453,7 +453,7 @@ export function useAssignedTasks() {
   const [error,   setError]   = useState(null);
 
   useEffect(() => {
-    if (!user?.email) { setTasks([]); setLoading(false); return; }
+    if (!user?.email) { setTasks([]); setLoading(false); setError(null); return; }
 
     const q = query(
       collectionGroup(db, 'tasks'),
@@ -461,34 +461,68 @@ export function useAssignedTasks() {
       orderBy('createdAt', 'desc')
     );
 
-    const unsub = onSnapshot(q, (snap) => {
-      const data = snap.docs.map(d => ({
-        id:        d.id,
-        _ownerUid: d.ref.parent.parent?.id || null,
-        // Top-level collection: "users" for personal tasks, "workspaces" for shared ones
-        _parentCollection: d.ref.parent.parent?.parent?.id || null,
-        ...d.data(),
-      }));
-      // Keep only personal tasks (in someone else's users/{uid}/tasks).
-      // Workspace tasks are shown inside the workspace itself, not in "Assigned to Me".
-      // Also hide any task that I've already pushed to a Team Board via
-      // "Send to Team Board" — it lives as a workspace card now; no point
-      // showing it in my assigned list too. The original owner still sees
-      // it in their personal tasks (with a "moved to X" badge).
-      setTasks(data.filter(t =>
-        t._parentCollection === 'users' &&
-        t.ownerId !== user.uid &&
-        !t.movedToWorkspace
-      ));
-      setLoading(false);
-      setError(null);
-    }, (err) => {
-      logError(err, { location: 'useAssignedTasks', action: 'onSnapshot' });
-      setError(err.message);
-      setLoading(false);
-    });
+    // Same rationale as useWorkspaceTasks: collection-group rules can flake
+    // during first-load / token-refresh / fresh membership — silently retry
+    // instead of bricking the listener and showing a red banner.
+    let cancelled = false;
+    let unsub = null;
+    let retryTimer = null;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 6;
+    const backoff = (n) => Math.min(500 * Math.pow(1.6, n), 4000);
 
-    return unsub;
+    const attach = () => {
+      if (cancelled) return;
+      unsub = onSnapshot(q, (snap) => {
+        if (cancelled) return;
+        attempts = 0;
+        const data = snap.docs.map(d => ({
+          id:        d.id,
+          _ownerUid: d.ref.parent.parent?.id || null,
+          // Top-level collection: "users" for personal tasks, "workspaces" for shared ones
+          _parentCollection: d.ref.parent.parent?.parent?.id || null,
+          ...d.data(),
+        }));
+        // Keep only personal tasks (in someone else's users/{uid}/tasks).
+        // Workspace tasks are shown inside the workspace itself, not in "Assigned to Me".
+        // Also hide any task that I've already pushed to a Team Board via
+        // "Send to Team Board" — it lives as a workspace card now; no point
+        // showing it in my assigned list too. The original owner still sees
+        // it in their personal tasks (with a "moved to X" badge).
+        setTasks(data.filter(t =>
+          t._parentCollection === 'users' &&
+          t.ownerId !== user.uid &&
+          !t.movedToWorkspace
+        ));
+        setLoading(false);
+        setError(null);
+      }, (err) => {
+        if (cancelled) return;
+        try { unsub?.(); } catch {}
+        if (err?.code === 'permission-denied' && attempts < MAX_ATTEMPTS) {
+          const delay = backoff(attempts++);
+          logError(err, {
+            location: 'useAssignedTasks',
+            action:   'onSnapshot.permission-denied.retry',
+            attempts, delay,
+          });
+          setLoading(false);
+          retryTimer = setTimeout(attach, delay);
+          return;                          // do NOT set error on transient denials
+        }
+        logError(err, { location: 'useAssignedTasks', action: 'onSnapshot' });
+        setError(err?.message || 'Failed to load assigned tasks.');
+        setLoading(false);
+      });
+    };
+
+    attach();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      try { unsub?.(); } catch {}
+    };
   }, [user?.email, user?.uid]);
 
   return { tasks, loading, error };

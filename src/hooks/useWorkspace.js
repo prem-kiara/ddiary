@@ -172,13 +172,27 @@ export function useMyWorkspace() {
 }
 
 // ─── Workspace tasks (real-time) ─────────────────────────────────────────────
+//
+// IMPORTANT — transient permission errors must NEVER surface in the UI.
+//
+// Firestore `onSnapshot` evaluates rules against the current auth state the
+// moment it attaches. On a freshly joined workspace (invite accepted seconds
+// ago, pending_* placeholder just swapped, or another user just wrote a new
+// task while our member-doc is still replicating) the rule check for
+// `isWorkspaceMember()` can return false even though the user IS a member.
+// Firestore tears the listener down on `permission-denied`, and we used to
+// surface `err.message` as a red banner — it stuck there forever because the
+// dead listener never fires another success callback to clear it.
+//
+// Fix: on permission-denied we silently back off and re-attach the listener
+// (up to a small number of retries). Only non-transient errors bubble to UI.
 export function useWorkspaceTasks(workspaceId) {
   const [tasks,   setTasks]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState(null);
 
   useEffect(() => {
-    if (!workspaceId) { setTasks([]); setLoading(false); return; }
+    if (!workspaceId) { setTasks([]); setLoading(false); setError(null); return; }
 
     // NOTE: we intentionally don't `orderBy('createdAt', 'desc')` here.
     //
@@ -203,22 +217,62 @@ export function useWorkspaceTasks(workspaceId) {
       return 0;
     };
 
-    const unsub = onSnapshot(q,
-      (snap) => {
-        const rows = snap.docs.map(d => ({
-          id: d.id,
-          // `estimate` → pending server timestamps are filled in with the
-          // local estimated time, so just-added tasks render immediately.
-          ...d.data({ serverTimestamps: 'estimate' }),
-        }));
-        rows.sort((a, b) => toDate(b.createdAt) - toDate(a.createdAt));
-        setTasks(rows);
-        setLoading(false);
-        setError(null);
-      },
-      (err)  => { setError(err.message); setLoading(false); }
-    );
-    return unsub;
+    let cancelled = false;
+    let unsub = null;
+    let retryTimer = null;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 6;                // ~total wait: 12s worst case
+    const backoff = (n) => Math.min(500 * Math.pow(1.6, n), 4000);
+
+    const attach = () => {
+      if (cancelled) return;
+      unsub = onSnapshot(q,
+        (snap) => {
+          if (cancelled) return;
+          attempts = 0;                    // any success resets retry budget
+          const rows = snap.docs.map(d => ({
+            id: d.id,
+            // `estimate` → pending server timestamps are filled in with the
+            // local estimated time, so just-added tasks render immediately.
+            ...d.data({ serverTimestamps: 'estimate' }),
+          }));
+          rows.sort((a, b) => toDate(b.createdAt) - toDate(a.createdAt));
+          setTasks(rows);
+          setLoading(false);
+          setError(null);
+        },
+        (err) => {
+          if (cancelled) return;
+          try { unsub?.(); } catch {}      // Firestore already tore this down; be safe
+
+          // permission-denied is almost always a replication race. Back off
+          // silently and re-attach instead of screaming at the user.
+          if (err?.code === 'permission-denied' && attempts < MAX_ATTEMPTS) {
+            const delay = backoff(attempts++);
+            logError(err, {
+              location: 'useWorkspaceTasks',
+              action:   'onSnapshot.permission-denied.retry',
+              workspaceId, attempts, delay,
+            });
+            setLoading(false);             // don't hold a spinner forever
+            retryTimer = setTimeout(attach, delay);
+            return;                        // IMPORTANT: do NOT setError here
+          }
+
+          // Any other error (or out of retries): surface it.
+          setError(err?.message || 'Failed to load tasks.');
+          setLoading(false);
+        }
+      );
+    };
+
+    attach();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      try { unsub?.(); } catch {}
+    };
   }, [workspaceId]);
 
   return { tasks, loading, error };

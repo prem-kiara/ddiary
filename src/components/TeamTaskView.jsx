@@ -16,6 +16,7 @@ import { fetchAllOrgUsers } from '../utils/graphPeopleSearch';
 import TaskCollabPanel, { StatusBadge } from './TaskCollabPanel';
 import { MoveToBoard } from './TaskManager';
 import SectionHeader from './shared/SectionHeader';
+import { formatShortStamp, elapsedSince } from '../utils/dates';
 
 const formatDate = (d) => {
   if (!d) return '';
@@ -241,6 +242,23 @@ function TaskCard({ task, workspaces, orgAssignees, showToast }) {
             {(task.ownerName || task._ownerUid) && (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 12, color: '#94a3b8' }}>
                 <User size={11} /> from {task.ownerName || 'your manager'}
+              </span>
+            )}
+            {task.createdAt && (
+              <span
+                title={`Created ${formatShortStamp(task.createdAt)}`}
+                style={{
+                  fontSize: 11, color: '#94a3b8',
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                }}
+              >
+                <Clock size={10} />
+                <span>{formatShortStamp(task.createdAt)}</span>
+                {!isDone && (
+                  <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
+                    · {elapsedSince(task.createdAt)} open
+                  </span>
+                )}
               </span>
             )}
           </div>
