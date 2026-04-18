@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Plus, Bell, Calendar, CheckSquare, Edit2, Check, X,
   User, Link, Mail, MessageCircle, ChevronDown, ChevronRight,
-  Clock, CheckCircle, UserPlus, Send, AlertCircle, ArrowUpRight,
+  CheckCircle, UserPlus, Send, ArrowUpRight,
 } from 'lucide-react';
 import { formatDate, isOverdue, isDueToday, toDateInputValue } from '../utils/dates';
 import { useAuth } from '../contexts/AuthContext';
@@ -650,17 +650,24 @@ export default function TaskManager({
   const [newText, setNewText] = useState('');
 
   // ── Section collapse state ──────────────────────────────────────────────
-  const [overdueOpen,    setOverdueOpen]    = useState(true);
-  const [pendingOpen,    setPendingOpen]    = useState(true);
-  const [completedOpen,  setCompletedOpen]  = useState(false);
+  const [doneOpen, setDoneOpen] = useState(false);
 
   const memberByEmail = (email) => assigneeOptions.find(m => m.email?.toLowerCase() === email?.toLowerCase());
 
   // ── Derived lists ───────────────────────────────────────────────────────
-  const overdueTasks   = tasks.filter(t => !t.completed && isOverdue(t.dueDate));
-  const pendingTasks   = tasks.filter(t => !t.completed && !isOverdue(t.dueDate));
+  // Single flat list for open tasks (no Overdue/Pending split).
+  // Overdue items sort first, then others by due date asc (no-due at end).
+  const openTasks = tasks
+    .filter(t => !t.completed)
+    .sort((a, b) => {
+      const ao = isOverdue(a.dueDate) ? 0 : 1;
+      const bo = isOverdue(b.dueDate) ? 0 : 1;
+      if (ao !== bo) return ao - bo;
+      const ad = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+      const bd = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+      return ad - bd;
+    });
   const completedTasks = tasks.filter(t => t.completed);
-  const pendingCount   = tasks.filter(t => !t.completed).length;
   const completedCount = completedTasks.length;
 
   // ── Add task (personal — minimal payload) ──────────────────────────────
@@ -718,76 +725,35 @@ export default function TaskManager({
         </button>
       </div>
 
-      {/* ── Stats ──────────────────────────────────────────────────────── */}
-      <div className="stats-row">
-        <div className="stat-card pending">
-          <div className="stat-number">{pendingCount}</div>
-          <div className="stat-label">Pending</div>
-        </div>
-        <div className="stat-card completed">
-          <div className="stat-number">{completedCount}</div>
-          <div className="stat-label">Completed</div>
-        </div>
-        <div className="stat-card overdue">
-          <div className="stat-number">{overdueTasks.length}</div>
-          <div className="stat-label">Overdue</div>
-        </div>
-      </div>
-
-      {/* ── Overdue section ────────────────────────────────────────────── */}
-      {overdueTasks.length > 0 && (
-        <div className="card" style={{ padding: 0, overflow: 'hidden', borderLeft: '4px solid #dc2626', marginBottom: 14 }}>
-          <SectionHeader
-            open={overdueOpen} onToggle={() => setOverdueOpen(o => !o)}
-            icon={<AlertCircle size={16} />} label="Overdue" count={overdueTasks.length} color="#dc2626"
-          />
-          {overdueOpen && (
-            <div style={{ padding: '0 14px 14px', borderTop: '1px solid #e2e8f0' }}>
-              <div style={{ marginTop: 12 }}>
-                {overdueTasks.map(t => <TaskCard key={t.id} task={t} {...taskCardProps} />)}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Pending section ────────────────────────────────────────────── */}
+      {/* ── Flat list of open tasks ─────────────────────────────────────── */}
       <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 14 }}>
-        <SectionHeader
-          open={pendingOpen} onToggle={() => setPendingOpen(o => !o)}
-          icon={<Clock size={16} />} label="Pending" count={pendingTasks.length}
-        />
-        {pendingOpen && (
-          <div style={{ padding: '0 14px 14px', borderTop: '1px solid #e2e8f0' }}>
-            {pendingTasks.length === 0 ? (
-              <div className="empty-state" style={{ padding: 24 }}>
-                <CheckCircle size={36} color="#15803d" />
-                <p>All caught up! No pending tasks.</p>
-              </div>
-            ) : (
-              <div style={{ marginTop: 12 }}>
-                {pendingTasks.map(t => <TaskCard key={t.id} task={t} {...taskCardProps} />)}
-              </div>
-            )}
+        {openTasks.length === 0 ? (
+          <div className="empty-state" style={{ padding: 24 }}>
+            <CheckCircle size={36} color="#15803d" />
+            <p>All caught up! No pending tasks.</p>
+          </div>
+        ) : (
+          <div style={{ padding: '12px 14px 14px' }}>
+            {openTasks.map(t => <TaskCard key={t.id} task={t} {...taskCardProps} />)}
           </div>
         )}
       </div>
 
-      {/* ── Completed section ──────────────────────────────────────────── */}
+      {/* ── Done strip (collapsed by default) ───────────────────────────── */}
       {completedTasks.length > 0 && (
         <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
           <SectionHeader
-            open={completedOpen} onToggle={() => setCompletedOpen(o => !o)}
-            icon={<CheckCircle size={16} />} label="Completed" count={completedCount} color="#15803d"
+            open={doneOpen} onToggle={() => setDoneOpen(o => !o)}
+            icon={<CheckCircle size={16} />} label="Done" count={completedCount} color="#15803d"
           />
-          {completedOpen && (
+          {doneOpen && (
             <div style={{ padding: '0 14px 14px', borderTop: '1px solid #e2e8f0' }}>
               <div style={{ marginTop: 12 }}>
                 {completedTasks.map(t => <TaskCard key={t.id} task={t} {...taskCardProps} />)}
               </div>
               <div style={{ marginTop: 12, textAlign: 'center' }}>
                 <button className="btn btn-sm btn-outline" onClick={onClearCompleted}>
-                  Clear all {completedCount} completed task{completedCount > 1 ? 's' : ''}
+                  Clear all {completedCount} done task{completedCount > 1 ? 's' : ''}
                 </button>
               </div>
             </div>

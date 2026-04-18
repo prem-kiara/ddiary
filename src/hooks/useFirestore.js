@@ -464,10 +464,16 @@ export function useAssignedTasks() {
       const data = snap.docs.map(d => ({
         id:        d.id,
         _ownerUid: d.ref.parent.parent?.id || null,
+        // Top-level collection: "users" for personal tasks, "workspaces" for shared ones
+        _parentCollection: d.ref.parent.parent?.parent?.id || null,
         ...d.data(),
       }));
-      // Exclude tasks the current user created (those show in their own task list)
-      setTasks(data.filter(t => t.ownerId !== user.uid));
+      // Keep only personal tasks (in someone else's users/{uid}/tasks).
+      // Workspace tasks are shown inside the workspace itself, not in "Assigned to Me".
+      setTasks(data.filter(t =>
+        t._parentCollection === 'users' &&
+        t.ownerId !== user.uid
+      ));
       setLoading(false);
       setError(null);
     }, (err) => {

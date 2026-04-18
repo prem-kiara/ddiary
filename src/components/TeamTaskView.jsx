@@ -1,8 +1,11 @@
 import { useState } from 'react';
 import { CheckSquare, Calendar, User, ChevronDown, ChevronRight, Clock, CheckCircle } from 'lucide-react';
+// ChevronDown/ChevronRight are still used inside TaskCard below for the task-level expand/collapse
+
 import { useAuth } from '../contexts/AuthContext';
 import { useAssignedTasks } from '../hooks/useFirestore';
 import TaskCollabPanel, { StatusBadge } from './TaskCollabPanel';
+import SectionHeader from './shared/SectionHeader';
 
 const formatDate = (d) => {
   if (!d) return '';
@@ -146,47 +149,37 @@ export default function TeamTaskView() {
 
       {!loading && !error && tasks.length === 0 && <Empty user={user} />}
 
-      {/* Pending tasks — chevron right-aligned for consistency */}
+      {/* Pending tasks */}
       {!loading && pending.length > 0 && (
-        <div className="card">
-          <button
-            onClick={() => setShowPending(v => !v)}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 6,
-              width: '100%', textAlign: 'left', padding: 0, marginBottom: showPending ? 14 : 0,
-              color: '#0f172a', fontSize: 15, fontWeight: 700,
-            }}
-          >
-            <Clock size={16} color="#d97706" />
-            <span style={{ flex: 1 }}>Pending Tasks ({pending.length})</span>
-            <span style={{ color: '#475569', display: 'flex' }}>
-              {showPending ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            </span>
-          </button>
-          {showPending && pending.map(t => <TaskCard key={t.id} task={t} />)}
+        <div className="card" style={{ padding: 0, overflow: 'hidden', marginBottom: 14 }}>
+          <SectionHeader
+            open={showPending} onToggle={() => setShowPending(v => !v)}
+            icon={<Clock size={16} />} label="Pending Tasks" count={pending.length} color="#d97706"
+          />
+          {showPending && (
+            <div style={{ padding: '0 14px 14px', borderTop: '1px solid #e2e8f0' }}>
+              <div style={{ marginTop: 12 }}>
+                {pending.map(t => <TaskCard key={t.id} task={t} />)}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
-      {/* Completed tasks — chevron right-aligned for consistency */}
+      {/* Completed tasks */}
       {!loading && completed.length > 0 && (
-        <div className="card">
-          <button
-            onClick={() => setShowDone(v => !v)}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 6,
-              width: '100%', textAlign: 'left', padding: 0, marginBottom: showDone ? 14 : 0,
-              color: '#0f172a', fontSize: 15, fontWeight: 700,
-            }}
-          >
-            <CheckCircle size={16} color="#15803d" />
-            <span style={{ flex: 1 }}>Completed ({completed.length})</span>
-            <span style={{ color: '#475569', display: 'flex' }}>
-              {showDone ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            </span>
-          </button>
-          {showDone && completed.map(t => <TaskCard key={t.id} task={t} />)}
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <SectionHeader
+            open={showDone} onToggle={() => setShowDone(v => !v)}
+            icon={<CheckCircle size={16} />} label="Completed" count={completed.length} color="#15803d"
+          />
+          {showDone && (
+            <div style={{ padding: '0 14px 14px', borderTop: '1px solid #e2e8f0' }}>
+              <div style={{ marginTop: 12 }}>
+                {completed.map(t => <TaskCard key={t.id} task={t} />)}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

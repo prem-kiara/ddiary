@@ -372,24 +372,24 @@ function buildReminderEmail(name, overdue, upcoming) {
   });
 
   let html = `
-    <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; background: #fef9ef; padding: 32px; border-radius: 12px;">
-      <h1 style="font-family: 'Caveat', cursive; color: #4a3728; font-size: 28px; text-align: center; margin-bottom: 4px;">
-        📖 Daily Diary Reminder
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; background: #f5f3ff; padding: 32px; border-radius: 12px;">
+      <h1 style="color: #5b21b6; font-size: 24px; text-align: center; margin: 0 0 4px;">
+        Daily Diary Reminder
       </h1>
-      <p style="text-align: center; color: #8a7a6a; font-size: 14px; margin-bottom: 24px;">
+      <p style="text-align: center; color: #64748b; font-size: 14px; margin-bottom: 24px;">
         ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
       </p>
-      <p style="color: #6b5a4a; font-size: 16px; line-height: 1.6;">Hi ${name},</p>
+      <p style="color: #334155; font-size: 16px; line-height: 1.6;">Hi ${name},</p>
   `;
 
   if (overdue.length > 0) {
     html += `
-      <div style="background: #f8d7da; padding: 16px; border-radius: 8px; margin: 16px 0;">
-        <h3 style="color: #c0392b; margin: 0 0 8px;">⚠️ Overdue (${overdue.length})</h3>
+      <div style="background: #fee2e2; padding: 16px; border-radius: 8px; margin: 16px 0;">
+        <h3 style="color: #b91c1c; margin: 0 0 8px;">Overdue (${overdue.length})</h3>
         ${overdue.map(t => `
-          <div style="padding: 8px 0; border-bottom: 1px solid rgba(192,57,43,0.1);">
-            <strong style="color: #4a3728;">${t.text}</strong>
-            ${t.dueDate ? `<br><span style="color: #c0392b; font-size: 13px;">Was due: ${formatDate(t.dueDate)}</span>` : ''}
+          <div style="padding: 8px 0; border-bottom: 1px solid rgba(185,28,28,0.1);">
+            <strong style="color: #334155;">${t.text}</strong>
+            ${t.dueDate ? `<br><span style="color: #b91c1c; font-size: 13px;">Was due: ${formatDate(t.dueDate)}</span>` : ''}
           </div>
         `).join('')}
       </div>
@@ -398,12 +398,12 @@ function buildReminderEmail(name, overdue, upcoming) {
 
   if (upcoming.length > 0) {
     html += `
-      <div style="background: #fff3cd; padding: 16px; border-radius: 8px; margin: 16px 0;">
-        <h3 style="color: #8B6914; margin: 0 0 8px;">📋 Upcoming (${upcoming.length})</h3>
+      <div style="background: #ede9fe; padding: 16px; border-radius: 8px; margin: 16px 0;">
+        <h3 style="color: #6d28d9; margin: 0 0 8px;">Upcoming (${upcoming.length})</h3>
         ${upcoming.map(t => `
-          <div style="padding: 8px 0; border-bottom: 1px solid rgba(139,105,20,0.1);">
-            <strong style="color: #4a3728;">${t.text}</strong>
-            ${t.dueDate ? `<br><span style="color: #8a7a6a; font-size: 13px;">Due: ${formatDate(t.dueDate)}</span>` : ''}
+          <div style="padding: 8px 0; border-bottom: 1px solid rgba(109,40,217,0.1);">
+            <strong style="color: #334155;">${t.text}</strong>
+            ${t.dueDate ? `<br><span style="color: #64748b; font-size: 13px;">Due: ${formatDate(t.dueDate)}</span>` : ''}
           </div>
         `).join('')}
       </div>
@@ -411,7 +411,7 @@ function buildReminderEmail(name, overdue, upcoming) {
   }
 
   html += `
-      <p style="color: #8a7a6a; font-size: 14px; margin-top: 24px; text-align: center;">
+      <p style="color: #64748b; font-size: 14px; margin-top: 24px; text-align: center;">
         Open your Digital Diary to mark tasks complete.
       </p>
     </div>

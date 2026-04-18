@@ -4,8 +4,8 @@
   "description": "Your personal digital diary with tasks, reminders, and cloud sync",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#1E0F05",
-  "theme_color": "#8B6914",
+  "background_color": "#f5f3ff",
+  "theme_color": "#7c3aed",
   "orientation": "portrait",
   "icons": [
     {

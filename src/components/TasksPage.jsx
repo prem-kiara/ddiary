@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { User, Users } from 'lucide-react';
 import TaskManager from './TaskManager';
 import KanbanBoard from './KanbanBoard';
+import TeamTaskView from './TeamTaskView';
 
 /**
  * Unified Tasks page — combines personal My Tasks (list view) and
@@ -45,17 +46,21 @@ export default function TasksPage({
 
       {/* ── Views ────────────────────────────────────────────────────────── */}
       {view === 'list' && (
-        <TaskManager
-          tasks={tasks}
-          members={members}
-          loading={loading}
-          onAdd={onAdd}
-          onUpdate={onUpdate}
-          onToggle={onToggle}
-          onDelete={onDelete}
-          onClearCompleted={onClearCompleted}
-          showToast={showToast}
-        />
+        <>
+          <TaskManager
+            tasks={tasks}
+            members={members}
+            loading={loading}
+            onAdd={onAdd}
+            onUpdate={onUpdate}
+            onToggle={onToggle}
+            onDelete={onDelete}
+            onClearCompleted={onClearCompleted}
+            showToast={showToast}
+          />
+          {/* Assigned to Me — personal tasks assigned by someone else (not workspace tasks) */}
+          <TeamTaskView />
+        </>
       )}
 
       {view === 'board' && (

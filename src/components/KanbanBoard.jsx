@@ -584,7 +584,6 @@ function CategoryBoard({
   workspace, workspaceId, tasks, members,
   onDelete, currentUid, isAdmin, user, showToast,
   onAddTaskHere, // (categoryId, subcategoryId) => void
-  onAddTopLevel, // () => void
   filterAssignee, setFilterAssignee,
   filterStatus,   setFilterStatus,
 }) {
@@ -619,12 +618,12 @@ function CategoryBoard({
 
   return (
     <div>
-      {/* ── Filter bar (single row: avatars left, statuses right-aligned) ─── */}
-      <div className="bg-white border border-slate-200 rounded-2xl px-5 py-3 mb-3">
+      {/* ── Filter bar (compact single row: avatars left, statuses right) ─── */}
+      <div className="bg-white border border-slate-200 rounded-xl px-4 py-2 mb-3">
         <div className="flex items-center gap-3 flex-wrap">
           {/* Left cluster — member avatars */}
           <div className="flex items-center gap-2 flex-wrap min-w-0">
-            <span className="text-sm text-slate-500 font-medium mr-1 shrink-0">Filter:</span>
+            <span className="text-xs text-slate-500 font-medium mr-1 shrink-0">Filter:</span>
             {filterMembers.map(m => {
               const active = filterAssignee === m.uid;
               return (
@@ -656,7 +655,7 @@ function CategoryBoard({
                 <button
                   key={s.value}
                   onClick={() => setFilterStatus(active ? 'all' : s.value)}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition shrink-0
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold transition shrink-0
                     ${active ? 'ring-1 ring-offset-1' : 'opacity-90 hover:opacity-100'}`}
                   style={{
                     background: s.bg,
@@ -679,14 +678,6 @@ function CategoryBoard({
                 Clear
               </button>
             )}
-
-            <button
-              onClick={onAddTopLevel}
-              className="btn btn-teal btn-sm shrink-0"
-              style={{ gap: 5 }}
-            >
-              <Plus size={14} /> New Task
-            </button>
           </div>
         </div>
       </div>
@@ -769,6 +760,7 @@ function AddTaskModal({
   onClose, onAdd, members, workspaces, currentWorkspaceId, showToast,
   categories = [],  // categories of the CURRENT workspace, for the picker
   initialCategoryId = null, initialSubcategoryId = null, categoryContextLabel = null,
+  hideWorkspacePicker = false, // true when opened from inside a workspace
 }) {
   const [text,          setText]          = useState('');
   const [notes,         setNotes]         = useState('');
@@ -884,7 +876,8 @@ function AddTaskModal({
             <textarea value={text} onChange={e => setText(e.target.value)} placeholder="Describe the task…" rows={3} autoFocus style={{ ...inputStyle, resize: 'vertical' }} />
           </div>
 
-          {/* Workspace picker */}
+          {/* Workspace picker — hidden when opened from inside a workspace */}
+          {!hideWorkspacePicker && (
           <div style={{ background: '#f1f5f9', borderRadius: 10, padding: '12px 14px' }}>
             <label style={{ ...labelStyle, marginBottom: 8 }}>
               <Briefcase size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Workspace
@@ -916,13 +909,14 @@ function AddTaskModal({
                 placeholder="Workspace name…" style={{ ...inputStyle, fontSize: 13, marginTop: 2 }} autoFocus={workspaces.length === 0} />
             )}
           </div>
+          )}
 
-          {/* Category + Sub-category (only when the target workspace has them defined) */}
+          {/* Category + Sub-category — always shown for existing workspaces */}
           {(() => {
             const activeCats = wsMode === 'existing'
               ? (workspaces.find(w => w.id === selectedWsId)?.categories || categories || [])
               : [];
-            if (wsMode !== 'existing' || activeCats.length === 0) return null;
+            if (wsMode !== 'existing') return null;
             const activeSubs = activeCats.find(c => c.id === categoryId)?.subcategories || [];
             return (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -1218,11 +1212,6 @@ function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspac
     setShowAddTask(true);
   };
 
-  const handleAddTopLevel = () => {
-    setAddTaskContext({ categoryId: null, subcategoryId: null });
-    setShowAddTask(true);
-  };
-
   // Build a human label for the category context shown in the modal header
   const categoryContextLabel = (() => {
     if (!addTaskContext.categoryId) return null;
@@ -1255,7 +1244,6 @@ function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspac
             user={user}
             showToast={showToast}
             onAddTaskHere={handleAddTaskHere}
-            onAddTopLevel={handleAddTopLevel}
             filterAssignee={filterAssignee}
             setFilterAssignee={setFilterAssignee}
             filterStatus={filterStatus}
@@ -1276,6 +1264,7 @@ function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspac
           initialCategoryId={addTaskContext.categoryId}
           initialSubcategoryId={addTaskContext.subcategoryId}
           categoryContextLabel={categoryContextLabel}
+          hideWorkspacePicker={true}
         />
       )}
     </div>

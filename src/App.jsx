@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { useEntries, useTasks, useAssignedTasks, useTeamMembers } from './hooks/useFirestore';
+import { useEntries, useTasks, useTeamMembers } from './hooks/useFirestore';
 import { useNotifications } from './hooks/useNotifications';
 import KanbanBoard from './components/KanbanBoard';
 import TasksPage from './components/TasksPage';
@@ -13,7 +13,6 @@ import Toast from './components/Toast';
 import DiaryList from './components/DiaryList';
 import DiaryView from './components/DiaryView';
 import DiaryEditor from './components/DiaryEditor';
-import TeamTaskView from './components/TeamTaskView';
 import SettingsPage from './components/SettingsPage';
 import './styles/diary.css';
 
@@ -78,7 +77,6 @@ function DiaryApp() {
   } = useEntries();
   const { tasks, loading: tasksLoading, addTask, updateTask, toggleTask, deleteTask, clearCompleted } = useTasks();
   const { members, loading: membersLoading, addMember, addMembersBulk, updateMember, deleteMember } = useTeamMembers();
-  const { tasks: assignedTasks } = useAssignedTasks();
 
   const [toast, setToast] = useState(null);
   const showToast = useCallback((message, type = 'info') => setToast({ message, type }), []);
@@ -266,21 +264,18 @@ function DiaryApp() {
           <Route
             path="/tasks"
             element={
-              <>
-                <TasksPage
-                  tasks={tasks}
-                  members={members}
-                  loading={tasksLoading}
-                  onAdd={addTask}
-                  onUpdate={updateTask}
-                  onToggle={toggleTask}
-                  onDelete={deleteTask}
-                  onClearCompleted={clearCompleted}
-                  showToast={showToast}
-                  onWorkspaceCreated={setWorkspaceId}
-                />
-                {assignedTasks.length > 0 && <TeamTaskView />}
-              </>
+              <TasksPage
+                tasks={tasks}
+                members={members}
+                loading={tasksLoading}
+                onAdd={addTask}
+                onUpdate={updateTask}
+                onToggle={toggleTask}
+                onDelete={deleteTask}
+                onClearCompleted={clearCompleted}
+                showToast={showToast}
+                onWorkspaceCreated={setWorkspaceId}
+              />
             }
           />
 
