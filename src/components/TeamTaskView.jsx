@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  CheckSquare, Calendar, User, ChevronDown, ChevronRight, Clock, CheckCircle,
+  CheckSquare, Calendar, ChevronDown, ChevronRight, Clock, CheckCircle,
   UserPlus, ArrowUpRight, Check, X,
 } from 'lucide-react';
 // ChevronDown/ChevronRight are still used inside TaskCard below for the task-level expand/collapse
@@ -10,12 +10,14 @@ import {
   useAssignedTasks,
   reassignAssignedTask,
   markTaskMovedToWorkspace,
+  updateTaskStatus,
 } from '../hooks/useFirestore';
 import { useMyWorkspaces } from '../hooks/useWorkspace';
 import { fetchAllOrgUsers } from '../utils/graphPeopleSearch';
-import TaskCollabPanel, { StatusBadge } from './TaskCollabPanel';
+import TaskCollabPanel, { StatusBadge, STATUSES } from './TaskCollabPanel';
 import { MoveToBoard } from './TaskManager';
 import SectionHeader from './shared/SectionHeader';
+import Avatar from './shared/Avatar';
 import { formatShortStamp, elapsedSince } from '../utils/dates';
 
 const formatDate = (d) => {
@@ -31,6 +33,60 @@ const isOverdue = (dueDate) => {
 };
 
 const priorityColors = { high: '#dc2626', medium: '#d97706', low: '#15803d' };
+const priorityLabels = { high: 'High', medium: 'Medium', low: 'Low' };
+
+/* ── Inline status picker ─────────────────────────────────────────────────
+ * Small popover that replaces the full "status row" inside the expanded
+ * body. Triggered by clicking the status badge on the collapsed header so
+ * the single-line layout stays clean while still letting assignees update
+ * the task's state quickly.
+ */
+function StatusPickerPopover({ current, onPick, onClose }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const onDocClick = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose?.(); };
+    const onKey = (e) => { if (e.key === 'Escape') onClose?.(); };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: 'absolute', top: 'calc(100% + 4px)', left: 0,
+        background: '#ffffff', border: '1px solid #cbd5e1', borderRadius: 10,
+        boxShadow: '0 6px 20px rgba(15,23,42,0.12)',
+        padding: 6, zIndex: 50, minWidth: 150,
+        display: 'flex', flexDirection: 'column', gap: 2,
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {STATUSES.map(({ value, label, color, bg, Icon }) => {
+        const active = current === value;
+        return (
+          <button
+            key={value}
+            onClick={() => { onPick(value); onClose?.(); }}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '6px 10px', borderRadius: 7, fontSize: 12, fontWeight: 600,
+              border: 'none', cursor: 'pointer', textAlign: 'left',
+              background: active ? bg : 'transparent',
+              color: active ? color : '#475569',
+            }}
+          >
+            <Icon size={11} /> {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /* ── Empty state ────────────────────────────────────────────────────────── */
 function Empty({ user }) {
@@ -160,18 +216,51 @@ function ReassignPanel({ task, orgAssignees, onClose, showToast }) {
   );
 }
 
-/* ── Single task card ────────────────────────────────────────────────────── */
+/* ── Single task card ──────────────────────────────────────────────────────
+ *
+ * Layout goals (per product design):
+ *   • Collapsed: ONE clean row with title (truncated) + status + priority +
+ *     timestamp/elapsed + owner avatar + chevron. No secondary meta row
+ *     unless there's an actionable signal (due date / overdue).
+ *   • Expanded: dedicated to Comments + Activity only. A small icon footer
+ *     exposes Reassign / Send to Team Board without competing for focus.
+ *   • Status changes happen via a popover on the status badge, keeping
+ *     TaskCollabPanel focused on the collab thread.
+ */
 function TaskCard({ task, workspaces, orgAssignees, showToast }) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
-  // 'reassign' | 'move' | null — which inline action panel is expanded
+  // 'reassign' | 'move' | null — which inline action panel is open
   const [panel, setPanel] = useState(null);
+  const [statusPickerOpen, setStatusPickerOpen] = useState(false);
 
   const overdue  = isOverdue(task.dueDate) && task.status !== 'done';
   const isDone   = task.status === 'done' || task.completed;
   const priority = priorityColors[task.priority] || '#d97706';
+  const priorityLabel = priorityLabels[task.priority] || 'Medium';
+  const effectiveStatus = task.status || (isDone ? 'done' : 'open');
 
   const togglePanel = (p) => setPanel(cur => cur === p ? null : p);
+
+  // Inline status change (from the header badge popover). Mirrors the same
+  // write that TaskCollabPanel used to do.
+  const handleStatusChange = async (newStatus) => {
+    if (newStatus === effectiveStatus) return;
+    try {
+      await updateTaskStatus(task._ownerUid, task.id, {
+        status:       newStatus,
+        actorUid:     user.uid,
+        actorName:    user.displayName || user.email,
+        taskText:     task.text,
+        ownerEmail:   null,
+        ownerName:    task.ownerName,
+        assigneeName: task.assigneeName,
+      });
+    } catch (err) {
+      console.error('[TeamTaskView] updateTaskStatus failed', err);
+      showToast?.('Failed to update status.', 'warning');
+    }
+  };
 
   // onFinalize passed to MoveToBoard: instead of deleting the source task
   // (which we don't have permission to do — it's in someone else's
@@ -192,107 +281,177 @@ function TaskCard({ task, workspaces, orgAssignees, showToast }) {
 
   return (
     <div style={{
-      border: '1px solid #cbd5e1',
+      border: '1px solid #e2e8f0',
       borderRadius: 10,
       marginBottom: 10,
-      overflow: 'hidden',
+      overflow: 'visible',       // popover needs to escape the card
       opacity: isDone ? 0.65 : 1,
+      background: '#ffffff',
     }}>
-      {/* ── Header row ─────────────────────────────────────────────────── */}
-      <button
+      {/* ── Collapsed header: SINGLE ROW ───────────────────────────── */}
+      <div
         onClick={() => setOpen(v => !v)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(v => !v); } }}
         style={{
           display: 'flex', alignItems: 'center', gap: 10,
-          width: '100%', background: '#ffffff',
-          border: 'none', cursor: 'pointer',
-          padding: '12px 14px', textAlign: 'left',
+          width: '100%', background: 'transparent',
+          cursor: 'pointer',
+          padding: '10px 14px',
         }}
       >
-        {/* Priority strip */}
-        <div style={{ width: 4, height: 32, borderRadius: 2, background: priority, flexShrink: 0 }} />
+        {/* Chevron */}
+        {open
+          ? <ChevronDown size={16} color="#94a3b8" style={{ flexShrink: 0 }} />
+          : <ChevronRight size={16} color="#94a3b8" style={{ flexShrink: 0 }} />}
 
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {/* Title — flexes and truncates */}
+        <span
+          title={task.text}
+          style={{
+            flex: '1 1 auto', minWidth: 0,
+            fontWeight: 600, fontSize: 14, color: '#0f172a',
+            textDecoration: isDone ? 'line-through' : 'none',
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}
+        >
+          {task.text}
+        </span>
+
+        {/* Status badge — clickable, opens inline popover */}
+        <span
+          onClick={(e) => {
+            e.stopPropagation();
+            setStatusPickerOpen(v => !v);
+          }}
+          title="Click to change status"
+          style={{ position: 'relative', display: 'inline-flex', flexShrink: 0, cursor: 'pointer' }}
+        >
+          <StatusBadge status={effectiveStatus} />
+          {statusPickerOpen && (
+            <StatusPickerPopover
+              current={effectiveStatus}
+              onPick={handleStatusChange}
+              onClose={() => setStatusPickerOpen(false)}
+            />
+          )}
+        </span>
+
+        {/* Priority badge */}
+        <span
+          title={`${priorityLabel} priority`}
+          style={{
+            display: 'inline-flex', alignItems: 'center',
+            background: `${priority}12`, color: priority,
+            border: `1px solid ${priority}44`,
+            fontSize: 11, fontWeight: 700,
+            padding: '2px 8px', borderRadius: 10,
+            flexShrink: 0,
+          }}
+        >
+          {priorityLabel}
+        </span>
+
+        {/* Timestamp + elapsed — two-tone gray+violet */}
+        {task.createdAt && (
+          <span
+            title={`Created ${formatShortStamp(task.createdAt)}`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 3,
+              fontSize: 11, color: '#94a3b8',
+              flexShrink: 0,
+            }}
+          >
+            <Clock size={10} />
+            <span>{formatShortStamp(task.createdAt)}</span>
+            {!isDone && (
+              <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
+                · {elapsedSince(task.createdAt)} open
+              </span>
+            )}
+          </span>
+        )}
+
+        {/* Owner avatar — who assigned this to me */}
+        {(task.ownerName || task._ownerUid) && (
+          <Avatar
+            id={task._ownerUid || task.ownerName}
+            name={task.ownerName || 'your manager'}
+            size="sm"
+            title={`from ${task.ownerName || 'your manager'}`}
+          />
+        )}
+      </div>
+
+      {/* ── Optional due-date strip — only when a due date exists ──── */}
+      {task.dueDate && (
+        <div style={{
+          padding: '0 14px 10px',
+          marginLeft: 26,                     // align with title (chevron + gap)
+          fontSize: 11,
+          color: overdue ? '#dc2626' : '#94a3b8',
+          display: 'flex', alignItems: 'center', gap: 4,
+        }}>
+          <Calendar size={10} />
+          <span>Due {formatDate(task.dueDate)}</span>
+          {overdue && (
             <span style={{
-              fontWeight: 600, fontSize: 14, color: '#0f172a',
-              textDecoration: isDone ? 'line-through' : 'none',
-            }}>
-              {task.text}
-            </span>
-            <StatusBadge status={task.status || (isDone ? 'done' : 'open')} />
-          </div>
-
-          {/* Meta row */}
-          <div style={{ display: 'flex', gap: 10, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
-            {task.dueDate && (
-              <span style={{
-                display: 'inline-flex', alignItems: 'center', gap: 3,
-                fontSize: 12, color: overdue ? '#dc2626' : '#475569',
-              }}>
-                <Calendar size={11} />
-                {formatDate(task.dueDate)}
-                {overdue && (
-                  <span style={{
-                    background: '#dc2626', color: '#fff',
-                    fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 6,
-                  }}>OVERDUE</span>
-                )}
-              </span>
-            )}
-            {(task.ownerName || task._ownerUid) && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 12, color: '#94a3b8' }}>
-                <User size={11} /> from {task.ownerName || 'your manager'}
-              </span>
-            )}
-            {task.createdAt && (
-              <span
-                title={`Created ${formatShortStamp(task.createdAt)}`}
-                style={{
-                  fontSize: 11, color: '#94a3b8',
-                  display: 'inline-flex', alignItems: 'center', gap: 3,
-                }}
-              >
-                <Clock size={10} />
-                <span>{formatShortStamp(task.createdAt)}</span>
-                {!isDone && (
-                  <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
-                    · {elapsedSince(task.createdAt)} open
-                  </span>
-                )}
-              </span>
-            )}
-          </div>
+              background: '#dc2626', color: '#fff',
+              fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 6,
+              marginLeft: 2,
+            }}>OVERDUE</span>
+          )}
         </div>
+      )}
 
-        {open ? <ChevronDown size={16} color="#475569" /> : <ChevronRight size={16} color="#475569" />}
-      </button>
-
-      {/* ── Expanded body ──────────────────────────────────────────────── */}
+      {/* ── Expanded body: Comments + Activity only ────────────────── */}
       {open && (
-        <div>
-          {/* Action buttons: Reassign / Send to Team Board.
-              Only shown for pending (non-done) tasks — you can't offload a
-              task that's already marked done. */}
-          {!isDone && (
+        <div style={{ borderTop: '1px solid #f1f5f9' }}>
+          {/* The collab panel now renders *only* the Comments/Activity tabs
+              — status controls live on the header badge. */}
+          <TaskCollabPanel
+            ownerUid={task._ownerUid}
+            task={task}
+            onClose={() => setOpen(false)}
+            canChangeStatus={false}
+          />
+
+          {/* Subtle action footer — icon-only buttons so the expanded view
+              stays focused on comments/activity but the key offload actions
+              are still one click away. Hidden for done tasks. */}
+          {!isDone && panel === null && (
             <div style={{
-              display: 'flex', gap: 6, flexWrap: 'wrap',
-              padding: '8px 14px 0',
-              background: '#ffffff',
+              padding: '0 14px 12px',
+              display: 'flex', gap: 6, justifyContent: 'flex-end',
+              alignItems: 'center',
             }}>
               <button
-                className={`btn btn-sm ${panel === 'reassign' ? 'btn-teal' : 'btn-outline'}`}
                 onClick={() => togglePanel('reassign')}
-                title="Hand this task to someone else"
+                title="Reassign"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                  background: '#f8fafc', border: '1px solid #e2e8f0',
+                  borderRadius: 7, padding: '4px 8px',
+                  fontSize: 11, fontWeight: 600, color: '#475569',
+                  cursor: 'pointer',
+                }}
               >
-                <UserPlus size={12} /> Reassign
+                <UserPlus size={11} /> Reassign
               </button>
               {workspaces && workspaces.length > 0 && (
                 <button
-                  className={`btn btn-sm ${panel === 'move' ? 'btn-teal' : 'btn-outline'}`}
                   onClick={() => togglePanel('move')}
-                  title="Send this task to a Team Board"
+                  title="Send to Team Board"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    background: '#f8fafc', border: '1px solid #e2e8f0',
+                    borderRadius: 7, padding: '4px 8px',
+                    fontSize: 11, fontWeight: 600, color: '#475569',
+                    cursor: 'pointer',
+                  }}
                 >
-                  <ArrowUpRight size={12} /> Send to Team Board
+                  <ArrowUpRight size={11} /> Send to Team Board
                 </button>
               )}
             </div>
@@ -308,15 +467,13 @@ function TaskCard({ task, workspaces, orgAssignees, showToast }) {
             />
           )}
 
-          {/* Send-to-Team-Board inline panel — reuses the same MoveToBoard UI
-              used for Personal Tasks, but with an onFinalize override so the
-              source task gets annotated instead of deleted. */}
+          {/* Send-to-Team-Board inline panel */}
           {panel === 'move' && (
             <MoveToBoard
               task={task}
               workspaces={workspaces}
               orgAssignees={orgAssignees}
-              onDelete={async () => {}}           // never used — onFinalize takes over
+              onDelete={async () => {}}
               onFinalize={handleMoveFinalize}
               headerLabel="Send to Team Board"
               helpText={
@@ -328,14 +485,6 @@ function TaskCard({ task, workspaces, orgAssignees, showToast }) {
               user={user}
             />
           )}
-
-          {/* Existing collab panel (status + comments + activity) */}
-          <TaskCollabPanel
-            ownerUid={task._ownerUid}
-            task={task}
-            onClose={() => setOpen(false)}
-            canChangeStatus={true}
-          />
         </div>
       )}
     </div>
