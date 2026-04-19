@@ -1,16 +1,28 @@
 import { ChevronLeft, Edit3, Trash2, Archive, RotateCcw } from 'lucide-react';
 import { TagBadge } from './shared/Pills';
+import { parseDate } from '../utils/dates';
 
+// Long-form date — "Monday, April 3, 2026" — used in the entry header.
 const formatDate = (d) => {
-  if (!d) return '';
-  const date = d.toDate ? d.toDate() : new Date(d);
+  const date = parseDate(d);
+  if (!date) return '';
   return date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 };
 
 const formatTime = (d) => {
-  if (!d) return '';
-  const date = d.toDate ? d.toDate() : new Date(d);
+  const date = parseDate(d);
+  if (!date) return '';
   return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+};
+
+// True when updatedAt represents a meaningfully-later time than createdAt.
+// Serialized Firestore Timestamps lose object-identity, so we compare parsed
+// millisecond values with a small 1-second tolerance instead.
+const wasEdited = (createdAt, updatedAt) => {
+  const c = parseDate(createdAt);
+  const u = parseDate(updatedAt);
+  if (!c || !u) return false;
+  return u.getTime() - c.getTime() > 1000;
 };
 
 /** Renders entry content with each line/paragraph on its own line. */
@@ -85,7 +97,7 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
             </div>
             <p className="text-sm text-slate-500 m-0">
               {formatDate(entry.createdAt)} · {formatTime(entry.createdAt)}
-              {entry.updatedAt && entry.updatedAt !== entry.createdAt && (
+              {wasEdited(entry.createdAt, entry.updatedAt) && (
                 <span className="ml-2 italic">
                   (edited {formatDate(entry.updatedAt)})
                 </span>

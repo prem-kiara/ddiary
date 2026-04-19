@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Save, Mail, Clock, Cloud, Shield, Download, Globe } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import UserManual from './UserManual';
 
 // Common timezones for the selector
 const TIMEZONES = [
@@ -187,6 +188,9 @@ export default function SettingsPage({ showToast }) {
           </button>
         </div>
       </div>
+
+      {/* User Manual — bundled help doc, expandable + downloadable */}
+      <UserManual />
 
       {/* About */}
       <div className="card" style={{ background: '#f1f5f9' }}>

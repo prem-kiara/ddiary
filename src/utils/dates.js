@@ -4,12 +4,30 @@
  * so every component uses the same logic instead of duplicating it.
  */
 
-/** Convert any date-like value to a native Date, or null if falsy. */
+/** Convert any date-like value to a native Date, or null if falsy.
+ *
+ * Handles:
+ *   - live Firestore Timestamp instances (have .toDate())
+ *   - serialized Firestore Timestamps: {seconds, nanoseconds} or
+ *     {_seconds, _nanoseconds} (prototype is lost after structuredClone,
+ *     e.g. when an entry is passed through react-router location.state)
+ *   - native Date instances
+ *   - ISO strings / epoch ms numbers
+ * Returns null for falsy input or unparseable values (never "Invalid Date").
+ */
 export function parseDate(d) {
   if (!d) return null;
-  if (d.toDate) return d.toDate();   // Firestore Timestamp
-  if (d instanceof Date) return d;
-  return new Date(d);                // ISO string or epoch ms
+  if (typeof d.toDate === 'function') return d.toDate();
+  if (d instanceof Date) return isNaN(d.getTime()) ? null : d;
+  if (typeof d === 'object') {
+    const s  = typeof d.seconds     === 'number' ? d.seconds     : d._seconds;
+    const ns = typeof d.nanoseconds === 'number' ? d.nanoseconds : d._nanoseconds;
+    if (typeof s === 'number') {
+      return new Date(s * 1000 + Math.floor((ns || 0) / 1e6));
+    }
+  }
+  const parsed = new Date(d);
+  return isNaN(parsed.getTime()) ? null : parsed;
 }
 
 /** "Mon, Apr 3" */
