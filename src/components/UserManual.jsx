@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { BookOpen, Download, ChevronDown, ChevronRight } from 'lucide-react';
+import { BookOpen, FileDown, ChevronDown, ChevronRight } from 'lucide-react';
 import manualSource from '../content/user-manual.md?raw';
 
 /**
@@ -171,22 +171,169 @@ function renderMarkdown(md) {
   return blocks;
 }
 
+/* ── Markdown → HTML (used only for PDF export) ─────────────────────────── */
+// A parallel HTML-emitting pass so the printed page doesn't carry React
+// runtime overhead. Kept intentionally small — same subset as renderMarkdown.
+function escapeHtml(s) {
+  return s
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function renderInlineHtml(text) {
+  let t = escapeHtml(text);
+  // Order matters: links first, then code, then bold, then italics.
+  t = t.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  t = t.replace(/`([^`]+)`/g, '<code>$1</code>');
+  t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  t = t.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  return t;
+}
+function renderMarkdownToHtml(md) {
+  const lines = md.replace(/\r\n/g, '\n').split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^---+\s*$/.test(line)) { out.push('<hr/>'); i++; continue; }
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) { out.push(`<h${h[1].length}>${renderInlineHtml(h[2])}</h${h[1].length}>`); i++; continue; }
+    if (/^>\s?/.test(line)) {
+      const qs = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) { qs.push(lines[i].replace(/^>\s?/, '')); i++; }
+      out.push(`<blockquote>${qs.map(q => `<p>${renderInlineHtml(q)}</p>`).join('')}</blockquote>`);
+      continue;
+    }
+    if (/^\d+\.\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) { items.push(lines[i].replace(/^\d+\.\s+/, '')); i++; }
+      out.push(`<ol>${items.map(it => `<li>${renderInlineHtml(it)}</li>`).join('')}</ol>`);
+      continue;
+    }
+    if (/^[-*]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[-*]\s+/.test(lines[i])) { items.push(lines[i].replace(/^[-*]\s+/, '')); i++; }
+      out.push(`<ul>${items.map(it => `<li>${renderInlineHtml(it)}</li>`).join('')}</ul>`);
+      continue;
+    }
+    if (!line.trim()) { i++; continue; }
+    const pLines = [];
+    while (
+      i < lines.length && lines[i].trim() &&
+      !/^(#{1,6})\s+/.test(lines[i]) && !/^---+\s*$/.test(lines[i]) &&
+      !/^>\s?/.test(lines[i]) && !/^\d+\.\s+/.test(lines[i]) && !/^[-*]\s+/.test(lines[i])
+    ) { pLines.push(lines[i]); i++; }
+    out.push(`<p>${renderInlineHtml(pLines.join(' '))}</p>`);
+  }
+  return out.join('\n');
+}
+
+/* ── Print-to-PDF via hidden iframe ─────────────────────────────────────── */
+// We open a hidden iframe containing a print-styled rendering of the manual
+// and call print() on it. Every modern browser's print dialog defaults to
+// "Save as PDF", which produces a proper paginated document with zero extra
+// runtime dependencies.
+function printManualAsPdf() {
+  const date = new Date().toISOString().split('T')[0];
+  const title = `Digital Diary — User Manual (${date})`;
+  const bodyHtml = renderMarkdownToHtml(manualSource);
+
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    @page { size: A4; margin: 18mm 16mm; }
+    :root { color-scheme: light; }
+    html, body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+      color: #0f172a; background: #fff; margin: 0; padding: 0;
+      font-size: 11pt; line-height: 1.55;
+    }
+    h1 { font-size: 22pt; margin: 0 0 12pt; color: #6d28d9; }
+    h2 { font-size: 15pt; margin: 18pt 0 8pt; color: #0f172a; page-break-after: avoid; }
+    h3 { font-size: 12pt; margin: 12pt 0 6pt; color: #334155; page-break-after: avoid; }
+    p  { margin: 6pt 0; }
+    ul, ol { margin: 6pt 0 8pt; padding-left: 22pt; }
+    li { margin: 2pt 0; }
+    strong { color: #0f172a; }
+    code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+           background: #f1f5f9; padding: 0 3pt; border-radius: 3pt; font-size: 10pt; }
+    blockquote {
+      border-left: 3pt solid #a78bfa; background: #f5f3ff; color: #334155;
+      padding: 6pt 10pt; margin: 10pt 0; page-break-inside: avoid;
+    }
+    hr { border: none; border-top: 1px solid #e2e8f0; margin: 14pt 0; }
+    a  { color: #6d28d9; text-decoration: underline; }
+    .cover { border-bottom: 2pt solid #7c3aed; padding-bottom: 10pt; margin-bottom: 18pt; }
+    .cover .meta { font-size: 10pt; color: #64748b; margin-top: 4pt; }
+    .page-footer {
+      position: fixed; bottom: 8mm; left: 16mm; right: 16mm;
+      display: flex; justify-content: space-between;
+      font-size: 9pt; color: #94a3b8;
+    }
+    h2, h3 { page-break-after: avoid; }
+    ul, ol, blockquote { page-break-inside: avoid; }
+  </style>
+</head>
+<body>
+  <div class="cover">
+    <h1>Digital Diary — User Manual</h1>
+    <div class="meta">Exported ${escapeHtml(date)} · App version 1.0.0</div>
+  </div>
+  ${bodyHtml}
+  <div class="page-footer">
+    <span>Digital Diary User Manual</span>
+    <span>${escapeHtml(date)}</span>
+  </div>
+</body>
+</html>`;
+
+  // Hidden iframe — survives across platforms better than window.open, which
+  // pop-up blockers tend to intercept.
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentDocument || iframe.contentWindow.document;
+  doc.open();
+  doc.write(html);
+  doc.close();
+
+  // Give the iframe a tick to lay out, then trigger the native print dialog.
+  // The user picks "Save as PDF" as the destination (default on Chrome/Edge/
+  // Safari); cancelling is harmless.
+  const trigger = () => {
+    try {
+      iframe.contentWindow.focus();
+      iframe.contentWindow.print();
+    } catch (e) {
+      console.warn('Print dialog failed', e);
+    }
+    // Cleanup shortly after the dialog closes. Safari sometimes fires
+    // afterprint late, so also remove defensively on a timer.
+    const cleanup = () => { try { document.body.removeChild(iframe); } catch {} };
+    iframe.contentWindow.addEventListener('afterprint', cleanup, { once: true });
+    setTimeout(cleanup, 60_000);
+  };
+
+  if (iframe.contentDocument.readyState === 'complete') trigger();
+  else iframe.addEventListener('load', trigger, { once: true });
+}
+
 /* ── Component ──────────────────────────────────────────────────────────── */
 export default function UserManual() {
   const [open, setOpen] = useState(false);
   const body = useMemo(() => renderMarkdown(manualSource), []);
 
   const download = () => {
-    const blob = new Blob([manualSource], { type: 'text/markdown;charset=utf-8' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    const date = new Date().toISOString().split('T')[0];
-    a.href      = url;
-    a.download  = `digital-diary-user-manual-${date}.md`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    printManualAsPdf();
   };
 
   return (
@@ -202,9 +349,9 @@ export default function UserManual() {
           <button
             className="btn btn-sm btn-outline"
             onClick={(e) => { e.stopPropagation(); download(); }}
-            title="Download the manual as a Markdown file"
+            title="Download the manual as a PDF (opens your browser's Save-as-PDF dialog)"
           >
-            <Download size={14} /> Download .md
+            <FileDown size={14} /> Download PDF
           </button>
           {open ? <ChevronDown size={18} color="#475569" /> : <ChevronRight size={18} color="#475569" />}
         </div>

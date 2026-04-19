@@ -193,54 +193,20 @@ In **Settings** you can configure:
 - **Timezone** — used by reminders and to render dates.
 - **Email reminders on/off** — master toggle for daily emails.
 - **Export All Data** — download a JSON copy of your diary and tasks.
-- **User Manual** — you're reading it. Click **Download as .md** to grab the
-  latest version of this document.
+- **User Manual** — you're reading it. Click **Download PDF** to grab a
+  print-ready copy of this document.
 - **Sign Out** — end the session on this device.
 
 ---
 
-## 8. Tips & shortcuts
-
-- **Real-time sync** is always on — no refresh button needed. If a colleague
-  edits a shared task, your view updates within a second.
-- **Offline mode** — cached entries and tasks are viewable offline thanks to
-  the PWA service worker. New writes queue until you're back online.
-- **Search** — use your browser's Find (Cmd/Ctrl+F) inside any list.
-- **Permission-denied flashes** used to appear briefly on boards owned by
-  other people — they're now silently retried in the background.
-
----
-
-## 9. Troubleshooting
-
-- **"Invalid Date" on an entry page** — fixed in v1.0.0 (2026-04-19). If you
-  ever see this again, refresh the page — it means a stale route-state snapshot
-  stripped the Firestore Timestamp prototype.
-- **"Missing or insufficient permissions"** — if a board banner shows this
-  persistently, you were likely removed as a member. Ask the workspace owner
-  to re-invite you.
-- **Stuck "Creating workspace…"** — the spinner now resolves cleanly; if it
-  still hangs, reload the tab and try again.
-
----
-
-## 10. Privacy & data
-
-Your data lives in Firebase (Firestore + Cloud Storage) under your own user
-account. Workspace tasks are scoped to the members of that workspace — nobody
-else, including Dhanam admins outside the workspace, can read them.
-
-You can export everything as JSON from Settings → Data Management.
-
----
-
-## 11. Update Log
+## 8. Update Log
 
 When a user-facing change ships, append a short entry here. Keep it short and
 oriented to what the user will notice.
 
 - **2026-04-19** — Fixed "Invalid Date · Invalid Date" on the Diary entry
-  page. Added this User Manual to Settings with a Download button.
+  page. Added this User Manual to Settings with a **Download PDF** button.
+  Manual trimmed to the core sections (intro → update log).
 - **2026-04-18** — Team Board workspace cards now show a one-line summary and
   open a full-detail popup on click.
 - **2026-04-17** — Two-tone created/elapsed timestamp across all task views;
