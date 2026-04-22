@@ -20,15 +20,23 @@ export default function TeamMembers({ showToast }) {
   const [activeWsId,     setActiveWsId]     = useState(null);
   const [creating,       setCreating]       = useState(false);
   const [newName,        setNewName]        = useState('');
+  // Optional seed category + sub-category for the new workspace
+  const [newCatName,     setNewCatName]     = useState('');
+  const [newSubCatName,  setNewSubCatName]  = useState('');
   const [createLoading,  setCreateLoading]  = useState(false);
 
   const handleCreate = async () => {
     if (!newName.trim()) return;
     setCreateLoading(true);
     try {
-      const wid = await createWorkspace(user.uid, user.email, user.displayName, newName.trim());
+      const seed = newCatName.trim()
+        ? { name: newCatName.trim(), subcategoryName: newSubCatName.trim() || null }
+        : null;
+      const wid = await createWorkspace(user.uid, user.email, user.displayName, newName.trim(), seed);
       showToast(`Workspace "${newName.trim()}" created!`, 'success');
       setNewName('');
+      setNewCatName('');
+      setNewSubCatName('');
       setCreating(false);
       setActiveWsId(wid);
     } catch (e) {
@@ -64,15 +72,37 @@ export default function TeamMembers({ showToast }) {
       {creating && (
         <div className="card" style={{ marginBottom: 16 }}>
           <label className="label">Workspace Name</label>
+          <input className="input" value={newName} onChange={e => setNewName(e.target.value)}
+            placeholder="e.g. Collections Team, Branch Ops..."
+            onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }} autoFocus
+            style={{ marginBottom: 10 }}
+          />
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+            <div>
+              <label className="label">Category (optional)</label>
+              <input className="input" value={newCatName} onChange={e => setNewCatName(e.target.value)}
+                placeholder="e.g. Credit & Underwriting"
+                onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }} />
+            </div>
+            <div>
+              <label className="label">Sub-category (optional)</label>
+              <input className="input" value={newSubCatName} onChange={e => setNewSubCatName(e.target.value)}
+                placeholder="e.g. Retail"
+                disabled={!newCatName.trim()}
+                onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }} />
+            </div>
+          </div>
+          <p style={{ fontSize: 11, color: '#94a3b8', margin: '0 0 12px' }}>
+            You can add more categories and sub-categories later from the board.
+          </p>
+
           <div style={{ display: 'flex', gap: 8 }}>
-            <input className="input" value={newName} onChange={e => setNewName(e.target.value)}
-              placeholder="e.g. Collections Team, Branch Ops..."
-              onKeyDown={e => { if (e.key === 'Enter') handleCreate(); }} autoFocus />
-            <button className="btn btn-teal" onClick={handleCreate} disabled={createLoading}>
+            <button className="btn btn-teal" onClick={handleCreate} disabled={createLoading || !newName.trim()}>
               {createLoading ? 'Creating...' : 'Create'}
             </button>
-            <button className="btn btn-outline" onClick={() => { setCreating(false); setNewName(''); }}>
-              <X size={14} />
+            <button className="btn btn-outline" onClick={() => { setCreating(false); setNewName(''); setNewCatName(''); setNewSubCatName(''); }}>
+              <X size={14} /> Cancel
             </button>
           </div>
         </div>

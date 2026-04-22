@@ -848,7 +848,9 @@ function CategorySection({
             >
               + Add task{isUncategorized ? '' : ` in ${category.name}`}
             </button>
-            {isAdmin && !addingSub && (
+            {/* Adding a sub-category is open to every workspace member.
+                Rename / delete of existing sub-categories remain admin-only. */}
+            {!addingSub && (
               <button
                 onClick={() => setAddingSub(true)}
                 className="text-left text-xs font-semibold text-violet-600 hover:text-violet-800 px-1 py-1"
@@ -856,7 +858,7 @@ function CategorySection({
                 + Sub-category
               </button>
             )}
-            {isAdmin && addingSub && (
+            {addingSub && (
               <div className="mt-2 flex items-center gap-2">
                 <input
                   autoFocus
@@ -931,8 +933,9 @@ function CategoryBoard({
 
   return (
     <div>
-      {/* ── Inline "Add Category" panel (top of board, triggered from header) ─ */}
-      {isAdmin && addingCategory && (
+      {/* ── Inline "Add Category" panel (top of board, triggered from header) ─
+           Available to any workspace member (rename/delete stay admin-only). */}
+      {addingCategory && (
         <div className="bg-white border border-slate-200 rounded-2xl p-3 mb-3 flex items-center gap-2">
           <FolderPlus size={16} className="text-violet-600 flex-shrink-0" />
           <input
@@ -1077,9 +1080,12 @@ function AddTaskModal({
   const [categoryId,    setCategoryId]    = useState(initialCategoryId || '');
   const [subcategoryId, setSubcategoryId] = useState(initialSubcategoryId || '');
 
-  const [wsMode,       setWsMode]       = useState(workspaces.length ? 'existing' : 'new');
-  const [selectedWsId, setSelectedWsId] = useState(currentWorkspaceId || workspaces[0]?.id || '');
-  const [newWsName,    setNewWsName]    = useState('');
+  const [wsMode,        setWsMode]        = useState(workspaces.length ? 'existing' : 'new');
+  const [selectedWsId,  setSelectedWsId]  = useState(currentWorkspaceId || workspaces[0]?.id || '');
+  const [newWsName,     setNewWsName]     = useState('');
+  // Optional seed category/sub-category for a brand-new workspace (wsMode==='new')
+  const [newWsCatName,  setNewWsCatName]  = useState('');
+  const [newWsSubName,  setNewWsSubName]  = useState('');
 
   // ── Fetch M365 org users ────────────────────────────────────────────────
   const [orgUsers, setOrgUsers] = useState([]);
@@ -1136,6 +1142,11 @@ function AddTaskModal({
           {
             targetWorkspaceId: wsMode === 'existing' ? selectedWsId : null,
             newWorkspaceName:  wsMode === 'new'      ? newWsName.trim() : null,
+            // Optional seed category/sub-category when creating a brand-new workspace.
+            // Ignored by the caller when targeting an existing workspace.
+            newWorkspaceCategory: wsMode === 'new' && newWsCatName.trim()
+              ? { name: newWsCatName.trim(), subcategoryName: newWsSubName.trim() || null }
+              : null,
           }
         ),
         timeout,
@@ -1210,8 +1221,23 @@ function AddTaskModal({
               >+ New workspace</button>
             </div>
             {wsMode === 'new' && (
-              <input value={newWsName} onChange={e => setNewWsName(e.target.value)}
-                placeholder="Workspace name…" style={{ ...inputStyle, fontSize: 13, marginTop: 2 }} autoFocus={workspaces.length === 0} />
+              <>
+                <input value={newWsName} onChange={e => setNewWsName(e.target.value)}
+                  placeholder="Workspace name…" style={{ ...inputStyle, fontSize: 13, marginTop: 2 }} autoFocus={workspaces.length === 0} />
+                {/* Optional seed category + sub-category for the new workspace */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+                  <input value={newWsCatName} onChange={e => setNewWsCatName(e.target.value)}
+                    placeholder="Category (optional)"
+                    style={{ ...inputStyle, fontSize: 13 }} />
+                  <input value={newWsSubName} onChange={e => setNewWsSubName(e.target.value)}
+                    placeholder="Sub-category (optional)"
+                    disabled={!newWsCatName.trim()}
+                    style={{ ...inputStyle, fontSize: 13 }} />
+                </div>
+                <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 6, marginBottom: 0 }}>
+                  You can add more categories later from the board.
+                </p>
+              </>
             )}
           </div>
           )}
@@ -1325,18 +1351,23 @@ function AddTaskModal({
 // ── Workspace Setup (first workspace creation) ────────────────────────────────
 function WorkspaceSetup({ onCreated, onCancel, showToast, title }) {
   const { user } = useAuth();
-  const [name,     setName]     = useState('');
-  const [taskText, setTaskText] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
-  const [step,     setStep]     = useState(1);
+  const [name,       setName]       = useState('');
+  const [catName,    setCatName]    = useState('');
+  const [subCatName, setSubCatName] = useState('');
+  const [taskText,   setTaskText]   = useState('');
+  const [creating,   setCreating]   = useState(false);
+  const [errorMsg,   setErrorMsg]   = useState('');
+  const [step,       setStep]       = useState(1);
 
   const handleCreate = async () => {
     if (!name.trim()) return;
     setCreating(true);
     setErrorMsg('');
     try {
-      const id = await createWorkspace(user.uid, user.email, user.displayName || user.email, name.trim());
+      const id = await createWorkspace(
+        user.uid, user.email, user.displayName || user.email, name.trim(),
+        catName.trim() ? { name: catName.trim(), subcategoryName: subCatName.trim() || null } : null,
+      );
       if (taskText.trim()) {
         await addWorkspaceTask(id, {
           text: taskText.trim(), status: 'open', priority: 'high',
@@ -1369,8 +1400,12 @@ function WorkspaceSetup({ onCreated, onCancel, showToast, title }) {
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 6, marginBottom: 20, alignItems: 'center' }}>
-        {[{ n: 1, label: 'Name workspace' }, { n: 2, label: 'First task (optional)' }].map(({ n, label }) => (
+      <div style={{ display: 'flex', gap: 6, marginBottom: 20, alignItems: 'center', flexWrap: 'wrap' }}>
+        {[
+          { n: 1, label: 'Name workspace' },
+          { n: 2, label: 'Category (optional)' },
+          { n: 3, label: 'First task (optional)' },
+        ].map(({ n, label }) => (
           <div key={n} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <div style={{
               width: 22, height: 22, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1379,7 +1414,7 @@ function WorkspaceSetup({ onCreated, onCancel, showToast, title }) {
               color: step >= n ? '#fff' : '#475569',
             }}>{n}</div>
             <span style={{ fontSize: 12, color: step >= n ? '#7c3aed' : '#94a3b8', fontWeight: step === n ? 700 : 400 }}>{label}</span>
-            {n < 2 && <div style={{ width: 20, height: 1, background: step > n ? '#7c3aed' : '#e2e8f0', margin: '0 2px' }} />}
+            {n < 3 && <div style={{ width: 20, height: 1, background: step > n ? '#7c3aed' : '#e2e8f0', margin: '0 2px' }} />}
           </div>
         ))}
       </div>
@@ -1404,12 +1439,39 @@ function WorkspaceSetup({ onCreated, onCancel, showToast, title }) {
 
       {step === 2 && (
         <>
+          <label className="label" style={{ marginTop: 0 }}>Category (optional)</label>
+          <input className="input" placeholder="e.g. Credit & Underwriting"
+            value={catName} onChange={e => setCatName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && setStep(3)}
+            autoFocus style={{ marginBottom: 12 }}
+          />
+          <label className="label">Sub-category (optional)</label>
+          <input className="input" placeholder="e.g. Retail"
+            value={subCatName} onChange={e => setSubCatName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && setStep(3)}
+            disabled={!catName.trim()}
+            style={{ marginBottom: 16 }}
+          />
+          <p style={{ fontSize: 11, color: '#94a3b8', marginTop: -8, marginBottom: 16 }}>
+            You can add more categories and sub-categories later from the board.
+          </p>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn btn-outline" onClick={() => setStep(1)} style={{ flex: 1, justifyContent: 'center' }}>← Back</button>
+            <button className="btn btn-teal" onClick={() => setStep(3)} style={{ flex: 2, justifyContent: 'center' }}>
+              Continue →
+            </button>
+          </div>
+        </>
+      )}
+
+      {step === 3 && (
+        <>
           <textarea className="input" placeholder="e.g. Review pending loan applications… (optional)"
             value={taskText} onChange={e => setTaskText(e.target.value)}
             rows={3} autoFocus style={{ marginBottom: 16, resize: 'vertical', lineHeight: 1.6 }}
           />
           <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn btn-outline" onClick={() => setStep(1)} style={{ flex: 1, justifyContent: 'center' }}>← Back</button>
+            <button className="btn btn-outline" onClick={() => setStep(2)} style={{ flex: 1, justifyContent: 'center' }}>← Back</button>
             <button className="btn btn-teal" onClick={handleCreate} disabled={creating} style={{ flex: 2, justifyContent: 'center' }}>
               {creating ? 'Creating…' : <><Plus size={15} /> {taskText.trim() ? 'Create & Add Task' : 'Create Workspace'}</>}
             </button>
@@ -1447,7 +1509,8 @@ function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspac
         let newId;
         try {
           newId = await createWorkspace(
-            user.uid, user.email, user.displayName || user.email, wsOptions.newWorkspaceName
+            user.uid, user.email, user.displayName || user.email, wsOptions.newWorkspaceName,
+            wsOptions.newWorkspaceCategory || null,
           );
         } catch (err) {
           err.message = `Could not create workspace: ${err?.message || err}`;
@@ -1810,17 +1873,16 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
             <UserPlus size={13} /> Invite
           </button>
 
-          {/* Add Category (admin/creator only) — triggers the inline input
-              panel at the top of the board */}
-          {isAdmin && (
-            <button
-              onClick={() => { setExpanded(true); setShowAddCategory(true); }}
-              className="btn btn-sm btn-outline"
-              style={{ gap: 5 }}
-            >
-              <FolderPlus size={13} /> Add Category
-            </button>
-          )}
+          {/* Add Category — available to every workspace member (not just
+              admin/creator). Rename & delete remain admin-only. Triggers the
+              inline input panel at the top of the board. */}
+          <button
+            onClick={() => { setExpanded(true); setShowAddCategory(true); }}
+            className="btn btn-sm btn-outline"
+            style={{ gap: 5 }}
+          >
+            <FolderPlus size={13} /> Add Category
+          </button>
 
           {/* New task */}
           <button
@@ -1982,11 +2044,300 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
   );
 }
 
+// ── New Workspace Modal ───────────────────────────────────────────────────────
+//
+// Stand-alone "create a workspace" flow. Unlike the inline "+ New workspace"
+// chip inside AddTaskModal (which forces you to also create a task in the
+// same step), this modal creates just the workspace. Fields:
+//   - name (required)
+//   - description (optional)
+//   - initial category + sub-category (optional, seeds the board)
+//   - invite members (optional, pending invites are sent on save)
+//
+// On success: the new workspace is auto-expanded in the list (via
+// localStorage flag), a toast is shown, and onWorkspaceCreated fires.
+function NewWorkspaceModal({ onClose, onCreated, showToast, user }) {
+  const [name,        setName]        = useState('');
+  const [description, setDescription] = useState('');
+  const [catName,     setCatName]     = useState('');
+  const [subName,     setSubName]     = useState('');
+  const [saving,      setSaving]      = useState(false);
+
+  // Invitee chips + live email input
+  const [inviteInput,       setInviteInput]       = useState('');
+  const [inviteSuggestions, setInviteSuggestions] = useState([]);
+  const [invitees,          setInvitees]          = useState([]); // [{ email, name }]
+
+  const handleInviteInputChange = (val) => {
+    setInviteInput(val);
+    if (val.trim().length >= 2) {
+      searchOrgPeopleDebounced(val.trim()).then(results => setInviteSuggestions(results || []));
+    } else {
+      setInviteSuggestions([]);
+    }
+  };
+
+  const addInvitee = (email, displayName) => {
+    const clean = (email || '').trim().toLowerCase();
+    if (!clean) return;
+    if (clean === (user?.email || '').toLowerCase()) return; // creator is auto-admin
+    if (invitees.some(i => i.email === clean)) return;        // already added
+    setInvitees(prev => [...prev, { email: clean, name: displayName || clean.split('@')[0] }]);
+    setInviteInput('');
+    setInviteSuggestions([]);
+  };
+
+  const removeInvitee = (email) => {
+    setInvitees(prev => prev.filter(i => i.email !== email));
+  };
+
+  const handleInviteInputKey = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // Basic email validation before adding
+      const v = inviteInput.trim();
+      if (/^\S+@\S+\.\S+$/.test(v)) addInvitee(v);
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!name.trim()) return;
+    setSaving(true);
+    try {
+      const wsId = await createWorkspace(
+        user.uid, user.email, user.displayName || user.email,
+        name.trim(),
+        catName.trim() ? { name: catName.trim(), subcategoryName: subName.trim() || null } : null,
+        description.trim() || null,
+      );
+
+      // Auto-expand the newly created workspace so the creator can start
+      // adding tasks/categories right away.
+      try { localStorage.setItem(`ddiary_ws_${wsId}_expanded`, 'true'); } catch {}
+
+      // Fire invites (non-fatal — workspace is already created)
+      const inviteUrl = `${window.location.origin}?workspace=${wsId}`;
+      for (const inv of invitees) {
+        try {
+          const existing = await getExistingInvite(wsId, inv.email);
+          if (existing?.status === 'pending') continue;
+          await createWorkspaceInvite({
+            workspaceId:   wsId,
+            workspaceName: name.trim(),
+            inviterUid:    user.uid,
+            inviterEmail:  user.email,
+            inviterName:   user.displayName || user.email,
+            inviteeEmail:  inv.email,
+          });
+          // Pre-create pending member doc as fallback for claimPendingMemberships
+          await addWorkspaceMember(wsId, {
+            uid:         `pending_${inv.email.replace(/[^a-zA-Z0-9]/g, '_')}`,
+            email:       inv.email,
+            displayName: inv.name,
+            role:        'member',
+          });
+          // Email (best-effort)
+          try {
+            await notifyWorkspaceInvite({
+              inviteeEmail:  inv.email,
+              inviteeName:   inv.name,
+              inviterName:   user.displayName || user.email,
+              workspaceName: name.trim(),
+              inviteUrl,
+            });
+          } catch { /* non-fatal */ }
+        } catch (inviteErr) {
+          console.warn('createWorkspaceInvite failed for', inv.email, inviteErr);
+        }
+      }
+
+      if (onCreated) {
+        try { await onCreated(wsId); } catch { /* non-fatal */ }
+      }
+
+      if (showToast) {
+        const invitePart = invitees.length ? ` · ${invitees.length} invite${invitees.length > 1 ? 's' : ''} sent` : '';
+        showToast(`Workspace "${name.trim()}" created!${invitePart}`, 'success');
+      }
+      onClose();
+    } catch (e) {
+      logError(e, { location: 'KanbanBoard:NewWorkspaceModal', action: 'createWorkspace' });
+      const detail = e?.code === 'permission-denied'
+        ? 'Permission denied — Firestore rules may be out of date.'
+        : (e?.message || 'Unknown error');
+      if (showToast) showToast(`Failed to create workspace. ${detail}`, 'warning');
+      setSaving(false);
+    }
+  };
+
+  const inputStyle = {
+    width: '100%', padding: '10px 12px', border: '1px solid #cbd5e1', borderRadius: 8,
+    fontSize: 14, fontFamily: 'var(--font-body)', background: '#ffffff', color: '#0f172a',
+    boxSizing: 'border-box', outline: 'none',
+  };
+  const labelStyle = { fontSize: 12, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 6 };
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: 16, padding: 28, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Briefcase size={18} color="#7c3aed" />
+            <h3 style={{ margin: 0, color: '#0f172a', fontSize: 17, fontWeight: 700 }}>New Workspace</h3>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569' }}><X size={20} /></button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Workspace name */}
+          <div>
+            <label style={labelStyle}>Workspace name *</label>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g. Marketing Team, Q2 Projects…"
+              autoFocus
+              style={inputStyle}
+            />
+          </div>
+
+          {/* Description */}
+          <div>
+            <label style={labelStyle}>Description</label>
+            <textarea
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder="What's this workspace for? (optional)"
+              rows={2}
+              style={{ ...inputStyle, resize: 'vertical' }}
+            />
+          </div>
+
+          {/* Initial category + sub-category */}
+          <div style={{ background: '#f1f5f9', borderRadius: 10, padding: '12px 14px' }}>
+            <label style={{ ...labelStyle, marginBottom: 8 }}>
+              <Folder size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Seed category (optional)
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <input
+                value={catName}
+                onChange={e => setCatName(e.target.value)}
+                placeholder="Category (optional)"
+                style={{ ...inputStyle, fontSize: 13 }}
+              />
+              <input
+                value={subName}
+                onChange={e => setSubName(e.target.value)}
+                placeholder="Sub-category (optional)"
+                disabled={!catName.trim()}
+                style={{ ...inputStyle, fontSize: 13, opacity: catName.trim() ? 1 : 0.6 }}
+              />
+            </div>
+            <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 6, marginBottom: 0 }}>
+              You can add more categories later from the board.
+            </p>
+          </div>
+
+          {/* Invite members */}
+          <div style={{ background: '#f1f5f9', borderRadius: 10, padding: '12px 14px' }}>
+            <label style={{ ...labelStyle, marginBottom: 8 }}>
+              <UserPlus size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Invite members (optional)
+            </label>
+
+            {/* Selected invitee chips */}
+            {invitees.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                {invitees.map(inv => (
+                  <span key={inv.email} style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 4,
+                    padding: '4px 10px', background: '#7c3aed', color: '#fff',
+                    borderRadius: 20, fontSize: 12, fontWeight: 600,
+                  }}>
+                    {inv.name}
+                    <button
+                      type="button"
+                      onClick={() => removeInvitee(inv.email)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#fff', padding: 0, display: 'inline-flex' }}
+                      title="Remove"
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Input + suggestions */}
+            <div style={{ position: 'relative' }}>
+              <input
+                value={inviteInput}
+                onChange={e => handleInviteInputChange(e.target.value)}
+                onKeyDown={handleInviteInputKey}
+                placeholder="Type a name or email and pick from suggestions…"
+                style={{ ...inputStyle, fontSize: 13 }}
+              />
+              {inviteSuggestions.length > 0 && (
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, right: 0,
+                  background: '#fff', border: '1px solid #cbd5e1', borderRadius: 8,
+                  marginTop: 4, maxHeight: 200, overflowY: 'auto', zIndex: 10,
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                }}>
+                  {inviteSuggestions.map(p => (
+                    <button
+                      key={p.email}
+                      type="button"
+                      onClick={() => addInvitee(p.email, p.displayName)}
+                      style={{
+                        display: 'block', width: '100%', textAlign: 'left',
+                        padding: '8px 12px', background: 'none', border: 'none',
+                        cursor: 'pointer', fontSize: 13, color: '#0f172a',
+                        borderBottom: '1px solid #f1f5f9',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#f5eef8'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'none'}
+                    >
+                      <div style={{ fontWeight: 600 }}>{p.displayName || p.email}</div>
+                      {p.displayName && <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.email}</div>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <p style={{ fontSize: 11, color: '#94a3b8', marginTop: 6, marginBottom: 0 }}>
+              Invitees get an email + an in-app prompt to join. You can always invite more later.
+            </p>
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20 }}>
+          <button className="btn btn-outline" onClick={onClose} disabled={saving}>
+            <X size={14} /> Cancel
+          </button>
+          <button
+            className="btn btn-teal"
+            onClick={handleCreate}
+            disabled={saving || !name.trim()}
+            style={{
+              opacity: (saving || !name.trim()) ? 0.6 : 1,
+              cursor:  (saving || !name.trim()) ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {saving ? 'Creating…' : <><Plus size={14} /> Create Workspace</>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main KanbanBoard ──────────────────────────────────────────────────────────
 export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
   const { user } = useAuth();
   const { workspaces, loading: wsListLoading } = useMyWorkspaces();
-  const [showNewTask, setShowNewTask] = useState(false);
+  const [showNewTask,      setShowNewTask]      = useState(false);
+  const [showNewWorkspace, setShowNewWorkspace] = useState(false);
 
   if (wsListLoading) {
     return <div className="empty-state fade-in"><p>Loading workspaces…</p></div>;
@@ -1998,7 +2349,10 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
     let wsId = wsOptions.targetWorkspaceId || workspaces[0]?.id || null;
     try {
       if (wsOptions.newWorkspaceName) {
-        wsId = await createWorkspace(user.uid, user.email, user.displayName || user.email, wsOptions.newWorkspaceName);
+        wsId = await createWorkspace(
+          user.uid, user.email, user.displayName || user.email, wsOptions.newWorkspaceName,
+          wsOptions.newWorkspaceCategory || null,
+        );
         if (onWorkspaceCreated) {
           try { await onWorkspaceCreated(wsId); } catch { /* non-fatal */ }
         }
@@ -2038,9 +2392,19 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
         <h2 className="section-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           <Briefcase size={20} color="#7c3aed" /> Team Board
         </h2>
-        <button className="btn btn-teal" onClick={() => setShowNewTask(true)} style={{ gap: 5 }}>
-          <Plus size={14} /> New Task
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button
+            className="btn btn-outline"
+            onClick={() => setShowNewWorkspace(true)}
+            style={{ gap: 5 }}
+            title="Create a new workspace"
+          >
+            <Briefcase size={14} /> New Workspace
+          </button>
+          <button className="btn btn-teal" onClick={() => setShowNewTask(true)} style={{ gap: 5 }}>
+            <Plus size={14} /> New Task
+          </button>
+        </div>
       </div>
 
       {/* New Task modal */}
@@ -2051,6 +2415,16 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
           members={[]}
           workspaces={workspaces}
           showToast={showToast}
+        />
+      )}
+
+      {/* New Workspace modal */}
+      {showNewWorkspace && (
+        <NewWorkspaceModal
+          onClose={() => setShowNewWorkspace(false)}
+          onCreated={onWorkspaceCreated}
+          showToast={showToast}
+          user={user}
         />
       )}
 

@@ -317,12 +317,39 @@ export function useWorkspaceActivity(workspaceId, taskId) {
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
-export async function createWorkspace(uid, email, displayName, name) {
-  const ref = await addDoc(collection(db, 'workspaces'), {
+/**
+ * Create a workspace.
+ *
+ * `initialCategory` is optional. When supplied as { name, subcategoryName } it
+ * seeds the workspace's categories array with one category (and one optional
+ * sub-category) so the board opens with a real bucket from day one. Empty /
+ * whitespace-only names are ignored so the caller can pass blanks safely.
+ *
+ * `description` is optional. When supplied (non-empty string) it's stored as
+ * a free-text description on the workspace doc. This is shown as context in
+ * the workspace header for all members.
+ */
+export async function createWorkspace(uid, email, displayName, name, initialCategory = null, description = null) {
+  const payload = {
     name,
     createdBy: uid,
     createdAt: serverTimestamp(),
-  });
+  };
+
+  const desc = typeof description === 'string' ? description.trim() : '';
+  if (desc) payload.description = desc;
+
+  const catName = initialCategory?.name?.trim();
+  if (catName) {
+    const subName = initialCategory?.subcategoryName?.trim();
+    payload.categories = [{
+      id:   _newId('cat'),
+      name: catName,
+      subcategories: subName ? [{ id: _newId('sub'), name: subName }] : [],
+    }];
+  }
+
+  const ref = await addDoc(collection(db, 'workspaces'), payload);
   await setDoc(doc(db, 'workspaces', ref.id, 'members', uid), {
     uid, email, displayName,
     role: 'admin',
