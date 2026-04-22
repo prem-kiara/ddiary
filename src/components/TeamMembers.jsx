@@ -11,8 +11,9 @@ import {
   createWorkspaceInvite, getExistingInvite, addWorkspaceMember,
   usePendingLeaveRequests, requestLeave, approveLeave, denyLeave,
 } from '../hooks/useWorkspace';
-import { fetchAllOrgUsers } from '../utils/graphPeopleSearch';
+import { fetchAllOrgUsers, searchOrgPeopleDebounced } from '../utils/graphPeopleSearch';
 import { notifyWorkspaceInvite } from '../utils/emailNotifications';
+import { sendBatchInvites, summariseInviteResult } from '../utils/batchInvite';
 
 export default function TeamMembers({ showToast }) {
   const { user } = useAuth();
@@ -150,11 +151,17 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
   const [renameText, setRenameText] = useState('');
   const [copied,     setCopied]     = useState(false);
 
-  // Invite by email state
-  const [inviteEmail,     setInviteEmail]     = useState('');
-  const [inviteSending,   setInviteSending]   = useState(false);
-  const [inviteEmailSent, setInviteEmailSent] = useState(false);
-  const [inviteError,     setInviteError]     = useState('');
+  // ── Invite state (chips-based, batch send) ────────────────────────────
+  // `invitees` — list of chips staged for the next Send click
+  // `inviteInput` — current text in the search box
+  // `inviteSuggestions` — org-directory autocomplete results
+  // `inviteSummary` — inline status banner after the last Send
+  const [invitees,          setInvitees]          = useState([]);
+  const [inviteInput,       setInviteInput]       = useState('');
+  const [inviteSuggestions, setInviteSuggestions] = useState([]);
+  const [inviteSending,     setInviteSending]     = useState(false);
+  const [inviteSummary,     setInviteSummary]     = useState(null);
+  const [inviteError,       setInviteError]       = useState('');
 
   // Org directory state
   const [orgUsers,     setOrgUsers]     = useState([]);
@@ -265,48 +272,96 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
     finally { setLeaveAction(a => ({ ...a, [req.id]: undefined })); }
   };
 
-  // ── Email invite (uses workspaceInvites for accept/reject flow) ────────
-  const handleEmailInvite = async () => {
-    if (!inviteEmail.trim()) return;
+  // ── Chip helpers ──────────────────────────────────────────────────────
+  const handleInviteInputChange = (val) => {
+    setInviteInput(val);
+    setInviteError('');
+    if (val.trim().length >= 2) {
+      searchOrgPeopleDebounced(val.trim()).then(results => setInviteSuggestions(results || []));
+    } else {
+      setInviteSuggestions([]);
+    }
+  };
+
+  const addInviteChip = (email, displayName) => {
+    const clean = (email || '').trim().toLowerCase();
+    if (!clean) return;
+    if (!/^\S+@\S+\.\S+$/.test(clean)) {
+      setInviteError(`"${email}" isn't a valid email.`);
+      return;
+    }
+    if (invitees.some(i => i.email === clean)) {
+      setInviteError('Already added to this batch.');
+      return;
+    }
+    setInvitees(prev => [...prev, { email: clean, name: displayName || clean.split('@')[0] }]);
+    setInviteInput('');
+    setInviteSuggestions([]);
+    setInviteError('');
+  };
+
+  const removeInviteChip = (email) => {
+    setInvitees(prev => prev.filter(i => i.email !== email));
+  };
+
+  const selectInviteSuggestion = (person) => {
+    addInviteChip(person.email, person.displayName);
+  };
+
+  const handleInviteInputKey = (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      if (inviteInput.trim()) addInviteChip(inviteInput.trim());
+      else if (e.key === 'Enter' && invitees.length > 0 && !inviteSending) handleBatchInvite();
+    } else if (e.key === 'Backspace' && !inviteInput && invitees.length > 0) {
+      setInvitees(prev => prev.slice(0, -1));
+    } else if (e.key === 'Escape') {
+      setInviteSuggestions([]);
+    }
+  };
+
+  const handleInvitePaste = (e) => {
+    const text = (e.clipboardData || window.clipboardData)?.getData('text');
+    if (!text || !/[,;\s]/.test(text)) return;
+    e.preventDefault();
+    text.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean).forEach(p => addInviteChip(p));
+  };
+
+  // ── Batch invite (uses workspaceInvites for accept/reject flow) ────────
+  const handleBatchInvite = async () => {
+    // Commit any typed-but-not-yet-chipped text as a final chip
+    let pool = invitees;
+    if (inviteInput.trim()) {
+      const v = inviteInput.trim().toLowerCase();
+      if (/^\S+@\S+\.\S+$/.test(v) && !invitees.some(i => i.email === v)) {
+        pool = [...invitees, { email: v, name: v.split('@')[0] }];
+      }
+    }
+    if (pool.length === 0) {
+      setInviteError('Add at least one email to invite.');
+      return;
+    }
     setInviteSending(true);
     setInviteError('');
+    setInviteSummary(null);
     try {
-      const email = inviteEmail.trim().toLowerCase();
-
-      if (dedupedMembers.some(m => m.email?.toLowerCase() === email)) {
-        setInviteError('This person is already a member.');
-        return;
-      }
-      const existing = await getExistingInvite(workspaceId, email);
-      if (existing?.status === 'pending') {
-        setInviteError('An invite is already pending — waiting for their response.');
-        return;
-      }
-
-      await createWorkspaceInvite({
-        workspaceId, workspaceName: workspace.name,
-        inviterUid: user.uid, inviterEmail: user.email, inviterName: user.displayName || user.email,
-        inviteeEmail: email,
+      const result = await sendBatchInvites({
+        workspaceId,
+        workspaceName:   workspace?.name || 'Workspace',
+        inviter:         { uid: user.uid, email: user.email, displayName: user.displayName },
+        invitees:        pool,
+        existingMembers: dedupedMembers,
+        inviteUrl,
       });
-      // Keep pending member doc as fallback for claimPendingMemberships
-      await addWorkspaceMember(workspaceId, {
-        uid: `pending_${email.replace(/[^a-zA-Z0-9]/g, '_')}`,
-        email, displayName: email.split('@')[0], role: 'member',
-      });
-      try {
-        await notifyWorkspaceInvite({
-          inviteeEmail: email, inviteeName: email.split('@')[0],
-          inviterName: user.displayName || user.email,
-          workspaceName: workspace.name, inviteUrl,
-        });
-      } catch {}
-
-      showToast(`Invite sent to ${email}!`, 'success');
-      setInviteEmailSent(true);
-      setInviteEmail('');
-      setTimeout(() => setInviteEmailSent(false), 3000);
+      const text = summariseInviteResult(result);
+      const tone = result.sent.length > 0 ? 'success' : (result.failed.length > 0 ? 'error' : 'info');
+      setInviteSummary({ text, tone });
+      showToast(text, tone === 'error' ? 'warning' : 'success');
+      setInvitees([]);
+      setInviteInput('');
+      setInviteSuggestions([]);
     } catch {
-      setInviteError('Failed to send invite. Please try again.');
+      setInviteError('Failed to send invites. Please try again.');
     } finally {
       setInviteSending(false);
     }
@@ -432,28 +487,112 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
           <Link size={14} /> Invite
         </div>
 
-        {/* Email invite */}
-        <div style={{ display: 'flex', gap: 8, marginBottom: inviteError ? 6 : 10 }}>
-          <input type="email" value={inviteEmail}
-            onChange={e => { setInviteEmail(e.target.value); setInviteError(''); }}
-            onKeyDown={e => e.key === 'Enter' && handleEmailInvite()}
-            placeholder="colleague@company.com"
-            style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${inviteError ? '#dc262655' : '#cbd5e1'}`, background: '#fff', fontSize: 13, fontFamily: 'var(--font-body)', color: '#0f172a', outline: 'none' }}
-          />
-          <button className="btn btn-teal btn-sm" onClick={handleEmailInvite}
-            disabled={inviteSending || !inviteEmail.trim()} style={{ flexShrink: 0, minWidth: 80 }}>
-            {inviteEmailSent ? <><CheckCircle size={13} /> Sent!</>
-              : inviteSending ? '…'
-              : <><UserPlus size={13} /> Send</>}
-          </button>
+        {/* Chip-based batch invite */}
+        <div style={{ position: 'relative', marginBottom: inviteError ? 6 : 8 }}>
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center',
+            padding: '6px 8px', borderRadius: 8,
+            border: `1px solid ${inviteError ? '#dc262655' : '#cbd5e1'}`,
+            background: '#fff', minHeight: 40,
+          }}>
+            {invitees.map(inv => (
+              <span key={inv.email}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  background: '#ede9fe', color: '#6d28d9',
+                  padding: '3px 4px 3px 9px', borderRadius: 14,
+                  fontSize: 12, fontWeight: 600, maxWidth: '100%',
+                }}
+                title={inv.email}
+              >
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {inv.name && inv.name !== inv.email ? `${inv.name} · ${inv.email}` : inv.email}
+                </span>
+                <button
+                  onClick={() => removeInviteChip(inv.email)}
+                  title="Remove"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#6d28d9', display: 'flex', padding: 0 }}
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            ))}
+            <input type="text" value={inviteInput}
+              onChange={e => handleInviteInputChange(e.target.value)}
+              onKeyDown={handleInviteInputKey}
+              onPaste={handleInvitePaste}
+              onBlur={() => setTimeout(() => setInviteSuggestions([]), 150)}
+              placeholder={invitees.length ? 'Add another…' : 'Search name or email — Enter to add, paste a list to bulk-add'}
+              autoComplete="off"
+              style={{
+                flex: '1 1 180px', minWidth: 140,
+                padding: '6px 4px', border: 'none', outline: 'none',
+                background: 'transparent', fontSize: 13,
+                fontFamily: 'var(--font-body)', color: '#0f172a',
+              }}
+            />
+          </div>
+
+          {/* Autocomplete dropdown */}
+          {inviteSuggestions.length > 0 && (
+            <div style={{
+              position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
+              background: '#fff', border: '1px solid #cbd5e1', borderRadius: 8,
+              boxShadow: '0 4px 16px rgba(0,0,0,0.12)', marginTop: 2, overflow: 'hidden',
+            }}>
+              {inviteSuggestions.map(person => (
+                <div key={person.id || person.email}
+                  onMouseDown={() => selectInviteSuggestion(person)}
+                  style={{ padding: '8px 12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 1, borderBottom: '1px solid #f1f5f9' }}
+                  onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
+                  onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{person.displayName}</span>
+                  <span style={{ fontSize: 11, color: '#475569' }}>{person.email}</span>
+                  {person.jobTitle && <span style={{ fontSize: 11, color: '#94a3b8' }}>{person.jobTitle}</span>}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
+
+        {/* Send / Clear row */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: inviteSummary ? 10 : 8 }}>
+          <button className="btn btn-teal btn-sm" onClick={handleBatchInvite}
+            disabled={inviteSending || (invitees.length === 0 && !inviteInput.trim())}
+            style={{ flexShrink: 0, minWidth: 120 }}>
+            {inviteSending ? '…' : <><UserPlus size={13} /> Send{invitees.length > 1 ? ` ${invitees.length} invites` : ' invite'}</>}
+          </button>
+          {invitees.length > 0 && (
+            <button onClick={() => { setInvitees([]); setInviteSummary(null); }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', fontSize: 12 }}>
+              Clear list
+            </button>
+          )}
+        </div>
+
+        {/* Result banner */}
+        {inviteSummary && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            fontSize: 12, fontWeight: 600,
+            color: inviteSummary.tone === 'success' ? '#15803d'
+                 : inviteSummary.tone === 'error'   ? '#dc2626'
+                 : '#d97706',
+            marginBottom: 10,
+          }}>
+            {inviteSummary.tone === 'success' ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
+            {inviteSummary.text}
+          </div>
+        )}
+
         {inviteError && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#dc2626', marginBottom: 8 }}>
             <AlertTriangle size={12} /> {inviteError}
           </div>
         )}
         <p style={{ fontSize: 11, color: '#94a3b8', margin: '0 0 10px' }}>
-          They'll receive an in-app prompt to accept or decline.
+          Add people as chips, then click Send. People already in the workspace or with a pending invite are skipped automatically.
         </p>
 
         {/* Copy link divider */}

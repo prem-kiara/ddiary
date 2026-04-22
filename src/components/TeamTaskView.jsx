@@ -366,8 +366,15 @@ export default function TeamTaskView({ showToast } = {}) {
       phone: u.phone || null,
     })), [orgUsers]);
 
-  const pending    = tasks.filter(t => (t.status || 'open') !== 'done' && !t.completed);
-  const completed  = tasks.filter(t => (t.status === 'done') || t.completed);
+  // Sort by due date ascending; tasks with no due date go to the bottom.
+  const byDueDateAsc = (a, b) => {
+    const ad = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+    const bd = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+    return ad - bd;
+  };
+
+  const pending    = tasks.filter(t => (t.status || 'open') !== 'done' && !t.completed).sort(byDueDateAsc);
+  const completed  = tasks.filter(t => (t.status === 'done') || t.completed).sort(byDueDateAsc);
 
   const [showPending, setShowPending] = useState(true);
   const [showDone,    setShowDone]    = useState(false);

@@ -889,7 +889,13 @@ export default function TaskManager({
       const bd = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
       return ad - bd;
     });
-  const completedTasks = tasks.filter(t => t.completed);
+  const completedTasks = tasks
+    .filter(t => t.completed)
+    .sort((a, b) => {
+      const ad = a.dueDate ? new Date(a.dueDate).getTime() : Infinity;
+      const bd = b.dueDate ? new Date(b.dueDate).getTime() : Infinity;
+      return ad - bd;
+    });
   const completedCount = completedTasks.length;
 
   // ── Add task (personal — minimal payload) ──────────────────────────────

@@ -26,6 +26,7 @@ import { fetchAllOrgUsers, searchOrgPeopleDebounced } from '../utils/graphPeople
 import Avatar from './shared/Avatar';
 import { StatusPill, PriorityPill } from './shared/Pills';
 import { formatShortStamp, elapsedSince } from '../utils/dates';
+import { sendBatchInvites, summariseInviteResult } from '../utils/batchInvite';
 
 // ── Status config ─────────────────────────────────────────────────────────────
 const STATUSES = [
@@ -1660,16 +1661,21 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
   // Members are always loaded (shown in header chip row)
   const { members, loading: membersLoading } = useWorkspace(workspace.id);
 
-  // Invite state
-  const [inviteEmail,       setInviteEmail]       = useState('');
+  // ── Invite state (chips-based, batch send) ──────────────────────────────
+  // `invitees` — list of chips staged for the next Send click: [{email,name}]
+  // `inviteInput` — text currently typed into the search box
+  // `inviteSuggestions` — org-directory autocomplete results
+  // `inviteSummary` — last Send result (for the inline status banner)
+  const [invitees,          setInvitees]          = useState([]);
+  const [inviteInput,       setInviteInput]       = useState('');
   const [inviteSending,     setInviteSending]     = useState(false);
-  const [inviteEmailSent,   setInviteEmailSent]   = useState(false);
+  const [inviteSummary,     setInviteSummary]     = useState(null); // { text, tone }
   const [inviteError,       setInviteError]       = useState('');
   const [copied,            setCopied]            = useState(false);
   const [inviteSuggestions, setInviteSuggestions] = useState([]);
 
   const handleInviteInputChange = (val) => {
-    setInviteEmail(val);
+    setInviteInput(val);
     setInviteError('');
     if (val.trim().length >= 2) {
       searchOrgPeopleDebounced(val.trim()).then(results => setInviteSuggestions(results || []));
@@ -1678,9 +1684,52 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
     }
   };
 
-  const selectInviteSuggestion = (person) => {
-    setInviteEmail(person.email);
+  const addInviteChip = (email, displayName) => {
+    const clean = (email || '').trim().toLowerCase();
+    if (!clean) return;
+    if (!/^\S+@\S+\.\S+$/.test(clean)) {
+      setInviteError(`"${email}" isn't a valid email.`);
+      return;
+    }
+    if (invitees.some(i => i.email === clean)) {
+      setInviteError('Already added to this batch.');
+      return;
+    }
+    setInvitees(prev => [...prev, { email: clean, name: displayName || clean.split('@')[0] }]);
+    setInviteInput('');
     setInviteSuggestions([]);
+    setInviteError('');
+  };
+
+  const removeInviteChip = (email) => {
+    setInvitees(prev => prev.filter(i => i.email !== email));
+  };
+
+  const selectInviteSuggestion = (person) => {
+    addInviteChip(person.email, person.displayName);
+  };
+
+  // Enter / comma commit the current text as a chip; Backspace on an empty
+  // input removes the last chip (standard email-chips UX).
+  const handleInviteInputKey = (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      if (inviteInput.trim()) addInviteChip(inviteInput.trim());
+      else if (e.key === 'Enter' && invitees.length > 0 && !inviteSending) handleBatchInvite();
+    } else if (e.key === 'Backspace' && !inviteInput && invitees.length > 0) {
+      setInvitees(prev => prev.slice(0, -1));
+    } else if (e.key === 'Escape') {
+      setInviteSuggestions([]);
+    }
+  };
+
+  // Paste-safe: if user pastes "a@x.com, b@x.com; c@x.com" we add them all.
+  const handleInvitePaste = (e) => {
+    const text = (e.clipboardData || window.clipboardData)?.getData('text');
+    if (!text || !/[,;\s]/.test(text)) return; // plain single-email paste: let onChange handle
+    e.preventDefault();
+    const parts = text.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+    parts.forEach(p => addInviteChip(p));
   };
 
   // Rename state
@@ -1721,61 +1770,46 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
     }
   };
 
-  const handleEmailInvite = async () => {
-    if (!inviteEmail.trim()) return;
+  const handleBatchInvite = async () => {
+    // Commit any pending text as a final chip before sending, so the user
+    // doesn't have to explicitly press Enter first.
+    let pool = invitees;
+    if (inviteInput.trim()) {
+      const v = inviteInput.trim().toLowerCase();
+      if (/^\S+@\S+\.\S+$/.test(v) && !invitees.some(i => i.email === v)) {
+        pool = [...invitees, { email: v, name: v.split('@')[0] }];
+      }
+    }
+    if (pool.length === 0) {
+      setInviteError('Add at least one email to invite.');
+      return;
+    }
+
     setInviteSending(true);
     setInviteError('');
+    setInviteSummary(null);
     try {
-      const email = inviteEmail.trim().toLowerCase();
-
-      // Guard: already a real member?
-      if (members.some(m => m.email?.toLowerCase() === email)) {
-        setInviteError('This person is already a member of this workspace.');
-        return;
-      }
-
-      // Guard: pending invite already exists?
-      const existing = await getExistingInvite(workspace.id, email);
-      if (existing?.status === 'pending') {
-        setInviteError('An invite is already pending — waiting for them to respond.');
-        return;
-      }
-
-      // Create invite doc (overwrites any prior 'rejected' invite)
-      await createWorkspaceInvite({
-        workspaceId:   workspace.id,
-        workspaceName: workspace.name,
-        inviterUid:    user.uid,
-        inviterEmail:  user.email,
-        inviterName:   user.displayName || user.email,
-        inviteeEmail:  email,
+      const result = await sendBatchInvites({
+        workspaceId:     workspace.id,
+        workspaceName:   workspace.name,
+        inviter:         { uid: user.uid, email: user.email, displayName: user.displayName },
+        invitees:        pool,
+        existingMembers: members,
+        inviteUrl,
       });
-
-      // Also pre-create pending member doc as fallback for claimPendingMemberships
-      await addWorkspaceMember(workspace.id, {
-        uid:         `pending_${email.replace(/[^a-zA-Z0-9]/g, '_')}`,
-        email,
-        displayName: email.split('@')[0],
-        role:        'member',
-      });
-
-      // Send email — non-fatal if it fails
-      try {
-        await notifyWorkspaceInvite({
-          inviteeEmail:  email,
-          inviteeName:   email.split('@')[0],
-          inviterName:   user.displayName || user.email,
-          workspaceName: workspace.name,
-          inviteUrl,
-        });
-      } catch { /* email failure is non-fatal — the invite doc is already created */ }
-
-      if (showToast) showToast(`Invite sent to ${email}!`, 'success');
-      setInviteEmailSent(true);
-      setInviteEmail('');
-      setTimeout(() => setInviteEmailSent(false), 3000);
-    } catch {
-      setInviteError('Failed to send invite — please try again.');
+      const text = summariseInviteResult(result);
+      // Tone: green if anything sent, amber if nothing sent but invitees were skipped, red on hard failures only.
+      const tone = result.sent.length > 0 ? 'success' : (result.failed.length > 0 ? 'error' : 'info');
+      setInviteSummary({ text, tone });
+      if (showToast) showToast(text, tone === 'error' ? 'warning' : 'success');
+      // Clear chips + input once the batch goes through. Any failed emails
+      // are listed in the inline summary so the user can retry by typing.
+      setInvitees([]);
+      setInviteInput('');
+      setInviteSuggestions([]);
+    } catch (e) {
+      logError(e, { location: 'WorkspaceItem:handleBatchInvite' }, user.uid);
+      setInviteError('Failed to send invites — please try again.');
     } finally {
       setInviteSending(false);
     }
@@ -1911,44 +1945,76 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
         </div>
       </div>
 
-      {/* ── Invite panel ──────────────────────────────────────────────────────── */}
+      {/* ── Invite panel (chips-based, batch send) ──────────────────────────── */}
       {showInvite && (
         <div style={{ padding: '14px 18px', background: '#eff6ff', borderBottom: expanded ? '1px solid #e2e8f0' : 'none' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <div style={{ fontWeight: 700, fontSize: 13, color: '#2563eb', display: 'flex', alignItems: 'center', gap: 6 }}>
               <UserPlus size={14} /> Invite to <strong>{workspace.name}</strong>
+              {invitees.length > 0 && (
+                <span style={{ fontSize: 11, color: '#2563eb', background: '#dbeafe', padding: '1px 7px', borderRadius: 10, fontWeight: 600 }}>
+                  {invitees.length} ready
+                </span>
+              )}
             </div>
-            <button onClick={() => { setShowInvite(false); setInviteError(''); setInviteEmail(''); }}
+            <button onClick={() => { setShowInvite(false); setInviteError(''); setInviteInput(''); setInvitees([]); setInviteSummary(null); }}
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', display: 'flex' }}>
               <X size={16} />
             </button>
           </div>
 
-          {/* Email input with org autocomplete */}
+          {/* Chips + input + autocomplete */}
           <div style={{ position: 'relative', marginBottom: inviteError ? 6 : 10 }}>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{
+              display: 'flex', flexWrap: 'wrap', gap: 6,
+              alignItems: 'center', padding: '6px 8px',
+              borderRadius: 8, border: `1px solid ${inviteError ? '#dc262666' : '#2563eb44'}`,
+              background: '#fff', minHeight: 40,
+            }}>
+              {invitees.map(inv => (
+                <span key={inv.email}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    background: '#dbeafe', color: '#1d4ed8',
+                    padding: '3px 4px 3px 9px', borderRadius: 14,
+                    fontSize: 12, fontWeight: 600, maxWidth: '100%',
+                  }}
+                  title={inv.email}
+                >
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {inv.name && inv.name !== inv.email ? `${inv.name} · ${inv.email}` : inv.email}
+                  </span>
+                  <button
+                    onClick={() => removeInviteChip(inv.email)}
+                    title="Remove"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#1d4ed8', display: 'flex', padding: 0 }}
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              ))}
               <input
                 type="text"
-                value={inviteEmail}
+                value={inviteInput}
                 onChange={e => handleInviteInputChange(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { setInviteSuggestions([]); handleEmailInvite(); } if (e.key === 'Escape') setInviteSuggestions([]); }}
+                onKeyDown={handleInviteInputKey}
+                onPaste={handleInvitePaste}
                 onBlur={() => setTimeout(() => setInviteSuggestions([]), 150)}
-                placeholder="Search by name or email…"
+                placeholder={invitees.length ? 'Add another…' : 'Search name or email — Enter to add, paste a list to bulk-add'}
                 autoComplete="off"
-                style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: `1px solid ${inviteError ? '#dc262666' : '#2563eb44'}`, background: '#fff', fontSize: 13, fontFamily: 'var(--font-body)', color: '#0f172a', outline: 'none' }}
+                style={{
+                  flex: '1 1 180px', minWidth: 140,
+                  padding: '6px 4px', border: 'none', outline: 'none',
+                  background: 'transparent', fontSize: 13, color: '#0f172a',
+                  fontFamily: 'var(--font-body)',
+                }}
               />
-              <button className="btn btn-sm btn-teal" onClick={() => { setInviteSuggestions([]); handleEmailInvite(); }}
-                disabled={inviteSending || !inviteEmail.trim()} style={{ flexShrink: 0, minWidth: 80 }}>
-                {inviteEmailSent ? <><CheckIcon size={13} /> Sent!</>
-                  : inviteSending ? '…'
-                  : <><Send size={13} /> Send</>}
-              </button>
             </div>
 
             {/* Autocomplete dropdown */}
             {inviteSuggestions.length > 0 && (
               <div style={{
-                position: 'absolute', top: '100%', left: 0, right: 90, zIndex: 200,
+                position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 200,
                 background: '#fff', border: '1px solid #cbd5e1', borderRadius: 8,
                 boxShadow: '0 4px 16px rgba(0,0,0,0.12)', marginTop: 2, overflow: 'hidden',
               }}>
@@ -1969,6 +2035,36 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
             )}
           </div>
 
+          {/* Send / clear row */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: inviteSummary ? 10 : 6, alignItems: 'center' }}>
+            <button className="btn btn-sm btn-teal" onClick={handleBatchInvite}
+              disabled={inviteSending || (invitees.length === 0 && !inviteInput.trim())}
+              style={{ flexShrink: 0, minWidth: 120 }}>
+              {inviteSending ? '…' : <><Send size={13} /> Send{invitees.length > 1 ? ` ${invitees.length} invites` : ' invite'}</>}
+            </button>
+            {invitees.length > 0 && (
+              <button onClick={() => { setInvitees([]); setInviteSummary(null); }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', fontSize: 12 }}>
+                Clear list
+              </button>
+            )}
+          </div>
+
+          {/* Inline result banner — green on success, amber when everyone was skipped */}
+          {inviteSummary && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              fontSize: 12, fontWeight: 600,
+              color: inviteSummary.tone === 'success' ? '#15803d'
+                   : inviteSummary.tone === 'error'   ? '#dc2626'
+                   : '#d97706',
+              marginBottom: 10,
+            }}>
+              {inviteSummary.tone === 'success' ? <CheckIcon size={13} /> : <AlertTriangle size={13} />}
+              {inviteSummary.text}
+            </div>
+          )}
+
           {/* Inline error */}
           {inviteError && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#dc2626', marginBottom: 10 }}>
@@ -1978,7 +2074,7 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
 
           {/* Help text */}
           <p style={{ fontSize: 11, color: '#6a9fd4', marginBottom: 10, marginTop: 0 }}>
-            They'll receive an invite they can accept or decline.
+            Add people as chips, then click Send. They'll each receive an invite they can accept or decline. People already in the workspace or with a pending invite are skipped automatically.
           </p>
 
           {/* Divider */}
@@ -2335,7 +2431,12 @@ function NewWorkspaceModal({ onClose, onCreated, showToast, user }) {
 // ── Main KanbanBoard ──────────────────────────────────────────────────────────
 export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
   const { user } = useAuth();
-  const { workspaces, loading: wsListLoading } = useMyWorkspaces();
+  const { workspaces: rawWorkspaces, loading: wsListLoading } = useMyWorkspaces();
+  // Sort workspaces alphabetically by name (case-insensitive, locale-aware).
+  // Using a stable shallow copy so we don't mutate the hook's array.
+  const workspaces = [...(rawWorkspaces || [])].sort((a, b) =>
+    (a?.name || '').localeCompare(b?.name || '', undefined, { sensitivity: 'base' })
+  );
   const [showNewTask,      setShowNewTask]      = useState(false);
   const [showNewWorkspace, setShowNewWorkspace] = useState(false);
 
