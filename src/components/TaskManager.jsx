@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import {
-  Plus, Bell, Calendar, CheckSquare, Edit2, Check, X,
+  Plus, Bell, BellOff, Calendar, CheckSquare, Edit2, Check, X,
   User, Link, Mail, MessageCircle, ChevronDown, ChevronRight,
   CheckCircle, UserPlus, Send, ArrowUpRight, Clock,
 } from 'lucide-react';
 import { formatDate, isOverdue, isDueToday, toDateInputValue, formatShortStamp, elapsedSince } from '../utils/dates';
 import { useAuth } from '../contexts/AuthContext';
-import { useUserDirectory } from '../hooks/useFirestore';
+import { useUserDirectory, useTeamMembers } from '../hooks/useFirestore';
 import TaskCollabPanel, { StatusBadge } from './TaskCollabPanel';
 import { useTaskComments } from '../hooks/useFirestore';
 import {
@@ -17,7 +17,9 @@ import {
 import { notifyWorkspaceInvite, notifyTaskAssigned } from '../utils/emailNotifications';
 import MemberAutocomplete from './shared/MemberAutocomplete';
 import SectionHeader from './shared/SectionHeader';
+import ReminderEditor from './shared/ReminderEditor';
 import { fetchAllOrgUsers } from '../utils/graphPeopleSearch';
+import { normalizeReminder, computeNextSendAt, describeSchedule, describeNextSend } from '../utils/reminders';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const priorityColors = { high: '#dc2626', medium: '#d97706', low: '#15803d' };
@@ -425,6 +427,7 @@ function TaskCard({
   onToggle, onUpdate, onDelete,
   showToast, ownerUid,
   workspaces, hasWorkspace, orgAssignees,
+  saveContactPhone,   // NEW — used to silently persist phone overrides from the Assign panel
 }) {
   const { user } = useAuth();
   const overdue   = !task.completed && isOverdue(task.dueDate);
@@ -436,7 +439,12 @@ function TaskCard({
   // Expand / collapse
   const [expanded,    setExpanded]    = useState(false);
   // Which panel is open inside the expanded area
-  const [panel,       setPanel]       = useState(null); // 'edit' | 'assign' | 'collab' | 'move'
+  const [panel,       setPanel]       = useState(null); // 'edit' | 'assign' | 'collab' | 'move' | 'reminder'
+  // Reminder editor state (live-edits the reminder object until user saves it)
+  // Guard against legacy `reminder: true` boolean value on old task docs.
+  const taskReminder = task.reminder && typeof task.reminder === 'object' ? task.reminder : null;
+  const [reminderDraft, setReminderDraft] = useState(taskReminder);
+  const [reminderSaving, setReminderSaving] = useState(false);
 
   // Edit state
   const [editText,     setEditText]     = useState(task.text);
@@ -500,6 +508,7 @@ function TaskCard({
     }
     setAssignSaving(true);
     const emailKey = assignEmail.trim().toLowerCase();
+    const trimmedPhone = assignPhone.trim();
     const linked   = selectedMember || members.find(m => m.email?.toLowerCase() === emailKey);
     const dirEntry = directory.find(d => d.email?.toLowerCase() === emailKey);
     const assigneeUid = linked?.uid || dirEntry?.uid || null;
@@ -507,10 +516,16 @@ function TaskCard({
       await onUpdate(task.id, {
         assigneeName:       assignName.trim(),
         assigneeEmail:      emailKey,
-        assigneePhone:      assignPhone.trim(),
+        assigneePhone:      trimmedPhone,
         scheduledEmailTime: scheduleTime || null,
         assigneeUid,
       });
+      // Silently persist the phone as an override in the personal Contacts list
+      // so future assignments to the same person auto-fill with this number
+      // instead of the stale Graph directory value.
+      if (emailKey && trimmedPhone && saveContactPhone) {
+        saveContactPhone(emailKey, assignName.trim() || emailKey, trimmedPhone).catch(() => {});
+      }
       showToast(assigneeUid ? "Assigned! They'll see this in their dashboard." : 'Assignment saved!', 'success');
       setPanel(null);
     } catch { showToast('Failed to save assignment.', 'warning'); }
@@ -583,6 +598,19 @@ function TaskCard({
               {task.text}
             </span>
             {task.status && task.status !== 'open' && <StatusBadge status={task.status} />}
+            {taskReminder?.enabled && !taskReminder?.paused && (
+              <span
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                  background: '#ede9fe', color: '#6d28d9',
+                  fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
+                  border: '1px solid #c4b5fd55',
+                }}
+                title={`${describeSchedule(taskReminder)}${taskReminder.nextSendAt ? ` · next ${describeNextSend(taskReminder.nextSendAt, taskReminder.timezone)}` : ''}`}
+              >
+                <Bell size={9} /> {taskReminder.nextSendAt ? describeNextSend(taskReminder.nextSendAt, taskReminder.timezone) : 'scheduled'}
+              </span>
+            )}
             <CommentBadge ownerUid={ownerUid} taskId={task.id} />
             {isLinked && (
               <span style={{
@@ -685,6 +713,13 @@ function TaskCard({
                 <Edit2 size={12} /> Edit
               </button>
               <button
+                className={`btn btn-sm ${panel === 'reminder' ? 'btn-teal' : 'btn-outline'}`}
+                onClick={() => { setReminderDraft(taskReminder); openPanel('reminder'); }}
+                title={taskReminder?.enabled ? 'Edit recurring email reminder' : 'Set up recurring email reminder'}
+              >
+                <Bell size={12} /> {taskReminder?.enabled ? 'Reminder ✓' : 'Reminder'}
+              </button>
+              <button
                 className={`btn btn-sm ${panel === 'collab' ? 'btn-teal' : 'btn-outline'}`}
                 onClick={() => openPanel('collab')}
               >
@@ -772,7 +807,18 @@ function TaskCard({
                   <MemberAutocomplete
                     value={assignName}
                     onChange={setAssignName}
-                    onSelect={m => { setSelectedMember(m); setAssignName(m.name); setAssignEmail(m.email || ''); setAssignPhone(m.phone || ''); }}
+                    onSelect={m => {
+                      // Prefer saved phone override (from Contacts) over the
+                      // value the autocomplete returned. This is how the
+                      // "refreshed" numbers stick across assignments.
+                      const override = members.find(
+                        mm => mm.email?.toLowerCase() === m.email?.toLowerCase()
+                      )?.phone;
+                      setSelectedMember(m);
+                      setAssignName(m.name);
+                      setAssignEmail(m.email || '');
+                      setAssignPhone(override || m.phone || '');
+                    }}
                     members={members}
                     placeholder="Search team…"
                   />
@@ -812,6 +858,51 @@ function TaskCard({
             </div>
           )}
 
+          {/* ── Reminder panel ─────────────────────────────────────── */}
+          {panel === 'reminder' && (
+            <div style={{ padding: '0 12px 14px' }}>
+              <div style={{ height: 1, background: '#e2e8f0', marginBottom: 12 }} />
+              <ReminderEditor
+                value={reminderDraft}
+                onChange={setReminderDraft}
+                timezone={user?.settings?.timezone
+                  || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'Asia/Kolkata')
+                  || 'Asia/Kolkata'}
+                creatorEmail={user?.email}
+                creatorName={user?.displayName || user?.email}
+              />
+              <div className="modal-actions" style={{ marginTop: 12 }}>
+                <button className="btn btn-sm btn-outline" onClick={() => { setReminderDraft(taskReminder); setPanel(null); }}>
+                  <X size={13} /> Cancel
+                </button>
+                <button
+                  className="btn btn-sm btn-teal"
+                  disabled={reminderSaving}
+                  onClick={async () => {
+                    setReminderSaving(true);
+                    try {
+                      // Normalize + compute next-send one more time before persisting.
+                      let payload = reminderDraft ? normalizeReminder(reminderDraft, {
+                        timezone: user?.settings?.timezone,
+                        creatorEmail: user?.email,
+                        creatorName:  user?.displayName || user?.email,
+                      }) : null;
+                      if (payload) payload.nextSendAt = computeNextSendAt(payload);
+                      await onUpdate(task.id, { reminder: payload });
+                      showToast('Reminder saved!', 'success');
+                      setPanel(null);
+                    } catch {
+                      showToast('Failed to save reminder.', 'warning');
+                    }
+                    setReminderSaving(false);
+                  }}
+                >
+                  <Check size={13} /> {reminderSaving ? 'Saving…' : 'Save Reminder'}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* ── Move to Team Board panel ───────────────────────────── */}
           {panel === 'move' && (
             <MoveToBoard
@@ -838,6 +929,9 @@ export default function TaskManager({
   const { user } = useAuth();
   const { directory } = useUserDirectory(user?.uid);
   const { workspaces } = useMyWorkspaces();
+  // Personal contact overrides (phone book) — used to silently persist edited
+  // phones and merge them into the assign dropdown via phoneOverrides above.
+  const { saveContactPhone } = useTeamMembers();
   const firstWs = workspaces[0] || null;
 
   // ── Org users from M365 ─────────────────────────────────────────────────
@@ -847,9 +941,35 @@ export default function TaskManager({
   }, []);
 
   // Merged assignee list: Firestore members (have UIDs) + M365 org users, deduped by email
+  // Phone-override map built from the personal Contacts list. When assigning
+  // a task, any saved override takes precedence over the Graph directory
+  // value. Keys are lowercased emails.
+  const phoneOverrides = useMemo(() => {
+    const map = new Map();
+    for (const m of members) {
+      const key = m.email?.toLowerCase();
+      if (key && m.phone) map.set(key, m.phone);
+    }
+    return map;
+  }, [members]);
+
   const assigneeOptions = useMemo(() => {
     const seen = new Set();
     const combined = [];
+    // Graph directory users first — they have names, job titles, UIDs
+    for (const u of orgUsers) {
+      const key = u.email?.toLowerCase();
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        combined.push({
+          email: u.email,
+          name:  u.displayName,
+          uid:   null,
+          phone: phoneOverrides.get(key) || u.phone || null,
+        });
+      }
+    }
+    // Then any saved contacts that weren't in the directory (e.g. external people)
     for (const m of members) {
       const key = m.email?.toLowerCase();
       if (key && !seen.has(key)) {
@@ -857,15 +977,8 @@ export default function TaskManager({
         combined.push({ email: m.email, name: m.name, uid: m.uid || null, phone: m.phone || null });
       }
     }
-    for (const u of orgUsers) {
-      const key = u.email?.toLowerCase();
-      if (key && !seen.has(key)) {
-        seen.add(key);
-        combined.push({ email: u.email, name: u.displayName, uid: null, phone: u.phone || null });
-      }
-    }
     return combined;
-  }, [members, orgUsers]);
+  }, [members, orgUsers, phoneOverrides]);
 
   // ── Add form state (personal tasks — text-only) ─────────────────────────
   const [newText, setNewText] = useState('');
@@ -928,6 +1041,7 @@ export default function TaskManager({
     workspaces,
     hasWorkspace:     workspaces.length > 0,
     orgAssignees:     assigneeOptions,
+    saveContactPhone,
   };
 
   return (

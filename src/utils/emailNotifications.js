@@ -271,6 +271,71 @@ export async function notifyTaskReassigned({
 }
 
 /**
+ * 7. Recurring Task Reminder — fired by the client-side dispatcher
+ *    (useReminderDispatcher) when a task's reminder.nextSendAt elapses.
+ *
+ *    Sent from the dispatching user's M365 mailbox via Graph sendMail.
+ *    Normally the dispatcher is the task creator, so "from = creator" lines
+ *    up naturally; recipients default to creator + assignee, de-duped.
+ */
+export async function notifyTaskReminder({
+  recipients,       // array of email strings (already de-duped + lowercased)
+  taskText,
+  dueDate,
+  priority,
+  assigneeName,
+  ownerName,
+  notes,
+  scheduleLabel,    // e.g. "Mon/Wed/Fri at 09:00"
+  taskUrl,          // optional deep link back to the task
+}) {
+  if (!recipients || !recipients.length) return false;
+
+  const dueBlock = dueDate
+    ? `<p style="font-size: 13px; color: #475569; margin: 8px 0 0;">${priorityBadge(priority)} &nbsp; Due: ${formatDue(dueDate)}</p>`
+    : `<p style="font-size: 13px; color: #475569; margin: 8px 0 0;">${priorityBadge(priority)}</p>`;
+
+  const assigneeLine = assigneeName
+    ? `<p style="font-size: 13px; color: #64748b; margin: 4px 0 0;">Assigned to: <strong style="color: #0f172a;">${assigneeName}</strong></p>`
+    : '';
+
+  const notesBlock = notes
+    ? `<div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; margin: 16px 0;">
+         <p style="font-size: 12px; font-weight: 600; color: #475569; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.04em;">Notes</p>
+         <p style="font-size: 14px; color: #0f172a; margin: 0; line-height: 1.6; white-space: pre-wrap;">${notes}</p>
+       </div>`
+    : '';
+
+  const scheduleBlock = scheduleLabel
+    ? `<p style="font-size: 12px; color: #94a3b8; margin: 16px 0 0; text-align: center;">
+         ⏰ ${scheduleLabel}${ownerName ? ` · set by ${ownerName}` : ''}
+       </p>`
+    : '';
+
+  const body = `
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
+      This is your recurring reminder for the following task:
+    </p>
+    <div style="background: #f5f3ff; border-left: 4px solid #6d28d9; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
+      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0;">${taskText}</p>
+      ${dueBlock}
+      ${assigneeLine}
+    </div>
+    ${notesBlock}
+    <a href="${taskUrl || APP_URL}" style="display: inline-block; background: #6d28d9; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+      Open in DDiary
+    </a>
+    ${scheduleBlock}
+  `;
+
+  return sendEmail({
+    to: recipients.join(','),
+    subject: `⏰ Reminder: ${String(taskText).slice(0, 55)}`,
+    htmlBody: wrapHtml('Task Reminder', body),
+  });
+}
+
+/**
  * 6. New Comment — sent to the other party when someone comments on a task.
  */
 export async function notifyNewComment({ recipientEmail, recipientName, commenterName, taskText, commentText }) {

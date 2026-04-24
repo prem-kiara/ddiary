@@ -3,7 +3,7 @@ import {
   Plus, X, ChevronDown, ChevronRight, User, Calendar, Send,
   Circle, Clock, Eye, CheckCircle, Trash2, Copy, Check as CheckIcon,
   Users, Edit2, Briefcase, UserPlus, AlertTriangle, MessageSquare,
-  Folder, FolderPlus,
+  Folder, FolderPlus, Bell,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -25,8 +25,10 @@ import { notifyWorkspaceInvite, notifyTaskAssigned } from '../utils/emailNotific
 import { fetchAllOrgUsers, searchOrgPeopleDebounced } from '../utils/graphPeopleSearch';
 import Avatar from './shared/Avatar';
 import { StatusPill, PriorityPill } from './shared/Pills';
+import ReminderEditor from './shared/ReminderEditor';
 import { formatShortStamp, elapsedSince } from '../utils/dates';
 import { sendBatchInvites, summariseInviteResult } from '../utils/batchInvite';
+import { normalizeReminder, computeNextSendAt, describeSchedule, describeNextSend } from '../utils/reminders';
 
 // ── Status config ─────────────────────────────────────────────────────────────
 const STATUSES = [
@@ -361,6 +363,16 @@ function TaskDetailModal({ task, workspace, workspaceId, members, onDelete, curr
           </div>
         )}
 
+        {/* Reminder editor (visible to creator + admin) */}
+        {(task.createdBy === currentUid || isAdmin) && (
+          <WorkspaceReminderSection
+            workspaceId={workspaceId}
+            task={task}
+            user={user}
+            showToast={showToast}
+          />
+        )}
+
         {/* Collaboration panel (comments, activity, status updates) */}
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <WorkspaceCollabPanel
@@ -371,6 +383,86 @@ function TaskDetailModal({ task, workspace, workspaceId, members, onDelete, curr
           />
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── WorkspaceReminderSection ─────────────────────────────────────────────────
+// Inline reminder editor for existing workspace tasks — expandable section
+// inside TaskDetailModal. Creator or admin can turn reminders on/off and tune
+// the schedule; saving writes the full `reminder` object onto the task doc.
+function WorkspaceReminderSection({ workspaceId, task, user, showToast }) {
+  const taskReminder = task.reminder && typeof task.reminder === 'object' ? task.reminder : null;
+  const [open, setOpen]     = useState(false);
+  const [draft, setDraft]   = useState(taskReminder);
+  const [saving, setSaving] = useState(false);
+  const tz = user?.settings?.timezone
+    || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'Asia/Kolkata')
+    || 'Asia/Kolkata';
+
+  // Keep the draft in sync when the underlying task changes (real-time Firestore updates).
+  useEffect(() => { setDraft(taskReminder); /* eslint-disable-next-line */ }, [task.id, JSON.stringify(taskReminder)]);
+
+  const enabled = !!taskReminder?.enabled;
+  const summary = enabled ? describeSchedule(taskReminder) : 'Off';
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      let payload = draft ? normalizeReminder(draft, {
+        timezone: tz,
+        creatorEmail: task.createdByEmail || user?.email,
+        creatorName:  task.createdByName || user?.displayName || user?.email,
+      }) : null;
+      if (payload) payload.nextSendAt = computeNextSendAt(payload);
+      await updateWorkspaceTask(workspaceId, task.id, { reminder: payload }, user, task);
+      if (showToast) showToast('Reminder saved!', 'success');
+      setOpen(false);
+    } catch (e) {
+      if (showToast) showToast('Failed to save reminder.', 'warning');
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ padding: '12px 18px', borderBottom: '1px solid #ede0c8', background: '#faf7ff' }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          display: 'flex', width: '100%', alignItems: 'center', gap: 8,
+          background: 'none', border: 'none', cursor: 'pointer',
+          padding: 0, textAlign: 'left',
+        }}
+      >
+        <Bell size={14} color={enabled ? '#7c3aed' : '#94a3b8'} />
+        <span style={{ fontSize: 11, fontWeight: 700, color: '#6d28d9', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Email Reminder
+        </span>
+        <span style={{ fontSize: 12, color: enabled ? '#0f172a' : '#94a3b8', flex: 1 }}>
+          {summary}
+        </span>
+        {open ? <ChevronDown size={14} color="#475569" /> : <ChevronRight size={14} color="#475569" />}
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 10 }}>
+          <ReminderEditor
+            value={draft}
+            onChange={setDraft}
+            timezone={tz}
+            creatorEmail={task.createdByEmail || user?.email}
+            creatorName={task.createdByName || user?.displayName || user?.email}
+          />
+          <div className="modal-actions" style={{ marginTop: 10 }}>
+            <button className="btn btn-sm btn-outline" onClick={() => { setDraft(taskReminder); setOpen(false); }}>
+              <X size={13} /> Cancel
+            </button>
+            <button className="btn btn-sm btn-teal" onClick={handleSave} disabled={saving}>
+              <CheckIcon size={13} /> {saving ? 'Saving…' : 'Save Reminder'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -457,6 +549,18 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
 
           {/* Comment count (only renders when > 0) */}
           <CommentCountBadge workspaceId={workspaceId} taskId={task.id} />
+
+          {/* Reminder pill (only when enabled + not paused) */}
+          {task.reminder?.enabled && !task.reminder?.paused && (
+            <span
+              className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
+              style={{ background: '#ede9fe', color: '#6d28d9', border: '1px solid #c4b5fd55' }}
+              title={`${describeSchedule(task.reminder)}${task.reminder.nextSendAt ? ` · next ${describeNextSend(task.reminder.nextSendAt, task.reminder.timezone)}` : ''}`}
+            >
+              <Bell size={10} />
+              {task.reminder.nextSendAt ? describeNextSend(task.reminder.nextSendAt, task.reminder.timezone) : 'scheduled'}
+            </span>
+          )}
 
           {/* Assignee avatar */}
           {assigneeName ? (
@@ -1065,6 +1169,12 @@ function AddTaskModal({
   const [saving,        setSaving]        = useState(false);
   const [categoryId,    setCategoryId]    = useState(initialCategoryId || '');
   const [subcategoryId, setSubcategoryId] = useState(initialSubcategoryId || '');
+  const [reminder,      setReminder]      = useState(null);   // null = off
+  const { user: currentUser } = useAuth();
+  const userTz = currentUser?.settings?.timezone
+    || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'Asia/Kolkata')
+    || 'Asia/Kolkata';
+  const userReminderTime = currentUser?.settings?.reminderTime || '09:00';
 
   const [wsMode,        setWsMode]        = useState(workspaces.length ? 'existing' : 'new');
   const [selectedWsId,  setSelectedWsId]  = useState(currentWorkspaceId || workspaces[0]?.id || '');
@@ -1079,17 +1189,25 @@ function AddTaskModal({
     fetchAllOrgUsers().then(u => setOrgUsers(u || [])).catch(() => {});
   }, []);
 
-  // Merged assignee list: workspace members (have UIDs) first, then org users, deduped by email
+  // Merged assignee list: workspace members (have UIDs) first, then org users, deduped by email.
+  // Phone overrides from the personal Contacts book are layered on top — see
+  // Settings → Contacts & WhatsApp Numbers. Keys are lowercased emails.
   const assigneeOptions = useMemo(() => {
     const seen = new Set();
     const list = [];
     for (const m of members) {
       const key = m.email?.toLowerCase();
-      if (key && !seen.has(key)) { seen.add(key); list.push({ email: m.email, name: m.displayName || m.email, uid: m.uid || null }); }
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        list.push({ email: m.email, name: m.displayName || m.email, uid: m.uid || null, phone: m.phone || null });
+      }
     }
     for (const u of orgUsers) {
       const key = u.email?.toLowerCase();
-      if (key && !seen.has(key)) { seen.add(key); list.push({ email: u.email, name: u.displayName || u.email, uid: null }); }
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        list.push({ email: u.email, name: u.displayName || u.email, uid: null, phone: u.phone || null });
+      }
     }
     return list;
   }, [members, orgUsers]);
@@ -1111,6 +1229,20 @@ function AddTaskModal({
       const timeout = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Timed out after 25s. Check your connection or Firestore rules and try again.')), ADD_TIMEOUT_MS)
       );
+      // If a reminder was configured, stamp it with the creator's snapshot so
+      // the Cloud Function can email them without re-reading the user doc.
+      const reminderPayload = reminder && reminder.enabled
+        ? (() => {
+            const stamped = normalizeReminder(
+              { ...reminder, creatorEmail: currentUser?.email?.toLowerCase() || null,
+                creatorName: currentUser?.displayName || currentUser?.email || null },
+              { timezone: userTz, creatorEmail: currentUser?.email, creatorName: currentUser?.displayName }
+            );
+            stamped.nextSendAt = computeNextSendAt(stamped);
+            return stamped;
+          })()
+        : null;
+
       await Promise.race([
         onAdd(
           {
@@ -1124,6 +1256,7 @@ function AddTaskModal({
             assigneeName:  person?.name  || null,
             categoryId:    categoryId    || null,
             subcategoryId: subcategoryId || null,
+            reminder:      reminderPayload,
           },
           {
             targetWorkspaceId: wsMode === 'existing' ? selectedWsId : null,
@@ -1314,6 +1447,15 @@ function AddTaskModal({
               style={{ ...inputStyle, resize: 'vertical' }}
             />
           </div>
+
+          {/* Per-task email reminder scheduler */}
+          <ReminderEditor
+            value={reminder}
+            onChange={setReminder}
+            timezone={userTz}
+            creatorEmail={currentUser?.email}
+            creatorName={currentUser?.displayName || currentUser?.email}
+          />
         </div>
 
         {/* Buttons */}

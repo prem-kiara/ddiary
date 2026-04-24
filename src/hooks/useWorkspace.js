@@ -571,6 +571,9 @@ export async function addWorkspaceTask(workspaceId, task, actor) {
   // never written), fix it before the task create so rules don't reject us.
   try { await ensureWorkspaceMember(workspaceId, actor); } catch { /* non-fatal */ }
   const assigneeEmail = task.assigneeEmail?.toLowerCase() || null;
+  // Reminder: caller should pass a fully-normalized object with nextSendAt
+  // pre-computed. We only validate type here — null means "no reminder".
+  const reminder = task.reminder && typeof task.reminder === 'object' ? task.reminder : null;
   const ref = await addDoc(collection(db, 'workspaces', workspaceId, 'tasks'), {
     text:           task.text?.trim() || '',
     notes:          task.notes?.trim() || null,
@@ -585,6 +588,7 @@ export async function addWorkspaceTask(workspaceId, task, actor) {
     createdBy:      actor.uid,
     createdByEmail: actor.email,
     createdByName:  actor.displayName || actor.email,
+    reminder,
     createdAt:      serverTimestamp(),
     updatedAt:      serverTimestamp(),
   });

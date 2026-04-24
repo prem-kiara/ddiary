@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#7c3aed" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="Dhanam Workspace — diary, tasks, and collaboration in one place." />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/icons/icon-32.png" />
+  <link rel="icon" type="image/png" sizes="48x48" href="/icons/favicon.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png" />
+  <link rel="apple-touch-icon" sizes="192x192" href="/icons/icon-192.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <title>Dhanam Workspace</title>
+  <script type="module" crossorigin src="/assets/index-X1XEL-X9.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-BN-26-VV.css">
+<link rel="manifest" href="/manifest.webmanifest"><script id="vite-plugin-pwa:register-sw" src="/registerSW.js"></script></head>
+<body>
+  <div id="root"></div>
+  <script>
+    // Force-clear old service workers and caches for users stuck on stale versions
+    (function() {
+      var APP_VERSION = '3.0.0';
+      var stored = localStorage.getItem('ddiary_version');
+      if (stored !== APP_VERSION) {
+        localStorage.setItem('ddiary_version', APP_VERSION);
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.getRegistrations().then(function(regs) {
+            regs.forEach(function(r) { r.unregister(); });
+          });
+        }
+        if ('caches' in window) {
+          caches.keys().then(function(names) {
+            names.forEach(function(n) { caches.delete(n); });
+          });
+        }
+        // Only force reload if we actually had a stale version (not first visit)
+        if (stored) {
+          location.reload(true);
+        }
+      }
+    })();
+  </script>
+</body>
+</html>

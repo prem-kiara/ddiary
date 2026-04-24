@@ -245,19 +245,24 @@ export function useTasks() {
     // Always lowercase the email so Firestore where-equality queries match reliably
     const assigneeEmail = task.assigneeEmail?.trim().toLowerCase() || null;
     const assigneeName  = task.assigneeName?.trim() || null;
+    // `reminder` is either a full normalized reminder object (with nextSendAt
+    // already computed by the caller) or null. Undefined is treated as "no
+    // reminder" — we explicitly write null so absence is queryable.
+    const reminder = task.reminder && typeof task.reminder === 'object' ? task.reminder : null;
     const ref = await addDoc(collection(db, 'users', user.uid, 'tasks'), {
       text:          task.text?.trim() || '',
       dueDate:       task.dueDate || null,
       priority:      task.priority || 'medium',
-      reminder:      true,
       assigneeEmail,
       assigneeName,
       assigneePhone: task.assigneePhone?.trim() || null,
       assigneeUid:   null,
       ownerId:       user.uid,
       ownerName:     user.displayName || user.email,
+      ownerEmail:    user.email || null,
       status:        'open',
       completed:     false,
+      reminder,
       createdAt:     serverTimestamp(),
       updatedAt:     serverTimestamp(),
     });
@@ -901,5 +906,37 @@ export function useTeamMembers() {
     return deleteDoc(doc(db, 'users', user.uid, 'teamMembers', id));
   }, [user]);
 
-  return { members, loading, addMember, addMembersBulk, updateMember, deleteMember };
+  /**
+   * Upsert a phone-number override for a contact, keyed by email.
+   *
+   * Used by the Contacts editor on the Settings page + the silent auto-save
+   * when a user manually edits a phone in the Assign task panel. Doc ID is
+   * derived from the email so the same contact can't be duplicated.
+   *
+   * Pass `phone` as empty string / null to clear the override (deletes the
+   * doc so future assignments fall back to Graph data).
+   */
+  const saveContactPhone = useCallback(async (email, name, phone) => {
+    if (!user) return;
+    const clean = (email || '').trim().toLowerCase();
+    if (!clean || !/^\S+@\S+\.\S+$/.test(clean)) return;
+    // Firestore doc IDs can't contain "/" or start with "__". Sanitize.
+    const safeId = clean.replace(/[^a-zA-Z0-9@._-]/g, '_').replace(/^__+/, '');
+    const ref   = doc(db, 'users', user.uid, 'teamMembers', safeId);
+    const trimmedPhone = (phone || '').trim();
+    if (!trimmedPhone) {
+      // Remove the override doc entirely so we fall back to Graph.
+      await deleteDoc(ref).catch(() => {});
+      return;
+    }
+    await setDoc(ref, {
+      email: clean,
+      name:  (name || '').trim() || clean,
+      phone: trimmedPhone,
+      uid:   null,
+      updatedAt: serverTimestamp(),
+    }, { merge: true });
+  }, [user]);
+
+  return { members, loading, addMember, addMembersBulk, updateMember, deleteMember, saveContactPhone };
 }

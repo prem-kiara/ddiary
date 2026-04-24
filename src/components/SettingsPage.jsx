@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Save, Mail, Clock, Cloud, Shield, Download, Globe } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import UserManual from './UserManual';
+import ContactsSection from './ContactsSection';
 
 // Common timezones for the selector
 const TIMEZONES = [
@@ -188,6 +189,9 @@ export default function SettingsPage({ showToast }) {
           </button>
         </div>
       </div>
+
+      {/* Contacts — manual phone-number overrides for WhatsApp / assignments */}
+      <ContactsSection showToast={showToast} />
 
       {/* User Manual — bundled help doc, expandable + downloadable */}
       <UserManual />

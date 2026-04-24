@@ -81,6 +81,14 @@
         { "fieldPath": "status",       "order": "ASCENDING" },
         { "fieldPath": "createdAt",    "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "tasks",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "createdBy",        "order": "ASCENDING" },
+        { "fieldPath": "reminder.enabled", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

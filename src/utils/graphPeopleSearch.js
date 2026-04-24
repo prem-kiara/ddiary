@@ -36,7 +36,7 @@ export async function searchOrgPeople(query) {
       displayName: u.displayName,
       email:       u.mail || '',
       jobTitle:    u.jobTitle || '',
-      phone:       u.mobilePhone || (u.businessPhones?.[0]) || '',
+      phone:       (u.businessPhones?.[0]) || u.mobilePhone || '',
     }));
   } catch {
     return [];
@@ -69,7 +69,7 @@ export async function fetchAllOrgUsers() {
         email:       u.mail || '',
         jobTitle:    u.jobTitle || '',
         department:  u.department || '',
-        phone:       u.mobilePhone || (u.businessPhones?.[0]) || '',
+        phone:       (u.businessPhones?.[0]) || u.mobilePhone || '',
       }));
       allUsers.push(...users);
 

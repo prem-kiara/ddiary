@@ -3,6 +3,7 @@ import { Routes, Route, Navigate, useNavigate, useParams, useLocation } from 're
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useEntries, useTasks, useTeamMembers } from './hooks/useFirestore';
 import { useNotifications } from './hooks/useNotifications';
+import { useReminderDispatcher } from './hooks/useReminderDispatcher';
 import KanbanBoard from './components/KanbanBoard';
 import TasksPage from './components/TasksPage';
 import WorkspaceInvitePrompt from './components/WorkspaceInvitePrompt';
@@ -122,6 +123,11 @@ function DiaryApp() {
   }, [showToast]);
 
   const { notifications, unreadCount, markRead, markAllRead } = useNotifications({ onNewNotification: handleNewNotification });
+
+  // ─── Per-task recurring email reminders ──────────────────────────────────
+  // Free-tier dispatcher: runs entirely in the browser using the signed-in
+  // user's Microsoft Graph token. See useReminderDispatcher for details.
+  useReminderDispatcher();
 
   // Update PWA app icon badge count
   useEffect(() => {
