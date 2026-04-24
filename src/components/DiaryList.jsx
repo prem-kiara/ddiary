@@ -37,14 +37,16 @@ export default function DiaryList({
 
   return (
     <div className="fade-in">
-      <div className="flex items-center justify-between mb-5">
-        <div>
+      <div className="page-head">
+        <div style={{ flex: 1, minWidth: 0 }}>
           <h2 className="section-title mb-0">Your Entries</h2>
           <p className="text-sm text-slate-500 mt-0.5">Your thoughts, meetings, and ideas in one place.</p>
         </div>
-        <button className="btn btn-gold" onClick={onNew}>
-          <Plus size={16} /> New Entry
-        </button>
+        <div className="page-actions">
+          <button className="btn btn-gold" onClick={onNew}>
+            <Plus size={16} /> New Entry
+          </button>
+        </div>
       </div>
 
       {entries.length === 0 ? (

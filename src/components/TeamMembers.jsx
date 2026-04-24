@@ -61,13 +61,15 @@ export default function TeamMembers({ showToast }) {
 
   return (
     <div className="fade-in">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+      <div className="page-head">
         <h2 className="section-title" style={{ margin: 0 }}>
           <Users size={20} style={{ marginRight: 8 }} />Workspaces
         </h2>
-        <button className="btn btn-teal btn-sm" onClick={() => setCreating(true)}>
-          <Plus size={14} /> New Workspace
-        </button>
+        <div className="page-actions">
+          <button className="btn btn-teal btn-sm" onClick={() => setCreating(true)}>
+            <Plus size={14} /> New Workspace
+          </button>
+        </div>
       </div>
 
       {creating && (
@@ -79,7 +81,7 @@ export default function TeamMembers({ showToast }) {
             style={{ marginBottom: 10 }}
           />
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+          <div className="form-grid-2" style={{ marginBottom: 8 }}>
             <div>
               <label className="label">Category (optional)</label>
               <input className="input" value={newCatName} onChange={e => setNewCatName(e.target.value)}
@@ -430,17 +432,18 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
       </button>
 
       {/* Workspace name + rename */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20, flexWrap: 'wrap' }}>
         {renaming ? (
-          <div style={{ display: 'flex', gap: 8, flex: 1 }}>
+          <div style={{ display: 'flex', gap: 8, flex: 1, flexWrap: 'wrap' }}>
             <input className="input" value={renameText} onChange={e => setRenameText(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') handleRename(); }} autoFocus />
+              onKeyDown={e => { if (e.key === 'Enter') handleRename(); }} autoFocus
+              style={{ flex: '1 1 200px', minWidth: 0 }} />
             <button className="btn btn-teal btn-sm" onClick={handleRename}><Check size={13} /></button>
             <button className="btn btn-outline btn-sm" onClick={() => setRenaming(false)}><X size={13} /></button>
           </div>
         ) : (
           <>
-            <h2 className="section-title" style={{ margin: 0, flex: 1 }}>{workspace.name}</h2>
+            <h2 className="section-title" style={{ margin: 0, flex: 1, minWidth: 0, wordBreak: 'break-word' }}>{workspace.name}</h2>
             {isAdmin && (
               <button className="btn btn-outline btn-sm"
                 onClick={() => { setRenaming(true); setRenameText(workspace.name); }}>
@@ -461,17 +464,17 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
             const busy = leaveAction[req.id];
             return (
               <div key={req.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 0', borderBottom: '1px solid #e2e8f0', flexWrap: 'wrap' }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ flex: '1 1 180px', minWidth: 0 }}>
                   <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a' }}>{req.memberName}</div>
-                  <div style={{ fontSize: 12, color: '#475569' }}>{req.memberEmail} · wants to leave</div>
+                  <div style={{ fontSize: 12, color: '#475569', wordBreak: 'break-word' }}>{req.memberEmail} · wants to leave</div>
                 </div>
                 <div style={{ display: 'flex', gap: 7, flexShrink: 0 }}>
                   <button onClick={() => handleDenyLeave(req)} disabled={!!busy}
-                    style={{ padding: '6px 14px', borderRadius: 7, border: '1px solid #cbd5e1', background: '#fff', color: '#0f172a', fontSize: 12, fontWeight: 600, cursor: busy ? 'not-allowed' : 'pointer' }}>
+                    style={{ padding: '8px 16px', borderRadius: 7, border: '1px solid #cbd5e1', background: '#fff', color: '#0f172a', fontSize: 13, fontWeight: 600, cursor: busy ? 'not-allowed' : 'pointer', minHeight: 38 }}>
                     {busy === 'denying' ? '…' : 'Deny'}
                   </button>
                   <button onClick={() => handleApproveLeave(req)} disabled={!!busy}
-                    style={{ padding: '6px 14px', borderRadius: 7, border: 'none', background: '#15803d', color: '#fff', fontSize: 12, fontWeight: 700, cursor: busy ? 'not-allowed' : 'pointer' }}>
+                    style={{ padding: '8px 18px', borderRadius: 7, border: 'none', background: '#15803d', color: '#fff', fontSize: 13, fontWeight: 700, cursor: busy ? 'not-allowed' : 'pointer', minHeight: 38 }}>
                     {busy === 'approving' ? '…' : 'Approve'}
                   </button>
                 </div>
@@ -601,10 +604,10 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
           <span style={{ fontSize: 11, color: '#94a3b8' }}>or share link</span>
           <div style={{ flex: 1, height: 1, background: '#e2e8f0' }} />
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <input className="input" value={inviteUrl} readOnly
-            style={{ fontSize: 12, color: '#475569', flex: 1 }} onClick={e => e.target.select()} />
-          <button className="btn btn-teal btn-sm" onClick={handleCopy}>
+            style={{ fontSize: 12, color: '#475569', flex: '1 1 180px', minWidth: 0 }} onClick={e => e.target.select()} />
+          <button className="btn btn-teal btn-sm" onClick={handleCopy} style={{ flexShrink: 0 }}>
             {copied ? <><CheckCircle size={13} /> Copied!</> : <><Copy size={13} /> Copy</>}
           </button>
         </div>
@@ -615,7 +618,7 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
 
       {/* ── Members list ─────────────────────────────────────────────────── */}
       <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
           <div style={{ fontWeight: 700, fontSize: 13, color: '#0f172a', display: 'flex', alignItems: 'center', gap: 6 }}>
             <Users size={14} /> Members ({dedupedMembers.filter(m => !m.uid?.startsWith('pending_')).length})
             {dedupedMembers.some(m => m.uid?.startsWith('pending_')) && (
@@ -643,12 +646,12 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
                 {(m.displayName || m.email || '?').charAt(0).toUpperCase()}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a' }}>
+                <div style={{ fontWeight: 600, fontSize: 14, color: '#0f172a', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {m.displayName || m.email}
                   {isPending && <span style={{ fontSize: 11, color: '#d97706', marginLeft: 6, fontWeight: 600 }}>Invited</span>}
                   {isMe && <span style={{ fontSize: 11, color: '#7c3aed', marginLeft: 6 }}>You</span>}
                 </div>
-                <div style={{ fontSize: 12, color: '#475569' }}>
+                <div style={{ fontSize: 12, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {m.email} · {m.role}
                 </div>
               </div>
@@ -721,17 +724,17 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
               })
               .map(u => (
                 <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid #e2e8f0' }}>
-                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#7c3aed22', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#7c3aed', fontWeight: 700, fontSize: 13 }}>
+                  <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#7c3aed22', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#7c3aed', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
                     {(u.displayName || '?').charAt(0).toUpperCase()}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13 }}>{u.displayName}</div>
-                    <div style={{ fontSize: 11, color: '#475569' }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{u.displayName}</div>
+                    <div style={{ fontSize: 11, color: '#475569', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {u.email}
                       {u.jobTitle && <> · <Briefcase size={9} style={{ display: 'inline' }} /> {u.jobTitle}</>}
                     </div>
                   </div>
-                  <button className="btn btn-teal btn-sm" onClick={() => handleAddFromOrg(u)} disabled={addingOrg[u.id]}>
+                  <button className="btn btn-teal btn-sm" onClick={() => handleAddFromOrg(u)} disabled={addingOrg[u.id]} style={{ flexShrink: 0 }}>
                     {addingOrg[u.id] ? '…' : <><UserPlus size={12} /> Invite</>}
                   </button>
                 </div>

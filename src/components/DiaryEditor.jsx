@@ -231,8 +231,8 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
           style={{ marginBottom: 16 }}
         />
 
-        {/* Textarea + Quick-Keys side by side */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+        {/* Textarea + Quick-Keys side by side (stacks on phones) */}
+        <div className="editor-layout" style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
           {/* Content — takes all remaining width */}
           <textarea
             ref={textareaRef}
@@ -246,16 +246,17 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
               minWidth: 0,
               minHeight: 330,
               fontFamily: 'var(--font-body)',
-              fontSize: 15,
+              fontSize: 16,
               resize: 'none',
               overflow: 'hidden',
               paddingBottom: 180, // ≈ 6 empty lines
             }}
           />
 
-          {/* Quick-Keys panel — sits right beside the textarea */}
+          {/* Quick-Keys panel — sits right beside the textarea on desktop,
+              floats above the bottom-tab bar on phones. */}
           {showQuickKeys ? (
-            <div style={{
+            <div className="editor-quick-keys" style={{
               flexShrink: 0,
               display: 'flex',
               flexDirection: 'column',
@@ -317,6 +318,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
           ) : (
             /* Re-open — tiny button aligned to top of textarea */
             <button
+              className="editor-quick-keys-reopen"
               onClick={() => setShowQuickKeys(true)}
               title="Show quick keys"
               style={{
@@ -325,8 +327,8 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
                 color: 'white',
                 border: 'none',
                 borderRadius: '50%',
-                width: 36,
-                height: 36,
+                width: 40,
+                height: 40,
                 cursor: 'pointer',
                 fontSize: 17,
                 display: 'flex',
@@ -341,7 +343,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
         </div>
 
         {/* Action Buttons */}
-        <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+        <div className="modal-actions" style={{ marginTop: 16 }}>
           <button className="btn btn-outline" onClick={onCancel}>
             <X size={16} /> Cancel
           </button>

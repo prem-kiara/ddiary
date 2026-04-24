@@ -192,7 +192,7 @@ export default function DrawingCanvas({ onSave, onClose, initialData }) {
         </div>
         <canvas
           ref={canvasRef}
-          style={{ flex: 1, minHeight: 400, cursor: erasing ? 'cell' : 'crosshair', touchAction: 'none', display: 'block' }}
+          style={{ flex: 1, minHeight: 0, width: '100%', cursor: erasing ? 'cell' : 'crosshair', touchAction: 'none', display: 'block', background: '#f8fafc' }}
           onMouseDown={startDraw} onMouseMove={draw} onMouseUp={stopDraw} onMouseLeave={stopDraw}
           onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={stopDraw}
         />

@@ -289,7 +289,7 @@ export function MoveToBoard({
 
         {/* Category + Sub-category (only if the workspace has categories) */}
         {categories.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+          <div className="form-grid-2" style={{ marginBottom: 12 }}>
             <div>
               <label className="label">Category</label>
               <select value={moveCategoryId} onChange={e => setMoveCategoryId(e.target.value)} style={selStyle}>
@@ -317,7 +317,7 @@ export function MoveToBoard({
         )}
 
         {/* Status + Assignee */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+        <div className="form-grid-2" style={{ marginBottom: 12 }}>
           <div>
             <label className="label">Status</label>
             <select value={moveStatus} onChange={e => setMoveStatus(e.target.value)} style={selStyle}>
@@ -360,7 +360,7 @@ export function MoveToBoard({
         </div>
 
         {/* Priority + Due date */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+        <div className="form-grid-2" style={{ marginBottom: 12 }}>
           <div>
             <label className="label">Priority</label>
             <select value={movePriority} onChange={e => setMovePriority(e.target.value)} style={selStyle}>
@@ -660,7 +660,7 @@ function TaskCard({
 
           {/* Action buttons row */}
           {!task.completed && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 12px 8px' }}>
+            <div className="task-action-row" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 12px 8px' }}>
               {task.assigneeEmail && (
                 <button className="btn btn-sm btn-blue" onClick={handleEmail}>
                   <Mail size={12} /> Email Now
@@ -701,8 +701,8 @@ function TaskCard({
                 </button>
               )}
               <button
-                className="btn btn-sm"
-                style={{ background: '#15803d', color: '#fff', border: 'none', marginLeft: 'auto' }}
+                className="btn btn-sm task-done-btn"
+                style={{ background: '#15803d', color: '#fff', border: 'none' }}
                 onClick={() => onToggle(task.id, false)}
               >
                 <CheckCircle size={12} /> Done
@@ -729,7 +729,7 @@ function TaskCard({
                 onChange={e => setEditText(e.target.value)}
                 style={{ minHeight: 'unset', height: 'auto', resize: 'none', marginBottom: 10, fontFamily: 'var(--font-body)', fontSize: 14, backgroundImage: 'none', lineHeight: 1.6 }}
               />
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+              <div className="form-grid-2" style={{ marginBottom: 10 }}>
                 <div>
                   <label className="label">Due Date</label>
                   <input type="date" value={editDue} onChange={e => setEditDue(e.target.value)} style={inputStyle} />
@@ -766,7 +766,7 @@ function TaskCard({
               <div style={{ fontWeight: 700, fontSize: 13, color: '#0f172a', marginBottom: 10 }}>
                 Assign Task — type a name to search your team
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 10 }}>
+              <div className="form-grid-3" style={{ marginBottom: 10 }}>
                 <div>
                   <label className="label">Name</label>
                   <MemberAutocomplete

@@ -1,5 +1,6 @@
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    Dhanam Workspace — Violet / Slate Theme
+   Fully responsive: phone → tablet → desktop
    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 
 @tailwind base;
@@ -45,6 +46,13 @@
   --font-handwriting: var(--font-body);
 
   --transition: all 0.2s ease;
+
+  /* ── Layout heights (drive responsive scroll / offset logic) ─────── */
+  --header-h:     56px;   /* top header */
+  --topnav-h:     48px;   /* desktop top tabs */
+  --bottomnav-h:  64px;   /* mobile bottom tabs (+ safe-area below) */
+  --safe-bottom:  env(safe-area-inset-bottom, 0px);
+  --safe-top:     env(safe-area-inset-top, 0px);
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -59,9 +67,17 @@ body {
   color: var(--ink);
   background: var(--paper);
   min-height: 100vh;
+  min-height: 100dvh;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   letter-spacing: -0.005em;
+  overflow-x: hidden;
+}
+
+/* Focus visible — accessibility polish */
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
 }
 
 /* ─── Animations ──────────────────────────────────────────────────────────── */
@@ -77,10 +93,15 @@ body {
   from { opacity: 0; transform: translateY(20px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+@keyframes slideUpSheet {
+  from { opacity: 0; transform: translateY(100%); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 @keyframes pulse {
   0%, 100% { transform: scale(1); }
   50%      { transform: scale(1.05); }
 }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
 .fade-in  { animation: fadeIn 0.28s ease; }
 .slide-up { animation: slideUp 0.32s ease; }
@@ -95,15 +116,18 @@ body {
 .app-header {
   background: #ffffff;
   color: var(--ink);
-  padding: 12px 20px;
+  padding: 10px 20px;
+  padding-top: calc(10px + var(--safe-top));
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   border-bottom: 1px solid var(--paper-line);
   position: sticky;
   top: 0;
   z-index: 50;
   box-shadow: 0 1px 2px var(--shadow);
+  min-height: var(--header-h);
 }
 .app-header h1 {
   font-family: var(--font-body);
@@ -114,16 +138,23 @@ body {
   align-items: center;
   gap: 8px;
   color: var(--ink);
+  min-width: 0;
+}
+.app-header h1 span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .header-info {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   font-size: 13px;
   color: var(--ink-light);
+  flex-shrink: 0;
 }
 
-/* ─── Navigation ──────────────────────────────────────────────────────────── */
+/* ─── Navigation (top, desktop/tablet) ────────────────────────────────────── */
 .app-nav {
   display: flex;
   background: #ffffff;
@@ -131,10 +162,11 @@ body {
   overflow-x: auto;
   border-bottom: 1px solid var(--paper-line);
   position: sticky;
-  top: 56px;
+  top: var(--header-h);
   z-index: 40;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
+  min-height: var(--topnav-h);
 }
 .app-nav::-webkit-scrollbar { display: none; }
 
@@ -156,11 +188,59 @@ body {
   transition: var(--transition);
   white-space: nowrap;
   position: relative;
+  min-height: 44px;
 }
 .nav-btn:hover { color: var(--ink); }
 .nav-btn.active {
   color: var(--gold);
   border-bottom-color: var(--gold);
+}
+
+/* ─── Bottom tab bar (mobile) ─────────────────────────────────────────────── */
+.bottom-tabs {
+  display: none;
+}
+.bottom-tabs-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: transparent;
+  border: none;
+  color: var(--ink-lighter);
+  font-family: var(--font-body);
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 6px 4px;
+  padding-bottom: calc(6px + var(--safe-bottom));
+  min-height: var(--bottomnav-h);
+  position: relative;
+  transition: var(--transition);
+}
+.bottom-tabs-btn.active { color: var(--gold); }
+.bottom-tabs-btn .bt-badge {
+  position: absolute;
+  top: 4px;
+  right: calc(50% - 22px);
+  background: var(--red);
+  color: white;
+  border-radius: 999px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+}
+.bottom-tabs-btn .bt-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
 }
 
 /* ─── Badge ───────────────────────────────────────────────────────────────── */
@@ -210,6 +290,7 @@ body {
   box-shadow: 0 1px 2px var(--shadow);
   white-space: nowrap;
   letter-spacing: -0.005em;
+  min-height: 40px;
 }
 .btn:active { transform: scale(0.98); }
 .btn-gold     { background: var(--gold);    color: #fff; box-shadow: 0 1px 2px rgba(124, 58, 237, 0.2); }
@@ -239,16 +320,20 @@ body {
   box-shadow: none;
 }
 .btn-outline:hover { background: var(--paper-dark); border-color: var(--ink-lighter); color: var(--ink); }
-.btn-sm { padding: 7px 14px; font-size: 13px; }
+.btn-sm { padding: 7px 14px; font-size: 13px; min-height: 36px; }
 .btn-icon {
   background: none;
   border: none;
   cursor: pointer;
   color: var(--ink-lighter);
-  padding: 6px;
+  padding: 8px;
   border-radius: 6px;
   transition: var(--transition);
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 36px;
 }
 .btn-icon:hover { color: var(--ink); background: var(--paper-dark); }
 
@@ -264,6 +349,7 @@ body {
   color: var(--ink);
   outline: none;
   transition: var(--transition);
+  min-height: 44px;
 }
 .input:focus, .textarea:focus, .select:focus {
   border-color: var(--gold-light);
@@ -345,6 +431,7 @@ body {
   align-items: center;
   gap: 6px;
   transition: var(--transition);
+  min-height: 36px;
 }
 .mood-btn.active {
   border-color: var(--gold);
@@ -366,8 +453,8 @@ body {
 .task-row:hover { background: var(--paper-dark); margin: 0 -16px; padding-left: 16px; padding-right: 16px; border-radius: 10px; }
 .task-row.completed { opacity: 0.55; }
 .task-checkbox {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   cursor: pointer;
   accent-color: var(--gold);
   flex-shrink: 0;
@@ -433,6 +520,8 @@ body {
   justify-content: center;
   padding: 16px;
   animation: fadeIn 0.2s ease;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .modal-content {
   background: #ffffff;
@@ -465,8 +554,8 @@ body {
   gap: 8px;
 }
 .color-dot {
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   cursor: pointer;
   border: 2px solid var(--paper-line);
@@ -489,10 +578,13 @@ body {
 /* ─── Auth Page ───────────────────────────────────────────────────────────── */
 .auth-container {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 20px;
+  padding-top: calc(20px + var(--safe-top));
+  padding-bottom: calc(20px + var(--safe-bottom));
   background:
     radial-gradient(ellipse at top left,  rgba(124, 58, 237, 0.10) 0%, transparent 50%),
     radial-gradient(ellipse at bottom right, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
@@ -553,8 +645,9 @@ body {
 /* ─── Toast ───────────────────────────────────────────────────────────────── */
 .toast {
   position: fixed;
-  top: 20px;
+  top: calc(20px + var(--safe-top));
   right: 20px;
+  left: auto;
   z-index: 200;
   background: var(--ink);
   color: #fff;
@@ -636,21 +729,377 @@ body {
 .avatar-md { width: 36px; height: 36px; font-size: 13px; }
 .avatar-lg { width: 44px; height: 44px; font-size: 15px; }
 
-/* ─── Responsive ──────────────────────────────────────────────────────────── */
+/* ─── Responsive utilities ────────────────────────────────────────────────── */
+/* Stack 2- or 3-column grids vertically on phones.
+   Components use inline gridTemplateColumns in many places — this class
+   overrides them at the mobile breakpoint. Prefer adding it to new code. */
+.grid-2, .grid-3 {
+  display: grid;
+  gap: 10px;
+}
+.grid-2 { grid-template-columns: 1fr 1fr; }
+.grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+
+/* Hide on mobile, show on desktop */
+.hide-mobile { display: initial; }
+.show-mobile { display: none; }
+
+/* Hide scrollbars but keep scroll behavior */
+.no-scrollbar { scrollbar-width: none; -ms-overflow-style: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BREAKPOINTS
+   Phone  : ≤ 640px (.mobile)
+   Tablet : 641–1024px (.tablet)
+   Desktop: > 1024px (default)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Tablet ─────────────────────────────────────────────────────────────── */
 @media (max-width: 1024px) {
   .main-content { padding: 20px 20px 100px; }
+  .section-title { font-size: 20px; }
 }
 
-@media (max-width: 600px) {
-  .app-header { padding: 10px 14px; }
-  .app-header h1 { font-size: 16px; }
+/* ── Small tablet / large phone ────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .app-header { padding: 10px 14px; padding-top: calc(10px + var(--safe-top)); }
+  .app-header h1 { font-size: 16px; gap: 6px; }
+  .app-header h1 img { height: 28px; }
+  .header-info { gap: 6px; font-size: 12px; }
+
+  .main-content { padding: 14px 14px 100px; }
+  .section-title { font-size: 19px; margin-bottom: 14px; }
+  .card { padding: 14px; border-radius: 12px; margin-bottom: 12px; }
+
+  /* Force grids that are inline-styled to single column */
+  .grid-3 { grid-template-columns: 1fr; }
+  .grid-2 { grid-template-columns: 1fr; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Component-specific responsive helpers
+   These are class hooks we apply from .jsx files to switch between
+   desktop and mobile layouts.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Task cards on the Kanban board — collapsed single-line row on desktop,
+   wrapped 2-row layout on phones. */
+.k-task-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+.k-task-card .k-title { flex: 1; min-width: 0; }
+.k-task-card .k-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+}
+@media (max-width: 640px) {
+  .k-task-card { flex-wrap: wrap; gap: 6px 8px; align-items: flex-start; }
+  .k-task-card .k-meta { flex-wrap: wrap; width: 100%; gap: 6px; margin-top: 2px; }
+  .k-task-card .k-meta .k-created { display: none; }
+}
+
+/* Workspace header action cluster — wraps on phones */
+.ws-header-row { display: flex; align-items: center; gap: 10px; padding: 14px 18px; cursor: pointer; }
+.ws-header-actions { display: flex; gap: 6px; align-items: center; flex-shrink: 0; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .ws-header-row { padding: 12px 12px; flex-wrap: wrap; }
+  .ws-header-actions { width: 100%; order: 3; gap: 6px; margin-top: 2px; }
+  .ws-header-actions .btn { flex: 1; justify-content: center; min-width: 0; padding: 8px 10px; font-size: 12px; }
+  .ws-header-actions .btn span { display: inline; }
+}
+
+/* Filter bar (kanban) — stacks on phones */
+.k-filter-bar {
+  background: #fff;
+  border: 1px solid var(--paper-line);
+  border-radius: 12px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+.k-filter-bar .k-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+@media (max-width: 640px) {
+  .k-filter-bar { padding: 10px 12px; }
+  .k-filter-bar .k-filter-right {
+    margin-left: 0 !important;
+    justify-content: flex-start !important;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap !important;
+    padding-bottom: 4px;
+  }
+  .k-filter-bar .k-filter-right::-webkit-scrollbar { display: none; }
+}
+
+/* Generic 2-col / 3-col form grids — stack on phones */
+.form-grid-2, .form-grid-3 { display: grid; gap: 10px; }
+.form-grid-2 { grid-template-columns: 1fr 1fr; }
+.form-grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+@media (max-width: 640px) {
+  .form-grid-2 { grid-template-columns: 1fr; }
+  .form-grid-3 { grid-template-columns: 1fr; }
+}
+
+/* Page-header action row — sits at top of pages with title + buttons */
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.page-head .page-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .page-head { gap: 8px; }
+  .page-head .page-actions { width: 100%; }
+  .page-head .page-actions .btn { flex: 1; justify-content: center; min-width: 0; }
+}
+
+/* Modal with side padding/max-width that becomes full-screen on phones.
+   Used by React components that currently inline their modal shells. */
+.sheet-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.sheet-modal {
+  background: #fff;
+  border-radius: 16px;
+  padding: 24px;
+  width: 100%;
+  max-width: 560px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  display: flex;
+  flex-direction: column;
+}
+.sheet-modal.sheet-modal-wide { max-width: 720px; }
+@media (max-width: 640px) {
+  .sheet-modal-overlay { padding: 0; align-items: stretch; }
+  .sheet-modal,
+  .sheet-modal.sheet-modal-wide {
+    max-width: 100%;
+    max-height: 100vh;
+    max-height: 100dvh;
+    min-height: 100vh;
+    min-height: 100dvh;
+    border-radius: 0;
+    padding: 16px 16px calc(20px + var(--safe-bottom));
+    padding-top: calc(16px + var(--safe-top));
+    animation: slideUpSheet 0.3s ease;
+  }
+}
+
+/* DiaryEditor quick-keys panel — sidebar on desktop, floating pill on phones */
+@media (max-width: 640px) {
+  .editor-quick-keys {
+    position: fixed !important;
+    bottom: calc(var(--bottomnav-h) + var(--safe-bottom) + 10px) !important;
+    right: 10px !important;
+    top: auto !important;
+    flex-direction: row !important;
+    flex-wrap: wrap;
+    max-width: calc(100vw - 20px);
+    z-index: 30;
+    border-radius: 999px !important;
+    padding: 4px 8px !important;
+  }
+  /* Divider strip loses meaning in a horizontal pill — hide it */
+  .editor-quick-keys > div[style*="height: 1px"] { display: none; }
+  .editor-quick-keys button[title="Hide quick keys"] { align-self: center !important; }
+
+  .editor-quick-keys-reopen {
+    position: fixed !important;
+    bottom: calc(var(--bottomnav-h) + var(--safe-bottom) + 10px) !important;
+    right: 10px !important;
+    top: auto !important;
+    z-index: 30;
+  }
+}
+
+/* Notification bell dropdown — bottom-sheet style on phones */
+@media (max-width: 640px) {
+  .notif-dropdown {
+    position: fixed !important;
+    left: 8px !important;
+    right: 8px !important;
+    top: calc(var(--header-h) + 6px + var(--safe-top)) !important;
+    width: auto !important;
+    max-width: none !important;
+    max-height: 75vh !important;
+    margin-top: 0 !important;
+  }
+}
+
+/* Settings Save button — full-width on phones */
+@media (max-width: 640px) {
+  .settings-save-btn { width: 100%; justify-content: center; }
+}
+
+/* DiaryView entry action buttons — full width on mobile */
+@media (max-width: 640px) {
+  .entry-actions { width: 100%; }
+  .entry-actions .btn { flex: 1; justify-content: center; min-width: 0; }
+}
+
+/* Task card action row — wraps naturally.
+   "Done" auto-pushes to the right on desktop via .task-done-btn. */
+.task-action-row .btn { min-height: 36px; }
+.task-action-row .task-done-btn { margin-left: auto; }
+@media (max-width: 640px) {
+  .task-action-row .btn { flex: 1 1 auto; justify-content: center; min-width: 88px; }
+  .task-action-row .task-done-btn { margin-left: 0; flex: 1 1 100%; }
+}
+
+/* Action-button row at the bottom of a modal/form */
+.modal-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+@media (max-width: 640px) {
+  .modal-actions { justify-content: stretch; }
+  .modal-actions .btn { flex: 1; justify-content: center; }
+}
+
+/* ── Phone ─────────────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  /* Prevent iOS from auto-zooming on input focus — inputs must be ≥16px */
+  .input, .textarea, .select,
+  input[type="text"], input[type="email"], input[type="password"],
+  input[type="search"], input[type="tel"], input[type="url"],
+  input[type="number"], input[type="date"], input[type="time"],
+  input[type="datetime-local"], textarea, select {
+    font-size: 16px !important;
+  }
+  .input-title { font-size: 18px !important; }
+
+  /* Header — super-compact, single line */
+  .app-header { padding: 8px 12px; padding-top: calc(8px + var(--safe-top)); min-height: 52px; }
+  .app-header h1 { font-size: 15px; gap: 6px; }
+  .app-header h1 img { height: 24px; }
   .header-info .header-date { display: none; }
-  .main-content { padding: 16px 12px 80px; }
-  .card { padding: 16px; }
-  .section-title { font-size: 19px; }
-  .btn { padding: 9px 16px; font-size: 13px; }
-  .canvas-toolbar { padding: 8px 12px; }
-  .auth-card { padding: 24px; }
+  .header-info { gap: 4px; }
+  .header-info .avatar-sm { width: 26px; height: 26px; }
+
+  /* Hide top nav on phones — bottom-tabs takes over */
+  .app-nav { display: none; }
+  .bottom-tabs {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: #ffffff;
+    border-top: 1px solid var(--paper-line);
+    box-shadow: 0 -2px 10px rgba(15, 23, 42, 0.06);
+    z-index: 50;
+    padding-bottom: var(--safe-bottom);
+  }
+
+  /* Reserve space so bottom tabs don't cover content */
+  .main-content {
+    padding: 12px 12px calc(var(--bottomnav-h) + 24px + var(--safe-bottom));
+    max-width: 100%;
+  }
+
+  .section-title { font-size: 18px; margin-bottom: 12px; }
+
+  /* Card tightening */
+  .card { padding: 14px; border-radius: 12px; }
+
+  /* Buttons — bigger tap targets but keep them tight */
+  .btn { padding: 10px 16px; font-size: 14px; min-height: 44px; }
+  .btn-sm { padding: 8px 12px; font-size: 13px; min-height: 38px; }
+  .btn-icon { min-width: 40px; min-height: 40px; padding: 8px; }
+
+  /* Modal overlay — full-screen bottom sheet feel on phones */
+  .modal-overlay {
+    padding: 0;
+    align-items: flex-end;
+  }
+  .modal-content, .modal-body {
+    max-width: 100%;
+    width: 100%;
+    max-height: 100vh;
+    max-height: 100dvh;
+    height: 100vh;
+    height: 100dvh;
+    border-radius: 0;
+    animation: slideUpSheet 0.3s ease;
+    padding-top: var(--safe-top);
+    padding-bottom: var(--safe-bottom);
+  }
+  .modal-body {
+    padding: 16px 16px calc(16px + var(--safe-bottom));
+  }
+  .canvas-toolbar { padding: 10px 12px; gap: 8px; }
+
+  /* Auth — tighter card */
+  .auth-card { padding: 24px 20px; border-radius: 14px; }
+  .auth-title { font-size: 21px; }
+
+  /* Stats row — smaller cards */
   .stats-row { gap: 8px; }
-  .stat-card { min-width: 80px; padding: 10px 8px; }
+  .stat-card { min-width: 0; padding: 10px 8px; flex: 1 1 30%; }
+
+  /* Toast — slide from top, full-width */
+  .toast {
+    top: calc(12px + var(--safe-top));
+    right: 12px;
+    left: 12px;
+    max-width: none;
+    font-size: 13px;
+    padding: 11px 16px;
+  }
+
+  /* Task row — lighter hover on phones, reduced padding */
+  .task-row:hover { margin: 0; padding-left: 0; padding-right: 0; background: transparent; border-radius: 0; }
+
+  /* Color dots bigger for fingers */
+  .color-dot { width: 36px; height: 36px; }
+
+  /* Avatar sizes — tighter */
+  .avatar-lg { width: 40px; height: 40px; font-size: 14px; }
+
+  /* Show mobile-only / hide desktop-only utility */
+  .hide-mobile { display: none !important; }
+  .show-mobile { display: initial; }
+
+  /* Reading view a bit tighter */
+  .reading-content { font-size: 14.5px; line-height: 1.7; }
+}
+
+/* ── Very small phones ─────────────────────────────────────────────────── */
+@media (max-width: 380px) {
+  .app-header h1 img { height: 20px; }
+  .app-header h1 { font-size: 14px; }
+  .header-info .avatar-sm { width: 24px; height: 24px; }
+  .bottom-tabs-btn { font-size: 9.5px; }
+  .btn { padding: 10px 14px; font-size: 13px; }
+  .section-title { font-size: 17px; }
+  .card { padding: 12px; }
 }

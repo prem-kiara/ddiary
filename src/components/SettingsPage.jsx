@@ -74,18 +74,18 @@ export default function SettingsPage({ showToast }) {
         <h3 style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
           <Shield size={20} color="#6d28d9" /> Account
         </h3>
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 12 }}>
           <div style={{
             width: 48, height: 48, borderRadius: '50%',
             background: 'linear-gradient(135deg, #6d28d9, #7c3aed)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', fontSize: 20, fontWeight: 700
+            color: '#fff', fontSize: 20, fontWeight: 700, flexShrink: 0,
           }}>
             {(user?.displayName || user?.email || '?')[0].toUpperCase()}
           </div>
-          <div>
-            <div style={{ fontWeight: 600, fontSize: 16 }}>{user?.displayName || 'User'}</div>
-            <div style={{ color: '#475569', fontSize: 14 }}>{user?.email}</div>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontWeight: 600, fontSize: 16, wordBreak: 'break-word' }}>{user?.displayName || 'User'}</div>
+            <div style={{ color: '#475569', fontSize: 14, wordBreak: 'break-word' }}>{user?.email}</div>
           </div>
         </div>
       </div>
@@ -113,13 +113,13 @@ export default function SettingsPage({ showToast }) {
         <div className="form-group">
           <label className="label">Daily Reminder Time</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Clock size={18} color="#475569" />
+            <Clock size={18} color="#475569" style={{ flexShrink: 0 }} />
             <input
               className="input"
               type="time"
               value={reminderTime}
               onChange={e => setReminderTime(e.target.value)}
-              style={{ maxWidth: 200 }}
+              style={{ flex: 1, maxWidth: 260 }}
             />
           </div>
         </div>
@@ -127,12 +127,12 @@ export default function SettingsPage({ showToast }) {
         <div className="form-group">
           <label className="label">Your Timezone</label>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Globe size={18} color="#475569" />
+            <Globe size={18} color="#475569" style={{ flexShrink: 0 }} />
             <select
               className="select"
               value={timezone}
               onChange={e => setTimezone(e.target.value)}
-              style={{ flex: 1 }}
+              style={{ flex: 1, minWidth: 0 }}
             >
               {TIMEZONES.map(tz => (
                 <option key={tz.value} value={tz.value}>{tz.label}</option>
@@ -156,7 +156,7 @@ export default function SettingsPage({ showToast }) {
           </label>
         </div>
 
-        <button className="btn btn-gold" onClick={handleSave} disabled={saving}>
+        <button className="btn btn-gold settings-save-btn" onClick={handleSave} disabled={saving}>
           <Save size={16} /> {saving ? 'Saving...' : 'Save Settings'}
         </button>
       </div>

@@ -401,14 +401,14 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
               </div>
             ))}
           </div>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+          <div className="comment-compose" style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <textarea
               value={commentText} onChange={e => setCommentText(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSaveComment(); }}
               placeholder="Write a comment… (⌘Enter to save)" rows={2}
-              style={{ flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 13, fontFamily: 'var(--font-body)', resize: 'none', background: '#ffffff', color: '#0f172a', lineHeight: 1.5, outline: 'none' }}
+              style={{ flex: '1 1 180px', minWidth: 0, padding: '8px 12px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: 13, fontFamily: 'var(--font-body)', resize: 'none', background: '#ffffff', color: '#0f172a', lineHeight: 1.5, outline: 'none' }}
             />
-            <button className="btn btn-teal btn-sm" onClick={handleSaveComment} disabled={saving || !commentText.trim()} style={{ flexShrink: 0, height: 36 }}>
+            <button className="btn btn-teal btn-sm" onClick={handleSaveComment} disabled={saving || !commentText.trim()} style={{ flexShrink: 0, minHeight: 40 }}>
               <Save size={13} /> {saving ? '…' : 'Save'}
             </button>
           </div>

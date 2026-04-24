@@ -60,7 +60,7 @@ export default function NotificationBell({ notifications, unreadCount, onMarkRea
 
       {/* Dropdown */}
       {open && (
-        <div className="absolute top-full right-0 w-[360px] max-h-[440px] bg-white border border-slate-200 rounded-xl shadow-lg z-[100] mt-2 flex flex-col overflow-hidden">
+        <div className="notif-dropdown absolute top-full right-0 w-[360px] max-h-[440px] bg-white border border-slate-200 rounded-xl shadow-lg z-[100] mt-2 flex flex-col overflow-hidden">
           {/* Header */}
           <div className="px-4 py-3 flex items-center justify-between border-b border-slate-100">
             <span className="font-bold text-sm text-slate-900">

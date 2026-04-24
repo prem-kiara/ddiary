@@ -55,6 +55,7 @@ export default function Layout({
       : ownerNavItems;
 
   const headerTitle = collaboratorMode ? 'Workspace' : memberMode ? 'Team Tasks' : 'Dhanam Workspace';
+  const showTaskBadge = !memberMode && !collaboratorMode && pendingCount > 0;
 
   return (
     <div className="min-h-screen">
@@ -70,8 +71,8 @@ export default function Layout({
           <span>{headerTitle}</span>
         </h1>
         <div className="header-info">
-          {!memberMode && !collaboratorMode && pendingCount > 0 && (
-            <span className="badge">{pendingCount} pending</span>
+          {showTaskBadge && (
+            <span className="badge hide-mobile">{pendingCount} pending</span>
           )}
           <span className="header-date hidden md:inline">{formatDate(Date.now())}</span>
           <NotificationBell
@@ -96,7 +97,7 @@ export default function Layout({
         </div>
       </header>
 
-      {/* Navigation */}
+      {/* Top navigation — desktop + tablet */}
       <nav className="app-nav">
         {navItems.map(n => (
           <button
@@ -106,7 +107,7 @@ export default function Layout({
           >
             <n.icon size={16} />
             <span>{n.label}</span>
-            {n.id === 'tasks' && !memberMode && !collaboratorMode && pendingCount > 0 && (
+            {n.id === 'tasks' && showTaskBadge && (
               <span className="badge">{pendingCount}</span>
             )}
           </button>
@@ -117,6 +118,27 @@ export default function Layout({
       <main className="main-content">
         {children}
       </main>
+
+      {/* Bottom tab bar — mobile (phones). Shown only via CSS on ≤640px. */}
+      <nav className="bottom-tabs" aria-label="Primary">
+        {navItems.map(n => (
+          <button
+            key={n.id}
+            className={`bottom-tabs-btn ${activePage === n.id ? 'active' : ''}`}
+            onClick={() => navigate(n.path)}
+            aria-label={n.label}
+            aria-current={activePage === n.id ? 'page' : undefined}
+          >
+            <span className="bt-icon-wrap">
+              <n.icon size={22} strokeWidth={activePage === n.id ? 2.4 : 2} />
+            </span>
+            <span>{n.label}</span>
+            {n.id === 'tasks' && showTaskBadge && (
+              <span className="bt-badge">{pendingCount > 9 ? '9+' : pendingCount}</span>
+            )}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }

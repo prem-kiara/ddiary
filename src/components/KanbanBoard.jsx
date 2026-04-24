@@ -276,22 +276,11 @@ function TaskDetailModal({ task, workspace, workspaceId, members, onDelete, curr
   const isCreator = !!(workspace && user && workspace.createdBy === user.uid);
 
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 1000,
-        background: 'rgba(30,20,10,0.45)', backdropFilter: 'blur(3px)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: 16,
-      }}
-    >
+    <div className="sheet-modal-overlay" onClick={onClose}>
       <div
+        className="sheet-modal"
         onClick={e => e.stopPropagation()}
-        style={{
-          background: '#ffffff', borderRadius: 16, width: '100%', maxWidth: 540,
-          boxShadow: '0 8px 40px rgba(0,0,0,0.18)', overflow: 'hidden',
-          display: 'flex', flexDirection: 'column', maxHeight: '90vh',
-        }}
+        style={{ padding: 0, overflow: 'hidden' }}
       >
         {/* Header */}
         <div style={{ padding: '16px 18px 12px', borderBottom: '1px solid #ede0c8', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
@@ -417,7 +406,7 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
         role="button"
         tabIndex={0}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true); } }}
-        className="group relative bg-white border border-slate-200 rounded-xl px-4 py-2.5 cursor-pointer hover:shadow-sm hover:border-slate-300 transition flex items-center gap-2.5"
+        className="k-task-card group relative bg-white border border-slate-200 rounded-xl px-3 py-2.5 cursor-pointer hover:shadow-sm hover:border-slate-300 transition"
         style={{
           opacity: task.status === 'done' ? 0.7 : 1,
           boxSizing: 'border-box',
@@ -426,65 +415,61 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
         {/* Title — flexes + truncates so everything else stays on the line */}
         <span
           title={task.text}
-          className="flex-1 min-w-0 text-[14px] font-semibold text-slate-900 leading-snug truncate"
+          className="k-title text-[14px] font-semibold text-slate-900 leading-snug truncate"
         >
           {task.text}
         </span>
 
-        {/* Status pill */}
-        <span className="flex-shrink-0">
+        <span className="k-meta">
+          {/* Status pill */}
           <StatusPill status={task.status || 'open'} />
-        </span>
 
-        {/* Priority pill */}
-        <span className="flex-shrink-0">
+          {/* Priority pill */}
           <PriorityPill priority={task.priority || 'medium'} />
-        </span>
 
-        {/* Created timestamp + elapsed (two-tone gray + violet) */}
-        {task.createdAt && (
-          <span
-            title={`Created ${formatShortStamp(task.createdAt)}`}
-            className="flex-shrink-0 inline-flex items-center gap-1"
-            style={{ fontSize: 11, color: '#94a3b8' }}
-          >
-            <Clock size={10} />
-            <span>{formatShortStamp(task.createdAt)}</span>
-            {task.status !== 'done' && (
-              <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
-                · {elapsedSince(task.createdAt)} open
-              </span>
-            )}
-          </span>
-        )}
+          {/* Created timestamp + elapsed (two-tone gray + violet) */}
+          {task.createdAt && (
+            <span
+              title={`Created ${formatShortStamp(task.createdAt)}`}
+              className="k-created inline-flex items-center gap-1"
+              style={{ fontSize: 11, color: '#94a3b8' }}
+            >
+              <Clock size={10} />
+              <span>{formatShortStamp(task.createdAt)}</span>
+              {task.status !== 'done' && (
+                <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
+                  · {elapsedSince(task.createdAt)} open
+                </span>
+              )}
+            </span>
+          )}
 
-        {/* Due date */}
-        {task.dueDate && (
-          <span
-            className={`flex-shrink-0 text-[11px] inline-flex items-center gap-1 ${isOverdue ? 'text-red-600 font-semibold' : 'text-slate-500'}`}
-            title={`Due ${formatDate(task.dueDate)}`}
-          >
-            <Calendar size={11} />
-            {formatDate(task.dueDate)}
-          </span>
-        )}
+          {/* Due date */}
+          {task.dueDate && (
+            <span
+              className={`text-[11px] inline-flex items-center gap-1 ${isOverdue ? 'text-red-600 font-semibold' : 'text-slate-500'}`}
+              title={`Due ${formatDate(task.dueDate)}`}
+            >
+              <Calendar size={11} />
+              {formatDate(task.dueDate)}
+            </span>
+          )}
 
-        {/* Comment count (only renders when > 0) */}
-        <span className="flex-shrink-0">
+          {/* Comment count (only renders when > 0) */}
           <CommentCountBadge workspaceId={workspaceId} taskId={task.id} />
-        </span>
 
-        {/* Assignee avatar */}
-        {assigneeName ? (
-          <Avatar id={assigneeId} name={assigneeName} email={task.assigneeEmail} size="sm" title={assigneeName} />
-        ) : (
-          <span
-            className="w-7 h-7 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center flex-shrink-0"
-            title="Unassigned"
-          >
-            <User size={13} />
-          </span>
-        )}
+          {/* Assignee avatar */}
+          {assigneeName ? (
+            <Avatar id={assigneeId} name={assigneeName} email={task.assigneeEmail} size="sm" title={assigneeName} />
+          ) : (
+            <span
+              className="w-7 h-7 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center flex-shrink-0"
+              title="Unassigned"
+            >
+              <User size={13} />
+            </span>
+          )}
+        </span>
       </div>
 
       {open && (
@@ -955,8 +940,8 @@ function CategoryBoard({
       )}
 
       {/* ── Filter bar (compact single row: avatars left, statuses right) ─── */}
-      <div className="bg-white border border-slate-200 rounded-xl px-4 py-2 mb-3">
-        <div className="flex items-center gap-3 flex-wrap">
+      <div className="k-filter-bar">
+        <div className="k-filter-row">
           {/* Left cluster — member avatars */}
           <div className="flex items-center gap-2 flex-wrap min-w-0">
             <span className="text-xs text-slate-500 font-medium mr-1 shrink-0">Filter:</span>
@@ -984,7 +969,7 @@ function CategoryBoard({
           </div>
 
           {/* Right cluster — status pills, pushed to the right with ml-auto */}
-          <div className="flex items-center gap-2 flex-wrap ml-auto justify-end">
+          <div className="k-filter-right flex items-center gap-2 flex-wrap ml-auto justify-end">
             {STATUSES.map(s => {
               const active = filterStatus === s.value;
               return (
@@ -1172,8 +1157,8 @@ function AddTaskModal({
   const labelStyle = { fontSize: 12, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 6 };
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: 16, padding: 28, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+    <div className="sheet-modal-overlay" onClick={onClose}>
+      <div className="sheet-modal" onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <h3 style={{ margin: 0, color: '#0f172a', fontSize: 17, fontWeight: 700 }}>New Task</h3>
@@ -1183,7 +1168,7 @@ function AddTaskModal({
               </span>
             )}
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569' }}><X size={20} /></button>
+          <button className="btn-icon" onClick={onClose}><X size={20} /></button>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1226,7 +1211,7 @@ function AddTaskModal({
                 <input value={newWsName} onChange={e => setNewWsName(e.target.value)}
                   placeholder="Workspace name…" style={{ ...inputStyle, fontSize: 13, marginTop: 2 }} autoFocus={workspaces.length === 0} />
                 {/* Optional seed category + sub-category for the new workspace */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+                <div className="form-grid-2" style={{ marginTop: 8 }}>
                   <input value={newWsCatName} onChange={e => setNewWsCatName(e.target.value)}
                     placeholder="Category (optional)"
                     style={{ ...inputStyle, fontSize: 13 }} />
@@ -1251,7 +1236,7 @@ function AddTaskModal({
             if (wsMode !== 'existing') return null;
             const activeSubs = activeCats.find(c => c.id === categoryId)?.subcategories || [];
             return (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div className="form-grid-2">
               <div>
                 <label style={labelStyle}>Category</label>
                 <select
@@ -1284,7 +1269,7 @@ function AddTaskModal({
           })()}
 
           {/* Status + Priority */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div className="form-grid-2">
             <div>
               <label style={labelStyle}>Status</label>
               <select value={status} onChange={e => setStatus(e.target.value)} style={inputStyle}>
@@ -1302,7 +1287,7 @@ function AddTaskModal({
           </div>
 
           {/* Assign to + Due Date */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div className="form-grid-2">
             <div>
               <label style={labelStyle}>Assign to</label>
               <select value={assigneeEmail} onChange={e => setAssigneeEmail(e.target.value)} style={inputStyle}>
@@ -1332,11 +1317,11 @@ function AddTaskModal({
         </div>
 
         {/* Buttons */}
-        <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
-          <button className="btn btn-outline btn-sm" onClick={onClose} style={{ flex: 1, justifyContent: 'center' }}>Cancel</button>
+        <div style={{ display: 'flex', gap: 10, marginTop: 20, flexWrap: 'wrap' }}>
+          <button className="btn btn-outline btn-sm" onClick={onClose} style={{ flex: 1, justifyContent: 'center', minWidth: 100 }}>Cancel</button>
           <button className="btn btn-teal" onClick={handleAdd}
             disabled={saving || !text.trim() || (wsMode === 'new' && !newWsName.trim())}
-            style={{ flex: 2, justifyContent: 'center' }}
+            style={{ flex: 2, justifyContent: 'center', minWidth: 160 }}
           >
             {saving
               ? (wsMode === 'new' ? 'Creating workspace…' : 'Adding…')
@@ -1839,13 +1824,9 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
     >
       {/* ── Header row ───────────────────────────────────────────────────────── */}
       <div
+        className="ws-header-row"
         onClick={toggleExpanded}
         style={{
-          padding:       '14px 18px',
-          cursor:        'pointer',
-          display:       'flex',
-          alignItems:    'center',
-          gap:           10,
           background:    expanded ? '#f1f5f9' : '#ffffff',
           borderBottom:  expanded || showInvite ? '1px solid #e2e8f0' : 'none',
           transition:    'background 0.2s',
@@ -1897,7 +1878,7 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
         )}
 
         {/* Action buttons */}
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+        <div className="ws-header-actions" onClick={e => e.stopPropagation()}>
           {/* Invite */}
           <button
             onClick={() => setShowInvite(v => !v)}
@@ -1915,7 +1896,7 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
             className="btn btn-sm btn-outline"
             style={{ gap: 5 }}
           >
-            <FolderPlus size={13} /> Add Category
+            <FolderPlus size={13} /> <span className="hide-mobile">Add </span>Category
           </button>
 
           {/* New task */}
@@ -1932,7 +1913,8 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
             <button
               onClick={() => setShowDelete(true)}
               title="Delete workspace"
-              style={{ background: 'none', border: '1px solid #e0c8c8', borderRadius: 6, cursor: 'pointer', color: '#dc262677', padding: '4px 6px', display: 'flex' }}
+              className="btn-icon"
+              style={{ border: '1px solid #e0c8c8', color: '#dc262677', minWidth: 36, minHeight: 36 }}
             >
               <Trash2 size={13} />
             </button>
@@ -2274,14 +2256,14 @@ function NewWorkspaceModal({ onClose, onCreated, showToast, user }) {
   const labelStyle = { fontSize: 12, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: 6 };
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: '#ffffff', borderRadius: 16, padding: 28, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
+    <div className="sheet-modal-overlay" onClick={onClose}>
+      <div className="sheet-modal" onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Briefcase size={18} color="#7c3aed" />
             <h3 style={{ margin: 0, color: '#0f172a', fontSize: 17, fontWeight: 700 }}>New Workspace</h3>
           </div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569' }}><X size={20} /></button>
+          <button className="btn-icon" onClick={onClose}><X size={20} /></button>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -2314,7 +2296,7 @@ function NewWorkspaceModal({ onClose, onCreated, showToast, user }) {
             <label style={{ ...labelStyle, marginBottom: 8 }}>
               <Folder size={11} style={{ marginRight: 4, verticalAlign: 'middle' }} />Seed category (optional)
             </label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div className="form-grid-2">
               <input
                 value={catName}
                 onChange={e => setCatName(e.target.value)}
@@ -2407,7 +2389,7 @@ function NewWorkspaceModal({ onClose, onCreated, showToast, user }) {
         </div>
 
         {/* Actions */}
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 20 }}>
+        <div className="modal-actions" style={{ marginTop: 20 }}>
           <button className="btn btn-outline" onClick={onClose} disabled={saving}>
             <X size={14} /> Cancel
           </button>
@@ -2489,21 +2471,21 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
   return (
     <div className="fade-in">
       {/* Page header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      <div className="page-head">
         <h2 className="section-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
           <Briefcase size={20} color="#7c3aed" /> Team Board
         </h2>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div className="page-actions">
           <button
-            className="btn btn-outline"
+            className="btn btn-outline btn-sm"
             onClick={() => setShowNewWorkspace(true)}
             style={{ gap: 5 }}
             title="Create a new workspace"
           >
-            <Briefcase size={14} /> New Workspace
+            <Briefcase size={14} /> <span className="hide-mobile">New </span>Workspace
           </button>
-          <button className="btn btn-teal" onClick={() => setShowNewTask(true)} style={{ gap: 5 }}>
-            <Plus size={14} /> New Task
+          <button className="btn btn-teal btn-sm" onClick={() => setShowNewTask(true)} style={{ gap: 5 }}>
+            <Plus size={14} /> <span className="hide-mobile">New </span>Task
           </button>
         </div>
       </div>

@@ -87,10 +87,10 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
       </button>
 
       <div className="card">
-        <div className="flex justify-between items-start mb-4 flex-wrap gap-2">
-          <div className="flex-1 min-w-0">
+        <div className="flex justify-between items-start mb-4 flex-wrap gap-3">
+          <div className="flex-1 min-w-[60%]" style={{ minWidth: 0 }}>
             <div className="flex items-center gap-2 mb-1 flex-wrap">
-              <h2 className="entry-title m-0" style={{ fontSize: 26 }}>
+              <h2 className="entry-title m-0" style={{ fontSize: 'clamp(20px, 5vw, 26px)', wordBreak: 'break-word' }}>
                 {entry.title || 'Untitled'}
               </h2>
               {entry.tag && <TagBadge tag={entry.tag} />}
@@ -104,7 +104,7 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
               )}
             </p>
           </div>
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-2 flex-wrap entry-actions">
             <button className="btn btn-sm btn-gold" onClick={() => onEdit(entry)}>
               <Edit3 size={14} /> Edit
             </button>

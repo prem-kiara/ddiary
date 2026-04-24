@@ -222,7 +222,7 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
           </div>
 
           {/* Input */}
-          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <textarea
               value={commentText}
               onChange={e => setCommentText(e.target.value)}
@@ -230,7 +230,7 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
               placeholder="Write a comment… (⌘Enter to send)"
               rows={2}
               style={{
-                flex: 1, padding: '8px 12px', borderRadius: 8,
+                flex: '1 1 180px', minWidth: 0, padding: '8px 12px', borderRadius: 8,
                 border: '1px solid #cbd5e1', fontSize: 13,
                 fontFamily: 'var(--font-body)', resize: 'none',
                 background: '#ffffff', color: '#0f172a',
@@ -241,7 +241,7 @@ export default function TaskCollabPanel({ ownerUid, task, onClose, canChangeStat
               className="btn btn-teal btn-sm"
               onClick={handleSend}
               disabled={sending || !commentText.trim()}
-              style={{ flexShrink: 0, height: 36 }}
+              style={{ flexShrink: 0, minHeight: 40 }}
             >
               <Send size={13} /> {sending ? '…' : 'Send'}
             </button>
