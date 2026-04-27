@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -90,25 +90,38 @@ export function AuthProvider({ children }) {
   // ── Silent token refresh via Microsoft SSO ────────────────────────────────
   // Microsoft's SSO means signInWithPopup completes instantly (no visible UI)
   // when the user already has an active Azure AD / M365 session in the browser.
+  //
+  // Concurrency: if multiple Graph callers hit 401 at the same moment they
+  // must all share ONE refresh round-trip — otherwise the second caller would
+  // either pop a duplicate sign-in window or receive the stale token. We
+  // hold the in-flight refresh in a ref and return the same Promise to every
+  // concurrent caller until it resolves.
+  const refreshPromiseRef = useRef(null);
   const refreshMsToken = useCallback(async () => {
-    if (msRefreshing) return msToken; // already in flight
-    setMsRefreshing(true);
-    try {
-      const result     = await signInWithPopup(auth, microsoftProvider);
-      const credential = OAuthProvider.credentialFromResult(result);
-      const newToken   = result._tokenResponse?.oauthAccessToken || credential?.accessToken;
-      if (newToken) {
-        saveMsToken(newToken);
-        return newToken;
+    if (refreshPromiseRef.current) return refreshPromiseRef.current;
+
+    refreshPromiseRef.current = (async () => {
+      setMsRefreshing(true);
+      try {
+        const result     = await signInWithPopup(auth, microsoftProvider);
+        const credential = OAuthProvider.credentialFromResult(result);
+        const newToken   = result._tokenResponse?.oauthAccessToken || credential?.accessToken;
+        if (newToken) {
+          saveMsToken(newToken);
+          return newToken;
+        }
+        return null;
+      } catch (err) {
+        console.warn('[AuthContext] MS token refresh failed:', err.message);
+        return null;
+      } finally {
+        setMsRefreshing(false);
+        refreshPromiseRef.current = null;
       }
-      return null;
-    } catch (err) {
-      console.warn('[AuthContext] MS token refresh failed:', err.message);
-      return null;
-    } finally {
-      setMsRefreshing(false);
-    }
-  }, [msToken, msRefreshing, saveMsToken]);
+    })();
+
+    return refreshPromiseRef.current;
+  }, [saveMsToken]);
 
   // ── Register refreshMsToken so plain util files can trigger a refresh ────
   // Without this, graphPeopleSearch / emailNotifications would have to receive

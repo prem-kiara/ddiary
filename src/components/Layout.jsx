@@ -1,6 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Home, PenTool, CheckSquare, Settings, LogOut, List, Kanban } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useMyWorkspaces, setActiveWorkspaceId } from '../hooks/useWorkspace';
 import NotificationBell from './NotificationBell';
 import Avatar from './shared/Avatar';
 
@@ -28,6 +29,11 @@ export default function Layout({
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const activePage = useActivePage();
+  // Workspace switcher — only renders when the user is in 2+ workspaces.
+  // Single-workspace users see no UI change.
+  const { workspaces } = useMyWorkspaces();
+  const activeWsId = (typeof localStorage !== 'undefined' && localStorage.getItem('ddiary_active_workspace_id'))
+    || workspaces[0]?.id || '';
 
   const ownerNavItems = [
     { id: 'home',     path: '/',         icon: Home,        label: 'Diary'    },
@@ -71,6 +77,22 @@ export default function Layout({
           <span>{headerTitle}</span>
         </h1>
         <div className="header-info">
+          {workspaces.length > 1 && (
+            <select
+              value={activeWsId}
+              onChange={(e) => setActiveWorkspaceId(e.target.value)}
+              title="Switch workspace"
+              style={{
+                fontSize: 13, padding: '4px 8px', borderRadius: 6,
+                border: '1px solid #cbd5e1', background: '#fff', color: '#0f172a',
+                maxWidth: 180,
+              }}
+            >
+              {workspaces.map(w => (
+                <option key={w.id} value={w.id}>{w.name || 'Workspace'}</option>
+              ))}
+            </select>
+          )}
           {showTaskBadge && (
             <span className="badge hide-mobile">{pendingCount} pending</span>
           )}

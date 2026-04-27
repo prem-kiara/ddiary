@@ -2,10 +2,8 @@ import { useState, useMemo, useEffect } from 'react';
 import { X, Send, Search, Check, AlertCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeamMembers } from '../hooks/useFirestore';
-import { useMyWorkspaces, useWorkspace } from '../hooks/useWorkspace';
+import { useMyWorkspace } from '../hooks/useWorkspace';
 import { shareDiaryEntry } from '../utils/emailNotifications';
-
-const MS_TOKEN_KEY = 'ddiary_ms_access_token';
 
 /**
  * ShareEntryModal — pick recipients (workspace members + saved contacts) and
@@ -14,23 +12,26 @@ const MS_TOKEN_KEY = 'ddiary_ms_access_token';
  * optional personal note, optional self-copy.
  */
 export default function ShareEntryModal({ entry, onClose, showToast }) {
-  const { user } = useAuth();
+  // msToken is exposed by AuthContext as React state, so the disabled-Send
+  // gate stays reactive — if the user signs in to Microsoft mid-session
+  // (e.g. via another tab) the banner disappears and the button enables
+  // automatically without the modal needing to be reopened.
+  const { user, msToken } = useAuth();
+  const hasMsToken = !!msToken;
   const { members: contacts } = useTeamMembers();
-  const { workspaces } = useMyWorkspaces();
-  // Use the first workspace by convention (same as the rest of the app).
-  const activeWsId = workspaces[0]?.id || null;
-  const { members: wsMembers } = useWorkspace(activeWsId);
+  // Active workspace (user-chosen via Layout switcher, or first by createdAt
+  // if they haven't picked). Members come from the same hook so the picker
+  // always reflects whichever workspace they're currently working in.
+  const { members: wsMembers } = useMyWorkspace();
 
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState([]); // [{ email, name }]
   const [personalNote, setPersonalNote] = useState('');
   const [copyToSelf, setCopyToSelf] = useState(true);
   const [sending, setSending] = useState(false);
-  const [hasMsToken, setHasMsToken] = useState(true);
 
-  // ESC to close + initial token check
+  // ESC to close
   useEffect(() => {
-    setHasMsToken(!!sessionStorage.getItem(MS_TOKEN_KEY));
     const onKey = (e) => { if (e.key === 'Escape' && !sending) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

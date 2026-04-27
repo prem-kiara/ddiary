@@ -151,24 +151,59 @@ export function useWorkspace(workspaceId) {
   return { workspace, members, loading };
 }
 
-// ─── BACKWARD COMPAT — old single-workspace hook used by TaskManager ────────
-// Returns the first workspace + its members. Will be phased out.
+// ─── Active-workspace selection ─────────────────────────────────────────────
+// Persisted in localStorage so refresh (and cross-tab) keep the user on the
+// workspace they last picked. A custom event keeps every consumer in sync
+// without a page reload when the user clicks the workspace switcher.
+const ACTIVE_WS_KEY    = 'ddiary_active_workspace_id';
+const ACTIVE_WS_EVENT  = 'ddiary:active-ws-changed';
+
+export function setActiveWorkspaceId(id) {
+  if (id) localStorage.setItem(ACTIVE_WS_KEY, id);
+  else    localStorage.removeItem(ACTIVE_WS_KEY);
+  window.dispatchEvent(new CustomEvent(ACTIVE_WS_EVENT));
+}
+
+function useActiveWorkspaceId() {
+  const [id, setId] = useState(() => {
+    try { return localStorage.getItem(ACTIVE_WS_KEY); } catch { return null; }
+  });
+  useEffect(() => {
+    const sync = () => {
+      try { setId(localStorage.getItem(ACTIVE_WS_KEY)); } catch {}
+    };
+    window.addEventListener(ACTIVE_WS_EVENT, sync);
+    window.addEventListener('storage', sync); // cross-tab
+    return () => {
+      window.removeEventListener(ACTIVE_WS_EVENT, sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
+  return id;
+}
+
+// ─── Single-workspace hook ──────────────────────────────────────────────────
+// Returns the active workspace (user-chosen via switcher) or, falling back,
+// the first workspace by createdAt. Single-workspace users see no behavior
+// change because workspaces[0] is identical to the active selection when
+// nothing has been chosen yet.
 export function useMyWorkspace() {
   const { workspaces, loading } = useMyWorkspaces();
-  const firstWs = workspaces[0] || null;
+  const activeId = useActiveWorkspaceId();
+  const activeWs = workspaces.find(w => w.id === activeId) || workspaces[0] || null;
   const [members, setMembers] = useState([]);
 
   useEffect(() => {
-    if (!firstWs?.id) { setMembers([]); return; }
+    if (!activeWs?.id) { setMembers([]); return; }
     const unsub = onSnapshot(
-      collection(db, 'workspaces', firstWs.id, 'members'),
+      collection(db, 'workspaces', activeWs.id, 'members'),
       (snap) => setMembers(snap.docs.map(d => ({ uid: d.id, ...d.data() }))),
       () => {}
     );
     return unsub;
-  }, [firstWs?.id]);
+  }, [activeWs?.id]);
 
-  return { workspace: firstWs, members, loading };
+  return { workspace: activeWs, members, loading };
 }
 
 // ─── Workspace tasks (real-time) ─────────────────────────────────────────────

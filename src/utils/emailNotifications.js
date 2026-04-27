@@ -127,16 +127,16 @@ function formatDue(dueDate) {
 export async function notifyTaskAssigned({ assigneeEmail, assigneeName, taskText, dueDate, priority, ownerName, ownerUid }) {
   if (!assigneeEmail) return false;
 
-  const joinLink = `${APP_URL}?join=${ownerUid}`;
+  const joinLink = `${APP_URL}?join=${encodeURIComponent(ownerUid || '')}`;
   const body = `
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
-      Hi${assigneeName ? ' <strong>' + assigneeName + '</strong>' : ''},
+      Hi${assigneeName ? ' <strong>' + escapeHtml(assigneeName) + '</strong>' : ''},
     </p>
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
-      <strong>${ownerName}</strong> has assigned you a new task:
+      <strong>${escapeHtml(ownerName)}</strong> has assigned you a new task:
     </p>
     <div style="background: #f5f3ff; border-left: 4px solid #6d28d9; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
-      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px;">${taskText}</p>
+      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px;">${escapeHtml(taskText)}</p>
       <p style="font-size: 13px; color: #475569; margin: 0;">
         ${priorityBadge(priority)} &nbsp; Due: ${formatDue(dueDate)}
       </p>
@@ -169,13 +169,13 @@ export async function notifyStatusChanged({ ownerEmail, ownerName, assigneeName,
 
   const body = `
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
-      Hi${ownerName ? ' <strong>' + ownerName + '</strong>' : ''},
+      Hi${ownerName ? ' <strong>' + escapeHtml(ownerName) + '</strong>' : ''},
     </p>
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
-      <strong>${assigneeName || 'A team member'}</strong> updated the status of a task:
+      <strong>${escapeHtml(assigneeName || 'A team member')}</strong> updated the status of a task:
     </p>
     <div style="background: #f5f3ff; border-left: 4px solid ${color}; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
-      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px;">${taskText}</p>
+      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px;">${escapeHtml(taskText)}</p>
       <p style="font-size: 14px; color: #0f172a; margin: 0;">
         Status: <span style="display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 13px; font-weight: 600; color: #fff; background: ${color};">${label}</span>
       </p>
@@ -204,13 +204,13 @@ export async function notifyTaskCompleted({ ownerEmail, ownerName, assigneeName,
 
   const body = `
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
-      Hi${ownerName ? ' <strong>' + ownerName + '</strong>' : ''},
+      Hi${ownerName ? ' <strong>' + escapeHtml(ownerName) + '</strong>' : ''},
     </p>
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
-      Great news! <strong>${assigneeName || 'A team member'}</strong> has completed a task:
+      Great news! <strong>${escapeHtml(assigneeName || 'A team member')}</strong> has completed a task:
     </p>
     <div style="background: #f0fdf4; border-left: 4px solid #15803d; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
-      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px; text-decoration: line-through;">${taskText}</p>
+      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px; text-decoration: line-through;">${escapeHtml(taskText)}</p>
       <p style="font-size: 13px; color: #15803d; font-weight: 600; margin: 0;">
         ✓ Completed — ${completedDate}
       </p>
@@ -235,14 +235,14 @@ export async function notifyWorkspaceInvite({ inviteeEmail, inviteeName, inviter
 
   const body = `
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
-      Hi${inviteeName ? ' <strong>' + inviteeName + '</strong>' : ''},
+      Hi${inviteeName ? ' <strong>' + escapeHtml(inviteeName) + '</strong>' : ''},
     </p>
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
-      <strong>${inviterName}</strong> has invited you to join a workspace on DDiary:
+      <strong>${escapeHtml(inviterName)}</strong> has invited you to join a workspace on DDiary:
     </p>
     <div style="background: #f5f3ff; border-left: 4px solid #7c3aed; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 20px;">
       <p style="font-size: 18px; font-weight: 700; color: #0f172a; margin: 0;">
-        🗂 ${workspaceName}
+        🗂 ${escapeHtml(workspaceName)}
       </p>
     </div>
     <p style="font-size: 14px; color: #0f172a; margin: 0 0 20px; line-height: 1.6;">
@@ -273,19 +273,19 @@ export async function notifyTaskReassigned({
   const commentBlock = latestComment
     ? `<div style="background: #eff6ff; border-left: 4px solid #7c3aed; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0;">
         <p style="font-size: 12px; font-weight: 600; color: #7c3aed; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.04em;">Latest comment</p>
-        <p style="font-size: 14px; color: #0f172a; margin: 0; font-style: italic; line-height: 1.5;">"${latestComment}"</p>
+        <p style="font-size: 14px; color: #0f172a; margin: 0; font-style: italic; line-height: 1.5;">"${escapeHtml(latestComment)}"</p>
       </div>`
     : '';
 
   const body = `
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
-      Hi${assigneeName ? ' <strong>' + assigneeName + '</strong>' : ''},
+      Hi${assigneeName ? ' <strong>' + escapeHtml(assigneeName) + '</strong>' : ''},
     </p>
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
-      <strong>${reassignedByName}</strong> has reassigned a task to you:
+      <strong>${escapeHtml(reassignedByName)}</strong> has reassigned a task to you:
     </p>
     <div style="background: #f5f3ff; border-left: 4px solid #6d28d9; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
-      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px;">${taskText}</p>
+      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px;">${escapeHtml(taskText)}</p>
       <p style="font-size: 13px; color: #475569; margin: 0;">
         ${priorityBadge(priority)} &nbsp; Due: ${formatDue(dueDate)}
       </p>
@@ -332,19 +332,19 @@ export async function notifyTaskReminder({
     : `<p style="font-size: 13px; color: #475569; margin: 8px 0 0;">${priorityBadge(priority)}</p>`;
 
   const assigneeLine = assigneeName
-    ? `<p style="font-size: 13px; color: #64748b; margin: 4px 0 0;">Assigned to: <strong style="color: #0f172a;">${assigneeName}</strong></p>`
+    ? `<p style="font-size: 13px; color: #64748b; margin: 4px 0 0;">Assigned to: <strong style="color: #0f172a;">${escapeHtml(assigneeName)}</strong></p>`
     : '';
 
   const notesBlock = notes
     ? `<div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 14px; margin: 16px 0;">
          <p style="font-size: 12px; font-weight: 600; color: #475569; margin: 0 0 6px; text-transform: uppercase; letter-spacing: 0.04em;">Notes</p>
-         <p style="font-size: 14px; color: #0f172a; margin: 0; line-height: 1.6; white-space: pre-wrap;">${notes}</p>
+         <p style="font-size: 14px; color: #0f172a; margin: 0; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(notes)}</p>
        </div>`
     : '';
 
   const scheduleBlock = scheduleLabel
     ? `<p style="font-size: 12px; color: #94a3b8; margin: 16px 0 0; text-align: center;">
-         ⏰ ${scheduleLabel}${ownerName ? ` · set by ${ownerName}` : ''}
+         ⏰ ${escapeHtml(scheduleLabel)}${ownerName ? ` · set by ${escapeHtml(ownerName)}` : ''}
        </p>`
     : '';
 
@@ -353,7 +353,7 @@ export async function notifyTaskReminder({
       This is your recurring reminder for the following task:
     </p>
     <div style="background: #f5f3ff; border-left: 4px solid #6d28d9; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
-      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0;">${taskText}</p>
+      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0;">${escapeHtml(taskText)}</p>
       ${dueBlock}
       ${assigneeLine}
     </div>
@@ -379,15 +379,15 @@ export async function notifyNewComment({ recipientEmail, recipientName, commente
 
   const body = `
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
-      Hi${recipientName ? ' <strong>' + recipientName + '</strong>' : ''},
+      Hi${recipientName ? ' <strong>' + escapeHtml(recipientName) + '</strong>' : ''},
     </p>
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
-      <strong>${commenterName}</strong> commented on a task:
+      <strong>${escapeHtml(commenterName)}</strong> commented on a task:
     </p>
     <div style="background: #f5f3ff; border-left: 4px solid #7c3aed; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
-      <p style="font-size: 14px; font-weight: 600; color: #0f172a; margin: 0 0 8px;">${taskText}</p>
+      <p style="font-size: 14px; font-weight: 600; color: #0f172a; margin: 0 0 8px;">${escapeHtml(taskText)}</p>
       <div style="background: #fff; padding: 12px; border-radius: 6px; margin-top: 8px;">
-        <p style="font-size: 14px; color: #0f172a; margin: 0; font-style: italic;">"${commentText}"</p>
+        <p style="font-size: 14px; color: #0f172a; margin: 0; font-style: italic;">"${escapeHtml(commentText)}"</p>
       </div>
     </div>
     <a href="${APP_URL}" style="display: inline-block; background: #6d28d9; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">

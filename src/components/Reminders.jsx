@@ -6,16 +6,13 @@ import { StatusBadge } from './TaskCollabPanel';
 import MemberAutocomplete from './shared/MemberAutocomplete';
 import SectionHeader from './shared/SectionHeader';
 import { sendTaskWhatsApp } from '../utils/whatsapp';
-
-const formatDate = (d) => {
-  if (!d) return '';
-  const date = typeof d === 'string' ? new Date(d) : d.toDate ? d.toDate() : new Date(d);
-  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-};
+// formatDateTime ("Mon, Apr 3, 2026") matches the format this component used
+// inline before — aliased to formatDate for minimal diff.
+import { formatDateTime as formatDate, parseDate } from '../utils/dates';
 
 const isOverdue = (dueDate) => {
-  if (!dueDate) return false;
-  const date = typeof dueDate === 'string' ? new Date(dueDate) : dueDate.toDate ? dueDate.toDate() : new Date(dueDate);
+  const date = parseDate(dueDate);
+  if (!date) return false;
   return date < new Date() && date.toDateString() !== new Date().toDateString();
 };
 

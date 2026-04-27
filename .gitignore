@@ -4,6 +4,7 @@ functions/node_modules/
 
 # Build output
 dist/
+dist-check*/
 .firebase/
 
 # Environment variables — NEVER commit these

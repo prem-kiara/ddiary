@@ -924,9 +924,25 @@ export default function TaskManager({
   const firstWs = workspaces[0] || null;
 
   // ── Org users from M365 ─────────────────────────────────────────────────
+  // Refetched on tab visibility change (throttled) so newly-added org members
+  // appear without requiring a page reload. Combined with the 401-retry in
+  // graphPeopleSearch, this means the org directory stays current across
+  // long-running browser sessions.
   const [orgUsers, setOrgUsers] = useState([]);
+  const lastOrgFetchRef = useRef(0);
   useEffect(() => {
-    fetchAllOrgUsers().then(users => setOrgUsers(users || [])).catch(() => {});
+    const REFRESH_MIN_INTERVAL_MS = 5 * 60 * 1000;
+    const refetch = () => {
+      if (Date.now() - lastOrgFetchRef.current < REFRESH_MIN_INTERVAL_MS) return;
+      lastOrgFetchRef.current = Date.now();
+      fetchAllOrgUsers().then(users => setOrgUsers(users || [])).catch(() => {});
+    };
+    refetch(); // initial
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refetch();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
   }, []);
 
   // Merged assignee list: Firestore members (have UIDs) + M365 org users, deduped by email
