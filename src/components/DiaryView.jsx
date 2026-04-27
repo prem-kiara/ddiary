@@ -1,6 +1,8 @@
-import { ChevronLeft, Edit3, Trash2, Archive, RotateCcw } from 'lucide-react';
+import { useState } from 'react';
+import { ChevronLeft, Edit3, Trash2, Archive, RotateCcw, Share2 } from 'lucide-react';
 import { TagBadge } from './shared/Pills';
 import { parseDate } from '../utils/dates';
+import ShareEntryModal from './ShareEntryModal';
 
 // Long-form date — "Monday, April 3, 2026" — used in the entry header.
 const formatDate = (d) => {
@@ -79,9 +81,19 @@ function renderContent(content) {
   );
 }
 
-export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, onUnarchive }) {
+export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, onUnarchive, showToast }) {
+  const [shareOpen, setShareOpen] = useState(false);
+
   return (
     <div className="fade-in">
+      {shareOpen && (
+        <ShareEntryModal
+          entry={entry}
+          onClose={() => setShareOpen(false)}
+          showToast={showToast || (() => {})}
+        />
+      )}
+
       <button className="btn btn-ghost mb-3" onClick={onBack}>
         <ChevronLeft size={18} /> Back to Diary
       </button>
@@ -107,6 +119,13 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
           <div className="flex gap-2 flex-wrap entry-actions">
             <button className="btn btn-sm btn-gold" onClick={() => onEdit(entry)}>
               <Edit3 size={14} /> Edit
+            </button>
+            <button
+              className="btn btn-sm btn-outline"
+              onClick={() => setShareOpen(true)}
+              title="Email this entry to one or more people"
+            >
+              <Share2 size={14} /> Share
             </button>
             {entry.archived ? (
               <button className="btn btn-sm btn-outline" onClick={() => onUnarchive(entry.id)}>

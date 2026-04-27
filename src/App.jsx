@@ -20,7 +20,7 @@ import './styles/diary.css';
 // ─── Route wrappers ──────────────────────────────────────────────────────────
 // DiaryView needs an entry object. We prefer route state (fast, no re-fetch)
 // then fall back to finding by ID in the already-loaded entries array.
-function DiaryViewPage({ entries, archivedEntries, onEdit, onDelete, onArchive, onUnarchive }) {
+function DiaryViewPage({ entries, archivedEntries, onEdit, onDelete, onArchive, onUnarchive, showToast }) {
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -38,6 +38,7 @@ function DiaryViewPage({ entries, archivedEntries, onEdit, onDelete, onArchive, 
       onDelete={onDelete}
       onArchive={onArchive}
       onUnarchive={onUnarchive}
+      showToast={showToast}
     />
   );
 }
@@ -234,6 +235,7 @@ function DiaryApp() {
                 onDelete={handleDeleteEntry}
                 onArchive={handleArchiveEntry}
                 onUnarchive={handleUnarchiveEntry}
+                showToast={showToast}
               />
             }
           />

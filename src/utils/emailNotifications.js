@@ -3,34 +3,70 @@
  * Sends from the signed-in user's M365 mailbox — no third-party service needed.
  */
 
+import { tryRefreshMsToken } from './msTokenRefresh';
+
 const MS_TOKEN_KEY = 'ddiary_ms_access_token';
 const APP_URL = 'https://dhanamdiary.web.app';
 
+// SharePoint drive ID — same one used for drawing uploads (kept duplicated here
+// so this module has no cross-import on useFirestore). If the env var changes,
+// update useFirestore.js and here together.
+const SP_DRIVE_ID = import.meta.env.VITE_SHAREPOINT_DRIVE_ID || '';
+
+// ─── HTML escaping (used by the diary-share template) ───────────────────────
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // ─── Core send function ─────────────────────────────────────────────────────
+// Auto-refreshes the Microsoft access token on 401 (token expired during a
+// long browser session). Without this, every email failure required a manual
+// log-out / log-in. See src/utils/msTokenRefresh.js for the refresh bridge.
 async function sendEmail({ to, subject, htmlBody }) {
-  const msToken = sessionStorage.getItem(MS_TOKEN_KEY);
-  if (!msToken) {
-    console.warn('Email not sent — no Microsoft token available');
-    return false;
+  const payload = JSON.stringify({
+    message: {
+      subject,
+      body: { contentType: 'HTML', content: htmlBody },
+      toRecipients: to.split(',').map(email => ({
+        emailAddress: { address: email.trim() },
+      })),
+    },
+  });
+
+  const doSend = (token) => fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: payload,
+  });
+
+  let token = sessionStorage.getItem(MS_TOKEN_KEY);
+  if (!token) {
+    token = await tryRefreshMsToken();
+    if (!token) {
+      console.warn('Email not sent — no Microsoft token available');
+      return false;
+    }
   }
 
   try {
-    const res = await fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${msToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        message: {
-          subject,
-          body: { contentType: 'HTML', content: htmlBody },
-          toRecipients: to.split(',').map(email => ({
-            emailAddress: { address: email.trim() },
-          })),
-        },
-      }),
-    });
+    let res = await doSend(token);
+    if (res.status === 401) {
+      // Token expired mid-session — refresh and retry once
+      const newToken = await tryRefreshMsToken();
+      if (!newToken) {
+        console.warn('Email not sent — token expired and refresh failed');
+        return false;
+      }
+      res = await doSend(newToken);
+    }
 
     if (res.status === 202 || res.ok) return true;
 
@@ -363,5 +399,161 @@ export async function notifyNewComment({ recipientEmail, recipientName, commente
     to: recipientEmail,
     subject: `New comment on: ${taskText.slice(0, 50)}`,
     htmlBody: wrapHtml('New Comment', body),
+  });
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// DIARY ENTRY SHARING
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/**
+ * Best-effort upgrade of an organization-scoped SharePoint share link to an
+ * anonymous "anyone with the link" link, so embedded <img> tags render in
+ * external recipients' inboxes (Gmail, non-tenant Outlook, etc).
+ *
+ * Resolves the SharePoint item by its existing webUrl, then calls Graph
+ * createLink with scope:'anonymous'. If the tenant disallows anonymous
+ * sharing (admin policy), the call returns 403 and we keep the original URL.
+ *
+ * Returns: { url: string, isAnonymous: boolean }
+ */
+async function upgradeDrawingLink(orgUrl) {
+  const msToken = sessionStorage.getItem(MS_TOKEN_KEY);
+  if (!msToken || !SP_DRIVE_ID || !orgUrl) {
+    return { url: orgUrl, isAnonymous: false };
+  }
+  try {
+    // 1. Resolve the item via shares endpoint — encode the URL as Graph expects
+    //    (base64url, prefixed with "u!"). See:
+    //    https://learn.microsoft.com/graph/api/shares-get
+    const encoded = btoa(orgUrl).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+    const itemRes = await fetch(`https://graph.microsoft.com/v1.0/shares/u!${encoded}/driveItem`, {
+      headers: { Authorization: `Bearer ${msToken}` },
+    });
+    if (!itemRes.ok) return { url: orgUrl, isAnonymous: false };
+    const item = await itemRes.json();
+
+    // 2. Ask for an anonymous link
+    const linkRes = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${SP_DRIVE_ID}/items/${item.id}/createLink`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${msToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'view', scope: 'anonymous' }),
+      }
+    );
+    if (!linkRes.ok) return { url: orgUrl, isAnonymous: false };
+    const data = await linkRes.json();
+    const newUrl = data?.link?.webUrl;
+    if (!newUrl) return { url: orgUrl, isAnonymous: false };
+    // SharePoint anonymous "view" links open a viewer page rather than the raw
+    // image. Append ?download=1 so an <img src=...> resolves to the file bytes.
+    const directUrl = newUrl.includes('?') ? `${newUrl}&download=1` : `${newUrl}?download=1`;
+    return { url: directUrl, isAnonymous: true };
+  } catch {
+    return { url: orgUrl, isAnonymous: false };
+  }
+}
+
+/** Render plain-text content (with auto-detected lists) into safe HTML. */
+function entryContentToHtml(content) {
+  if (!content) return '';
+  const paragraphs = String(content).split(/\n\n+/);
+
+  return paragraphs.map((para) => {
+    const lines = para.split('\n').filter(l => l.length > 0);
+    if (lines.length === 0) return '';
+
+    const isNumbered = lines.every(l => /^\d+[.)]\s/.test(l.trim()));
+    const isBulleted = lines.every(l => /^[-*•]\s/.test(l.trim()));
+
+    if (isNumbered) {
+      const items = lines.map(l => `<li style="margin: 0 0 6px;">${escapeHtml(l.replace(/^\d+[.)]\s/, '').trim())}</li>`).join('');
+      return `<ol style="padding-left: 24px; margin: 0 0 14px;">${items}</ol>`;
+    }
+    if (isBulleted) {
+      const items = lines.map(l => `<li style="margin: 0 0 6px;">${escapeHtml(l.replace(/^[-*•]\s/, '').trim())}</li>`).join('');
+      return `<ul style="padding-left: 24px; margin: 0 0 14px;">${items}</ul>`;
+    }
+    return lines.map(l => `<p style="margin: 0 0 6px;">${escapeHtml(l)}</p>`).join('');
+  }).join('');
+}
+
+/**
+ * Share a diary entry with one or more recipients via Outlook/Graph email.
+ * Drawings (if any) are embedded as <img> with best-effort anonymous-link
+ * upgrade; if upgrade fails, they fall back to a clickable "View drawing" link
+ * with a one-line note about sign-in.
+ *
+ * Returns true on success. Multiple recipients go in the same To: header so
+ * everyone sees the full distribution list (standard for meeting minutes).
+ */
+export async function shareDiaryEntry({ entry, recipients, senderName, personalNote, copyToSelf, selfEmail }) {
+  if (!entry || !recipients || recipients.length === 0) return false;
+
+  const title    = entry.title?.trim() || 'Untitled diary entry';
+  const dateStr  = entry.createdAt
+    ? new Date(typeof entry.createdAt.toDate === 'function' ? entry.createdAt.toDate() : entry.createdAt)
+        .toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+    : '';
+
+  // Upgrade drawing URLs in parallel (best-effort)
+  const drawings = Array.isArray(entry.drawings) ? entry.drawings : [];
+  const upgraded = await Promise.all(drawings.map(upgradeDrawingLink));
+  const allAnonymous = upgraded.length > 0 && upgraded.every(u => u.isAnonymous);
+  const anyOrgScoped = upgraded.some(u => !u.isAnonymous);
+
+  const drawingsBlock = drawings.length === 0 ? '' : `
+    <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+    <p style="font-size: 13px; font-weight: 600; color: #475569; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.04em;">
+      Attached Drawings
+    </p>
+    <div>
+      ${upgraded.map((u, i) => u.isAnonymous
+        ? `<img src="${u.url}" alt="Drawing ${i + 1}" style="max-width: 100%; border-radius: 8px; border: 1px solid #e2e8f0; margin: 0 0 10px; display: block;" />`
+        : `<p style="margin: 0 0 8px;"><a href="${u.url}" style="color: #6d28d9; font-weight: 600;">📎 View drawing ${i + 1}</a></p>`
+      ).join('')}
+    </div>
+    ${anyOrgScoped && !allAnonymous ? `
+      <p style="font-size: 12px; color: #94a3b8; margin: 6px 0 0; font-style: italic;">
+        Some drawings require a Dhanam sign-in to view.
+      </p>` : ''}
+  `;
+
+  const noteBlock = personalNote?.trim() ? `
+    <div style="background: #f5f3ff; border-left: 4px solid #7c3aed; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 0 0 18px;">
+      <p style="font-size: 14px; color: #0f172a; margin: 0; line-height: 1.6; white-space: pre-wrap;">${escapeHtml(personalNote.trim())}</p>
+    </div>
+  ` : '';
+
+  const tagBlock = entry.tag ? `
+    <span style="display: inline-block; background: #ede9fe; color: #6d28d9; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px; letter-spacing: 0.04em; text-transform: uppercase;">${escapeHtml(entry.tag)}</span>
+  ` : '';
+
+  const body = `
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 6px;">
+      <strong>${escapeHtml(senderName || 'A colleague')}</strong> shared a diary entry with you${dateStr ? ` from ${escapeHtml(dateStr)}` : ''}.
+    </p>
+    ${noteBlock}
+    <div style="margin: 16px 0 8px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+      <h2 style="font-size: 20px; font-weight: 700; color: #0f172a; margin: 0;">${escapeHtml(title)}</h2>
+      ${tagBlock}
+    </div>
+    ${dateStr ? `<p style="font-size: 13px; color: #64748b; margin: 0 0 16px;">${escapeHtml(dateStr)}</p>` : ''}
+    <div style="font-size: 15px; color: #1e293b; line-height: 1.7; margin: 14px 0 0;">
+      ${entryContentToHtml(entry.content)}
+    </div>
+    ${drawingsBlock}
+  `;
+
+  const recipientList = recipients.map(r => r.trim()).filter(Boolean);
+  const toLine = copyToSelf && selfEmail
+    ? Array.from(new Set([...recipientList, selfEmail.trim().toLowerCase()])).join(',')
+    : recipientList.join(',');
+
+  return sendEmail({
+    to: toLine,
+    subject: title,
+    htmlBody: wrapHtml('Diary Entry Shared', body),
   });
 }

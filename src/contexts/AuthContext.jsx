@@ -10,6 +10,7 @@ import { doc, setDoc, getDoc, deleteDoc, collectionGroup, query, where, getDocs 
 import { auth, db, microsoftProvider } from '../firebase';
 import { writeUserDirectory } from '../hooks/useFirestore';
 import { addWorkspaceMember } from '../hooks/useWorkspace';
+import { setMsTokenRefresher } from '../utils/msTokenRefresh';
 
 const AuthContext = createContext(null);
 
@@ -108,6 +109,15 @@ export function AuthProvider({ children }) {
       setMsRefreshing(false);
     }
   }, [msToken, msRefreshing, saveMsToken]);
+
+  // ── Register refreshMsToken so plain util files can trigger a refresh ────
+  // Without this, graphPeopleSearch / emailNotifications would have to receive
+  // refreshMsToken as a prop from every caller (massive churn). The singleton
+  // in src/utils/msTokenRefresh.js bridges util-land → React-land cleanly.
+  useEffect(() => {
+    setMsTokenRefresher(refreshMsToken);
+    return () => setMsTokenRefresher(null);
+  }, [refreshMsToken]);
 
   // ── Claim any pending_* workspace memberships for this user ─────────────
   // When an admin adds someone from the org directory BEFORE they sign in,

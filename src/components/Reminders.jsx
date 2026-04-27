@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
-import { Bell, Mail, Calendar, CheckCircle, Clock, UserPlus, Send, X, Edit2, MessageCircle, Link } from 'lucide-react';
+import { Bell, Mail, Calendar, CheckCircle, Clock, UserPlus, Send, X, Edit2, MessageCircle, Link, ChevronDown, ChevronRight } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserDirectory } from '../hooks/useFirestore';
 import { StatusBadge } from './TaskCollabPanel';
 import MemberAutocomplete from './shared/MemberAutocomplete';
 import SectionHeader from './shared/SectionHeader';
+import { sendTaskWhatsApp } from '../utils/whatsapp';
 
 const formatDate = (d) => {
   if (!d) return '';
@@ -17,12 +18,6 @@ const isOverdue = (dueDate) => {
   const date = typeof dueDate === 'string' ? new Date(dueDate) : dueDate.toDate ? dueDate.toDate() : new Date(dueDate);
   return date < new Date() && date.toDateString() !== new Date().toDateString();
 };
-
-function formatWhatsAppPhone(phone) {
-  const digits = phone.replace(/\D/g, '');
-  if (digits.length === 10 && /^[6-9]/.test(digits)) return '91' + digits;
-  return digits;
-}
 
 export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate, showToast }) {
   const { user } = useAuth();
@@ -154,15 +149,7 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
   };
 
   const sendWhatsApp = (task) => {
-    const rawPhone = task.assigneePhone;
-    if (!rawPhone) { showToast('No phone number set for this task.', 'warning'); return; }
-    const phone = formatWhatsAppPhone(rawPhone);
-    const greeting = task.assigneeName ? `Hi ${task.assigneeName},` : 'Hi,';
-    const due = task.dueDate ? `\n📅 Due: ${formatDate(task.dueDate)}` : '';
-    const priority = task.priority ? `\n⚡ Priority: ${task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}` : '';
-    const from = user?.displayName || 'Suren';
-    const msg = `${greeting}\n\nYou have been assigned a task:\n\n📋 *${task.text}*${due}${priority}\n\nPlease action this at your earliest convenience.\n\n— ${from}`;
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+    sendTaskWhatsApp(task, { user, showToast, fromFallback: 'Your manager' });
   };
 
   const renderTask = (task) => {

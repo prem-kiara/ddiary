@@ -20,15 +20,10 @@ import SectionHeader from './shared/SectionHeader';
 import ReminderEditor from './shared/ReminderEditor';
 import { fetchAllOrgUsers } from '../utils/graphPeopleSearch';
 import { normalizeReminder, computeNextSendAt, describeSchedule, describeNextSend } from '../utils/reminders';
+import { sendTaskWhatsApp } from '../utils/whatsapp';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const priorityColors = { high: '#dc2626', medium: '#d97706', low: '#15803d' };
-
-function formatWhatsAppPhone(phone) {
-  const digits = phone.replace(/\D/g, '');
-  if (digits.length === 10 && /^[6-9]/.test(digits)) return '91' + digits;
-  return digits;
-}
 
 // ── Comment count badge ────────────────────────────────────────────────────────
 function CommentBadge({ ownerUid, taskId }) {
@@ -544,13 +539,7 @@ function TaskCard({
   };
 
   const handleWhatsApp = () => {
-    if (!task.assigneePhone) { showToast('No phone number set for this task.', 'warning'); return; }
-    const phone = formatWhatsAppPhone(task.assigneePhone);
-    const from  = user?.displayName || 'Your manager';
-    const due   = task.dueDate ? `\n📅 Due: ${formatDate(task.dueDate)}` : '';
-    const pri   = task.priority ? `\n⚡ Priority: ${task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}` : '';
-    const msg   = `Hi ${task.assigneeName || 'there'},\n\nYou have been assigned a task:\n\n📋 *${task.text}*${due}${pri}\n\nPlease action this at your earliest convenience.\n\n— ${from}`;
-    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
+    sendTaskWhatsApp(task, { user, showToast, fromFallback: 'Your manager' });
   };
 
   const inputStyle = {
