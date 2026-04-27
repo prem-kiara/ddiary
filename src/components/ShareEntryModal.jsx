@@ -1,9 +1,12 @@
-import { useState, useMemo, useEffect } from 'react';
-import { X, Send, Search, Check, AlertCircle } from 'lucide-react';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { X, Send, Search, Check, AlertCircle, Loader2 } from 'lucide-react';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeamMembers } from '../hooks/useFirestore';
-import { useMyWorkspace } from '../hooks/useWorkspace';
+import { useMyWorkspaces } from '../hooks/useWorkspace';
 import { shareDiaryEntry } from '../utils/emailNotifications';
+import { searchOrgPeople } from '../utils/graphPeopleSearch';
 
 /**
  * ShareEntryModal — pick recipients (workspace members + saved contacts) and
@@ -19,16 +22,48 @@ export default function ShareEntryModal({ entry, onClose, showToast }) {
   const { user, msToken } = useAuth();
   const hasMsToken = !!msToken;
   const { members: contacts } = useTeamMembers();
-  // Active workspace (user-chosen via Layout switcher, or first by createdAt
-  // if they haven't picked). Members come from the same hook so the picker
-  // always reflects whichever workspace they're currently working in.
-  const { members: wsMembers } = useMyWorkspace();
+  const { workspaces } = useMyWorkspaces();
+
+  // Members from EVERY workspace the user is in, deduped by email. Fetched
+  // one-shot when the modal opens (not real-time) — adding a member to a
+  // workspace is rare, and the Graph org-search below covers anyone we miss.
+  // ~7 workspaces × ~10 members = ~70 reads on modal open: negligible.
+  const [allWsMembers, setAllWsMembers] = useState([]);
+  useEffect(() => {
+    if (!workspaces || workspaces.length === 0) { setAllWsMembers([]); return; }
+    let cancelled = false;
+    (async () => {
+      const map = new Map();
+      await Promise.all(workspaces.map(async (ws) => {
+        try {
+          const snap = await getDocs(collection(db, 'workspaces', ws.id, 'members'));
+          snap.docs.forEach(d => {
+            const m = d.data();
+            const e = m.email?.toLowerCase();
+            if (!e) return;
+            if (!map.has(e)) map.set(e, { email: e, displayName: m.displayName || e });
+          });
+        } catch { /* permission errors swallowed — that workspace just won't contribute */ }
+      }));
+      if (!cancelled) setAllWsMembers(Array.from(map.values()));
+    })();
+    return () => { cancelled = true; };
+  }, [workspaces]);
 
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState([]); // [{ email, name }]
   const [personalNote, setPersonalNote] = useState('');
   const [copyToSelf, setCopyToSelf] = useState(true);
   const [sending, setSending] = useState(false);
+
+  // Org-directory search results (M365 via Graph). Local pool always renders
+  // immediately; org results stream in 300ms after the user stops typing so
+  // they can pick anyone in the company even if that person has never been
+  // added to a workspace or saved as a contact.
+  const [orgResults, setOrgResults] = useState([]);
+  const [orgSearching, setOrgSearching] = useState(false);
+  const orgSearchTimerRef = useRef(null);
+  const orgSearchSeqRef = useRef(0); // race guard for stale responses
 
   // ESC to close
   useEffect(() => {
@@ -37,14 +72,42 @@ export default function ShareEntryModal({ entry, onClose, showToast }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose, sending]);
 
-  // ── Build the picker pool: workspace members + saved contacts, deduped ────
+  // ── Debounced org-directory search ────────────────────────────────────────
+  // Fires ~300ms after the user stops typing. seqRef prevents an older
+  // in-flight response from overwriting a newer one (e.g. user types fast →
+  // fast response from earlier query arrives after slow response from later
+  // query); we only commit results whose sequence number is the latest.
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2 || !hasMsToken) {
+      setOrgResults([]);
+      setOrgSearching(false);
+      if (orgSearchTimerRef.current) clearTimeout(orgSearchTimerRef.current);
+      return;
+    }
+    setOrgSearching(true);
+    if (orgSearchTimerRef.current) clearTimeout(orgSearchTimerRef.current);
+    const mySeq = ++orgSearchSeqRef.current;
+    orgSearchTimerRef.current = setTimeout(async () => {
+      const results = await searchOrgPeople(q);
+      if (mySeq !== orgSearchSeqRef.current) return; // stale
+      setOrgResults(results || []);
+      setOrgSearching(false);
+    }, 300);
+    return () => {
+      if (orgSearchTimerRef.current) clearTimeout(orgSearchTimerRef.current);
+    };
+  }, [query, hasMsToken]);
+
+  // ── Build the picker pool: workspace members (across ALL workspaces) +
+  //    saved contacts, deduped by email. Sorted alphabetically.
   const pool = useMemo(() => {
     const map = new Map(); // email → { email, name, source }
     const myEmail = user?.email?.toLowerCase();
-    wsMembers.forEach((m) => {
+    allWsMembers.forEach((m) => {
       const e = m.email?.toLowerCase();
       if (!e || e === myEmail) return;
-      if (!map.has(e)) map.set(e, { email: e, name: m.displayName || m.name || e, source: 'Workspace' });
+      if (!map.has(e)) map.set(e, { email: e, name: m.displayName || e, source: 'Team' });
     });
     contacts.forEach((c) => {
       const e = c.email?.toLowerCase();
@@ -52,23 +115,37 @@ export default function ShareEntryModal({ entry, onClose, showToast }) {
       if (!map.has(e)) map.set(e, { email: e, name: c.name || e, source: 'Contacts' });
     });
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [wsMembers, contacts, user?.email]);
+  }, [allWsMembers, contacts, user?.email]);
 
-  // ── Filter by query, hide already-selected ────────────────────────────────
+  // ── Filter pool + merge org-directory results, hide already-selected ──────
+  // Local pool (workspace + contacts) is shown first because it matches faster
+  // and is more relevant. Org-directory results are appended below, deduped
+  // against everything already in the list (a workspace member who also exists
+  // in the org directory only appears once, with the higher-priority source
+  // label preserved).
   const filtered = useMemo(() => {
     const selectedEmails = new Set(selected.map(s => s.email));
     const q = query.trim().toLowerCase();
-    return pool.filter(p =>
+    const localMatches = pool.filter(p =>
       !selectedEmails.has(p.email) &&
       (!q || p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q))
     );
-  }, [pool, query, selected]);
+    const seen = new Set([...selectedEmails, ...localMatches.map(p => p.email)]);
+    const orgMatches = (orgResults || [])
+      .map(o => ({
+        email: (o.email || '').toLowerCase(),
+        name:  o.displayName || o.email || '',
+        source: 'Organization',
+      }))
+      .filter(o => o.email && !seen.has(o.email));
+    return [...localMatches, ...orgMatches];
+  }, [pool, query, selected, orgResults]);
 
-  // Allow adding a typed email that isn't in the directory
+  // Allow adding a typed email that isn't in any directory
   const typedEmailValid = /^\S+@\S+\.\S+$/.test(query.trim());
   const typedEmailNew = typedEmailValid &&
     !selected.some(s => s.email === query.trim().toLowerCase()) &&
-    !pool.some(p => p.email === query.trim().toLowerCase());
+    !filtered.some(p => p.email === query.trim().toLowerCase());
 
   const addRecipient = (r) => {
     setSelected(prev => prev.some(s => s.email === r.email) ? prev : [...prev, r]);
@@ -216,14 +293,23 @@ export default function ShareEntryModal({ entry, onClose, showToast }) {
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && typedEmailNew) { e.preventDefault(); addTyped(); }
               }}
-              placeholder="Search by name or email…"
+              placeholder="Search anyone in your organization…"
               style={{
                 width: '100%', boxSizing: 'border-box',
-                padding: '9px 10px 9px 32px',
+                padding: '9px 36px 9px 32px',
                 border: '1px solid #cbd5e1', borderRadius: 8,
                 fontSize: 14, outline: 'none',
               }}
             />
+            {orgSearching && (
+              <Loader2
+                size={15}
+                style={{
+                  position: 'absolute', right: 10, top: 12,
+                  color: '#7c3aed', animation: 'spin 0.9s linear infinite',
+                }}
+              />
+            )}
           </div>
 
           {/* Typed-email "Add" row */}
@@ -249,9 +335,13 @@ export default function ShareEntryModal({ entry, onClose, showToast }) {
           }}>
             {filtered.length === 0 ? (
               <p style={{ margin: 0, padding: '14px 12px', fontSize: 13, color: '#94a3b8', textAlign: 'center' }}>
-                {pool.length === 0
-                  ? 'No workspace members or saved contacts yet.'
-                  : query ? 'No matches. Type a full email and press Enter to add.' : 'Search to find recipients.'}
+                {!query
+                  ? 'Type to search workspace members, contacts, or your organization.'
+                  : query.trim().length < 2
+                    ? 'Type at least 2 characters to search.'
+                    : orgSearching
+                      ? 'Searching organization…'
+                      : 'No matches. Type a full email and press Enter to add.'}
               </p>
             ) : (
               filtered.map(p => (
