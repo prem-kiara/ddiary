@@ -13,7 +13,10 @@ dist-check*/
 .env.*.local
 
 # Firebase
-.firebaserc
+# (.firebaserc IS committed — it pins the project for `firebase deploy`)
+
+# FUSE filesystem temp files (left over when editing inside a network mount)
+.fuse_hidden*
 
 # Service account key — NEVER commit this
 scripts/serviceAccountKey.json
