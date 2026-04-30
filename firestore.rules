@@ -2,6 +2,16 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ─── Platform-wide super admins ───────────────────────────────────────
+    // These two accounts can read and write any document in the database.
+    // Add or remove emails here to manage super admin membership.
+    function isSuperAdmin() {
+      return request.auth != null && (
+        request.auth.token.email == 'suren@dhanam.finance' ||
+        request.auth.token.email == 'gokul@dhanam.finance'
+      );
+    }
+
     // ─── User profiles & all subcollections ───────────────────────────────
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
@@ -133,9 +143,10 @@ service cloud.firestore {
       match /tasks/{taskId} {
         allow read, create:   if canAccessWorkspace();
         allow update:         if canAccessWorkspace();
-        allow delete:         if canAccessWorkspace()
-                               && (resource.data.createdBy == request.auth.uid
-                                   || isWorkspaceCreator());
+        allow delete:         if isSuperAdmin()
+                               || (canAccessWorkspace()
+                                   && (resource.data.createdBy == request.auth.uid
+                                       || isWorkspaceCreator()));
 
         // Comments — workspace members/creator can read/create; only author can edit/delete
         match /comments/{commentId} {
@@ -185,9 +196,9 @@ service cloud.firestore {
                    && resource.data.inviterUid == request.auth.uid;
     }
 
-    // ─── Deny everything else ─────────────────────────────────────────────
+    // ─── Deny everything else (super admins excepted) ─────────────────────
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if isSuperAdmin();
     }
   }
 }

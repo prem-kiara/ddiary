@@ -14,6 +14,12 @@ import { setMsTokenRefresher } from '../utils/msTokenRefresh';
 
 const AuthContext = createContext(null);
 
+// ─── Super-admin email list ───────────────────────────────────────────────────
+// Users whose email appears here gain platform-wide admin privileges:
+// they can delete and edit any task, workspace, category, and sub-category
+// regardless of which workspace they created or which role they hold.
+const SUPER_ADMIN_EMAILS = ['suren@dhanam.finance', 'gokul@dhanam.finance'];
+
 export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth must be used within AuthProvider');
@@ -282,6 +288,9 @@ export function AuthProvider({ children }) {
   const isMember       = user?.role === 'member';
   const isCollaborator = user?.role === 'collaborator';
 
+  // Platform-wide super admin (can delete/edit all tasks, workspaces, categories)
+  const isSuperAdmin = !!(user?.email && SUPER_ADMIN_EMAILS.includes(user.email.toLowerCase()));
+
   return (
     <AuthContext.Provider value={{
       user, loading, error,
@@ -291,7 +300,7 @@ export function AuthProvider({ children }) {
       // Auth actions
       loginWithMicrosoft, logout, updateSettings,
       joinWorkspace, setWorkspaceId,
-      setError, isOwner, isMember, isCollaborator,
+      setError, isOwner, isMember, isCollaborator, isSuperAdmin,
     }}>
       {children}
     </AuthContext.Provider>

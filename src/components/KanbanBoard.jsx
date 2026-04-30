@@ -274,8 +274,8 @@ function TaskDetailModal({ task, workspace, workspaceId, members, onDelete, curr
   const statusCfg = STATUSES.find(s => s.value === (task.status || 'open')) || STATUSES[0];
   const isOverdue = task.dueDate && task.status !== 'done' && new Date(task.dueDate) < new Date();
   const assignee  = members.find(m => m.uid === task.assigneeUid);
-  // Only the workspace creator can re-categorise tasks (any task, regardless of author).
-  const isCreator = !!(workspace && user && workspace.createdBy === user.uid);
+  // The workspace creator OR an admin (which includes super-admins) can re-categorise tasks.
+  const isCreator = !!(workspace && user && workspace.createdBy === user.uid) || isAdmin;
 
   return (
     <div className="sheet-modal-overlay" onClick={onClose}>
@@ -327,7 +327,7 @@ function TaskDetailModal({ task, workspace, workspaceId, members, onDelete, curr
             </div>
           </div>
           <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-            {task.createdBy === currentUid && (
+            {(task.createdBy === currentUid || isAdmin) && (
               <button
                 onClick={() => { onDelete(task.id); onClose(); }}
                 title="Delete task"
@@ -1948,7 +1948,8 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
     setTimeout(() => setCopied(false), 2500);
   };
 
-  const isAdmin = workspace.role === 'admin' || workspace.createdBy === user.uid;
+  const { isSuperAdmin } = useAuth();
+  const isAdmin = workspace.role === 'admin' || workspace.createdBy === user.uid || isSuperAdmin;
 
   return (
     <div
