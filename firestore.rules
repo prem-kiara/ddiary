@@ -3,8 +3,11 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ─── Platform-wide super admins ───────────────────────────────────────
-    // These two accounts can read and write any document in the database.
+    // These two accounts can read and write EVERY document in the database.
     // Add or remove emails here to manage super admin membership.
+    // NOTE: this function is used as an explicit bypass on every rule block
+    // below, AND as a catch-all at the bottom, so super admins are never
+    // blocked by any workspace-membership or ownership check.
     function isSuperAdmin() {
       return request.auth != null && (
         request.auth.token.email == 'suren@dhanam.finance' ||
@@ -14,49 +17,56 @@ service cloud.firestore {
 
     // ─── User profiles & all subcollections ───────────────────────────────
     match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if isSuperAdmin()
+                          || (request.auth != null && request.auth.uid == userId);
 
-      // Diary entries — owner only
+      // Diary entries — owner only (super admin can read/write any)
       match /entries/{entryId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read, write: if isSuperAdmin()
+                            || (request.auth != null && request.auth.uid == userId);
       }
 
-      // Tasks — owner full control; assignee can read, update status, and comment.
+      // Tasks — owner full control; assignee can read/update; super admin can do anything
       match /tasks/{taskId} {
-        allow read: if request.auth != null
-                   && (request.auth.uid == userId
-                       || request.auth.uid == resource.data.assigneeUid
-                       || request.auth.token.email == resource.data.assigneeEmail);
-        allow create: if request.auth != null && request.auth.uid == userId;
-        // Owner or assignee can update.
-        allow update: if request.auth != null
-                     && (request.auth.uid == userId
-                         || request.auth.uid == resource.data.assigneeUid
-                         || resource.data.assigneeEmail != null);
-        allow delete: if request.auth != null && request.auth.uid == userId;
+        allow read:   if isSuperAdmin()
+                       || (request.auth != null
+                           && (request.auth.uid == userId
+                               || request.auth.uid == resource.data.assigneeUid
+                               || request.auth.token.email == resource.data.assigneeEmail));
+        allow create: if isSuperAdmin()
+                       || (request.auth != null && request.auth.uid == userId);
+        allow update: if isSuperAdmin()
+                       || (request.auth != null
+                           && (request.auth.uid == userId
+                               || request.auth.uid == resource.data.assigneeUid
+                               || resource.data.assigneeEmail != null));
+        allow delete: if isSuperAdmin()
+                       || (request.auth != null && request.auth.uid == userId);
 
-        // Comments — any authenticated user can read/create; only author can edit/delete
+        // Comments — any authenticated user can read/create; only author or super admin can edit/delete
         match /comments/{commentId} {
           allow read, create:   if request.auth != null;
-          allow update, delete: if request.auth != null
-                                && request.auth.uid == resource.data.authorUid;
+          allow update, delete: if isSuperAdmin()
+                                 || (request.auth != null
+                                     && request.auth.uid == resource.data.authorUid);
         }
 
-        // Activity log — any authenticated user can read/create; never editable
+        // Activity log — any authenticated user can read/create; immutable once written
         match /activity/{activityId} {
           allow read, create:   if request.auth != null;
           allow update, delete: if false;
         }
       }
 
-      // Team members — owner only
+      // Team members — owner only (super admin can read/write any)
       match /teamMembers/{memberId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read, write: if isSuperAdmin()
+                            || (request.auth != null && request.auth.uid == userId);
       }
 
       // Error logs — create-only
       match /errorLogs/{logId} {
-        allow create: if request.auth != null && request.auth.uid == userId;
+        allow create:             if request.auth != null && request.auth.uid == userId;
         allow read, update, delete: if false;
       }
     }
@@ -64,16 +74,17 @@ service cloud.firestore {
     // ─── Collection-group: lets assignees query their personal tasks ─────────
     // NOTE: update is intentionally omitted here — specific rules above handle it.
     match /{path=**}/tasks/{taskId} {
-      allow read: if request.auth != null
-                 && (resource.data.assigneeUid == request.auth.uid
-                     || resource.data.assigneeEmail == request.auth.token.email);
+      allow read: if isSuperAdmin()
+                   || (request.auth != null
+                       && (resource.data.assigneeUid   == request.auth.uid
+                           || resource.data.assigneeEmail == request.auth.token.email));
     }
 
     // ─── User directory — lets the owner discover who has signed up ───────
     match /userDirectory/{uid} {
       allow create, update: if request.auth != null && request.auth.uid == uid;
-      allow delete: if request.auth != null && request.auth.uid == uid;
-      allow read: if request.auth != null;
+      allow delete:         if request.auth != null && request.auth.uid == uid;
+      allow read:           if request.auth != null;
     }
 
     // ─── In-app notifications (real-time, live) ──────────────────────────
@@ -82,24 +93,30 @@ service cloud.firestore {
                    && (request.resource.data.senderEmail == request.auth.token.email
                        || request.resource.data.senderEmail == null
                        || !('senderEmail' in request.resource.data));
-      allow read:   if request.auth != null
-                   && resource.data.recipientEmail == request.auth.token.email;
-      allow update: if request.auth != null
-                   && resource.data.recipientEmail == request.auth.token.email;
-      allow delete: if request.auth != null
-                   && resource.data.recipientEmail == request.auth.token.email;
+      allow read:   if isSuperAdmin()
+                     || (request.auth != null
+                         && resource.data.recipientEmail == request.auth.token.email);
+      allow update: if isSuperAdmin()
+                     || (request.auth != null
+                         && resource.data.recipientEmail == request.auth.token.email);
+      allow delete: if isSuperAdmin()
+                     || (request.auth != null
+                         && resource.data.recipientEmail == request.auth.token.email);
     }
 
     // ─── Anonymous error logs (pre-auth) ─────────────────────────────────
     match /errorLogs/{logId} {
-      allow create: if request.auth != null;
+      allow create:             if request.auth != null;
       allow read, update, delete: if false;
     }
 
     // ─── Workspaces — shared Kanban boards ───────────────────────────────
     //
     // Access model:
-    //   - Only members (or the creator) can read workspaces and tasks.
+    //   - Super admins bypass ALL membership checks — they see and can
+    //     administer every workspace and every task.
+    //   - Regular users: only members (or the creator) can read workspaces
+    //     and tasks.
     //   - Any member can create/read/update tasks and comments.
     //   - Status updates are enforced by the UI (assignee only), not rules —
     //     keeping rules simple and reliable with UID-based member lookup.
@@ -121,43 +138,47 @@ service cloud.firestore {
       }
 
       // ── Workspace doc ────────────────────────────────────────────────────
-      allow read:           if canAccessWorkspace()
+      allow read:           if isSuperAdmin()
+                             || canAccessWorkspace()
                              || (request.auth != null && resource.data.createdBy == request.auth.uid);
       allow create:         if request.auth != null;
-      allow update, delete: if canAccessWorkspace();
+      allow update, delete: if isSuperAdmin() || canAccessWorkspace();
 
       // ── Members sub-collection ───────────────────────────────────────────
       // Read is open to authenticated users so useMyWorkspaces collection-group
       // query can fetch workspace docs after finding member entries.
       match /members/{uid} {
         allow read:           if request.auth != null;
-        allow create, update: if request.auth != null;        // joining / invite acceptance
-        allow delete:         if canAccessWorkspace()         // admin/creator removes others
-                               || request.auth.uid == uid;   // member removes themselves (leave)
+        allow create, update: if request.auth != null;          // joining / invite acceptance
+        allow delete:         if isSuperAdmin()
+                               || canAccessWorkspace()          // admin/creator removes others
+                               || request.auth.uid == uid;     // member removes themselves (leave)
       }
 
       // ── Tasks sub-collection ─────────────────────────────────────────────
-      // All members (or the workspace creator) can read ALL tasks in their
-      // workspace. Any member can update a task — the UI restricts status
-      // changes to the assignee. Keeps rules simple + resilient to races.
+      // Super admins can read, create, update, and delete ANY task in any
+      // workspace. Regular members can read/create/update; delete is restricted
+      // to the task creator or the workspace creator.
       match /tasks/{taskId} {
-        allow read, create:   if canAccessWorkspace();
-        allow update:         if canAccessWorkspace();
-        allow delete:         if isSuperAdmin()
-                               || (canAccessWorkspace()
-                                   && (resource.data.createdBy == request.auth.uid
-                                       || isWorkspaceCreator()));
+        allow read, create: if isSuperAdmin() || canAccessWorkspace();
+        allow update:       if isSuperAdmin() || canAccessWorkspace();
+        allow delete:       if isSuperAdmin()
+                             || (canAccessWorkspace()
+                                 && (resource.data.createdBy == request.auth.uid
+                                     || isWorkspaceCreator()));
 
-        // Comments — workspace members/creator can read/create; only author can edit/delete
+        // Comments — workspace members/creator can read/create;
+        // only author or super admin can edit/delete
         match /comments/{commentId} {
-          allow read, create:   if canAccessWorkspace();
-          allow update, delete: if request.auth != null
-                                && request.auth.uid == resource.data.authorUid;
+          allow read, create:   if isSuperAdmin() || canAccessWorkspace();
+          allow update, delete: if isSuperAdmin()
+                                 || (request.auth != null
+                                     && request.auth.uid == resource.data.authorUid);
         }
 
         // Activity log — members/creator can read/create; immutable once written
         match /activity/{activityId} {
-          allow read, create:   if canAccessWorkspace();
+          allow read, create:   if isSuperAdmin() || canAccessWorkspace();
           allow update, delete: if false;
         }
       }
@@ -172,14 +193,17 @@ service cloud.firestore {
     match /workspaceLeaveRequests/{reqId} {
       allow create: if request.auth != null
                    && request.resource.data.memberUid == request.auth.uid;
-      allow read:   if request.auth != null
-                   && (resource.data.memberUid    == request.auth.uid
-                       || resource.data.ownerEmail == request.auth.token.email);
-      allow update: if request.auth != null
-                   && resource.data.ownerEmail == request.auth.token.email;
-      allow delete: if request.auth != null
-                   && (resource.data.memberUid    == request.auth.uid
-                       || resource.data.ownerEmail == request.auth.token.email);
+      allow read:   if isSuperAdmin()
+                     || (request.auth != null
+                         && (resource.data.memberUid    == request.auth.uid
+                             || resource.data.ownerEmail == request.auth.token.email));
+      allow update: if isSuperAdmin()
+                     || (request.auth != null
+                         && resource.data.ownerEmail == request.auth.token.email);
+      allow delete: if isSuperAdmin()
+                     || (request.auth != null
+                         && (resource.data.memberUid    == request.auth.uid
+                             || resource.data.ownerEmail == request.auth.token.email));
     }
 
     // ─── Workspace invites ────────────────────────────────────────────────────
@@ -190,13 +214,17 @@ service cloud.firestore {
     match /workspaceInvites/{inviteId} {
       allow create: if request.auth != null;
       allow read:   if request.auth != null;
-      allow update: if request.auth != null
-                   && resource.data.inviteeEmail == request.auth.token.email;
-      allow delete: if request.auth != null
-                   && resource.data.inviterUid == request.auth.uid;
+      allow update: if isSuperAdmin()
+                     || (request.auth != null
+                         && resource.data.inviteeEmail == request.auth.token.email);
+      allow delete: if isSuperAdmin()
+                     || (request.auth != null
+                         && resource.data.inviterUid == request.auth.uid);
     }
 
-    // ─── Deny everything else (super admins excepted) ─────────────────────
+    // ─── Final safety net: super admins bypass everything else ────────────
+    // This catch-all ensures no edge-case path can accidentally lock out a
+    // super admin even if a specific rule above is missing a bypass.
     match /{document=**} {
       allow read, write: if isSuperAdmin();
     }

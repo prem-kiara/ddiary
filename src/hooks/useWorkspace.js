@@ -7,21 +7,26 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { logError } from '../utils/errorLogger';
 
-// ─── All workspaces where the current user is a member (real-time) ──────────
+// ─── All workspaces the current user can access (real-time) ─────────────────
 //
-// Two parallel real-time listeners merge into one workspaces array:
+// Super admins (suren@dhanam.finance / gokul@dhanam.finance):
+//   A single listener on the entire 'workspaces' collection fetches every
+//   workspace in the platform. They appear with role:'admin' so the UI shows
+//   all rename/delete/category controls everywhere.
+//
+// Regular users — two parallel real-time listeners that merge into one list:
 //   1. collectionGroup('members') where uid == me  — workspaces I'm a member of
 //   2. collection('workspaces')   where createdBy == me — workspaces I created
 //
-// Each listener updates state immediately when it resolves, so the UI never
+// Each listener updates state immediately when it resolves so the UI never
 // waits for both. Listener 2 acts as an instant fallback while the
 // collection-group index builds (takes a few minutes after first deploy).
 export function useMyWorkspaces() {
-  const { user } = useAuth();
+  const { user, isSuperAdmin } = useAuth();
   const [workspaces, setWorkspaces] = useState([]);
   const [loading,    setLoading]    = useState(true);
 
-  // wsMapRef is shared between both listeners so merging doesn't cause races.
+  // wsMapRef is shared between listeners so merging doesn't cause races.
   const wsMapRef       = useRef(new Map());
   const innerUnsubsRef = useRef([]);
 
@@ -38,12 +43,34 @@ export function useMyWorkspaces() {
       setLoading(false);
     };
 
+    // ── Super admin path: subscribe to ALL workspaces ─────────────────────
+    // Firestore rules grant super admins read access to the entire workspaces
+    // collection (via the isSuperAdmin() bypass in firestore.rules).
+    // Every workspace gets role:'admin' so isAdmin=true everywhere in the UI.
+    if (isSuperAdmin) {
+      const unsub = onSnapshot(
+        collection(db, 'workspaces'),
+        (snap) => {
+          wsMapRef.current = new Map(
+            snap.docs.map(d => [d.id, { id: d.id, role: 'admin', ...d.data() }])
+          );
+          flush();
+        },
+        (err) => {
+          logError(err, { location: 'useMyWorkspaces', action: 'superAdminAllWorkspacesQuery' });
+          setLoading(false);
+        }
+      );
+      return unsub;
+    }
+
+    // ── Regular user path: member-based two-listener approach ─────────────
     const cleanupInner = () => {
       innerUnsubsRef.current.forEach(fn => fn());
       innerUnsubsRef.current = [];
     };
 
-    // ── Listener 1: workspaces where I am a member (via collection-group) ────
+    // Listener 1: workspaces where I am a member (via collection-group)
     const membersQuery = query(
       collectionGroup(db, 'members'),
       where('uid', '==', user.uid)
@@ -83,7 +110,7 @@ export function useMyWorkspaces() {
       flush(); // show whatever createdBy query has already populated
     });
 
-    // ── Listener 2: workspaces I created (instant fallback, always works) ────
+    // Listener 2: workspaces I created (instant fallback, always works)
     const createdByQuery = query(
       collection(db, 'workspaces'),
       where('createdBy', '==', user.uid)
@@ -114,7 +141,7 @@ export function useMyWorkspaces() {
       unsubCreated();
       cleanupInner();
     };
-  }, [user?.uid]);
+  }, [user?.uid, isSuperAdmin]);
 
   return { workspaces, loading };
 }
