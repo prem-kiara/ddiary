@@ -3,8 +3,16 @@ import {
   Plus, X, ChevronDown, ChevronRight, User, Calendar, Send,
   Circle, Clock, Eye, CheckCircle, Trash2, Copy, Check as CheckIcon,
   Users, Edit2, Briefcase, UserPlus, AlertTriangle, MessageSquare,
-  Folder, FolderPlus, Bell,
+  Folder, FolderPlus, Bell, GripVertical,
 } from 'lucide-react';
+import {
+  DndContext, PointerSensor, useSensor, useSensors,
+  useDraggable, useDroppable,
+} from '@dnd-kit/core';
+import { CSS } from '@dnd-kit/utilities';
+import MoveTaskConfirmModal from './dnd/MoveTaskConfirmModal';
+import ConvertWorkspaceModal from './dnd/ConvertWorkspaceModal';
+import { moveTaskAcrossWorkspaces, convertWorkspaceToTask } from '../utils/dndMutations';
 import { useAuth } from '../contexts/AuthContext';
 import {
   useMyWorkspaces, useWorkspace, useWorkspaceTasks,
@@ -491,18 +499,33 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
   const assigneeName = assignee?.displayName || task.assigneeName || null;
   const assigneeId   = assignee?.uid || task.assigneeEmail || assigneeName || 'unassigned';
 
+  // ── Make this card draggable for cross-workspace moves ─────────────────────
+  // Drag is gated by an 8 px movement threshold (set on the global sensor),
+  // so a normal click still opens the detail modal without false-starting a drag.
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id:   `task:${workspaceId}:${task.id}`,
+    data: { kind: 'task', task, srcWorkspaceId: workspaceId, srcWorkspace: workspace },
+  });
+  const dragStyle = {
+    transform:   CSS.Translate.toString(transform),
+    opacity:     isDragging ? 0.5 : (task.status === 'done' ? 0.7 : 1),
+    boxSizing:   'border-box',
+    zIndex:      isDragging ? 50 : 'auto',
+    cursor:      isDragging ? 'grabbing' : 'pointer',
+  };
+
   return (
     <>
       <div
-        onClick={() => setOpen(true)}
+        ref={setNodeRef}
+        {...attributes}
+        {...listeners}
+        onClick={() => { if (!isDragging) setOpen(true); }}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true); } }}
-        className="k-task-card group relative bg-white border border-slate-200 rounded-xl px-3 py-2.5 cursor-pointer hover:shadow-sm hover:border-slate-300 transition"
-        style={{
-          opacity: task.status === 'done' ? 0.7 : 1,
-          boxSizing: 'border-box',
-        }}
+        className="k-task-card group relative bg-white border border-slate-200 rounded-xl px-3 py-2.5 hover:shadow-sm hover:border-slate-300 transition"
+        style={dragStyle}
       >
         {/* Title — flexes + truncates so everything else stays on the line */}
         <span
@@ -1951,18 +1974,40 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
   const { isSuperAdmin } = useAuth();
   const isAdmin = workspace.role === 'admin' || workspace.createdBy === user.uid || isSuperAdmin;
 
+  // ── DnD: this whole card is a drop target ───────────────────────────────────
+  // Accepts both task drops (cross-workspace task move) and workspace drops
+  // (workspace → task conversion). KanbanBoard's onDragEnd dispatches based on
+  // active.data.kind.
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
+    id:   `wsdrop:${workspace.id}`,
+    data: { kind: 'workspaceDropZone', workspace, workspaceId: workspace.id },
+  });
+
+  // ── DnD: a small grip handle on the header makes the workspace draggable ────
+  // We deliberately use a dedicated handle (not the whole header) so the
+  // existing click-to-expand and action buttons stay click-only.
+  const {
+    attributes: dragAttrs, listeners: dragListeners, setNodeRef: setDragRef,
+    transform: dragTransform, isDragging,
+  } = useDraggable({
+    id:   `ws:${workspace.id}`,
+    data: { kind: 'workspace', workspace },
+  });
+
   return (
     <div
+      ref={setDropRef}
       className="card"
       style={{
         marginBottom:  10,
         padding:       0,
         overflow:      'hidden',
-        // Lighter chrome — the workspace reads as a section header in the tree,
-        // not a heavy outer box. Categories inside inherit this look.
-        border:        '1px solid #e2e8f0',
-        transition:    'border-color 0.2s',
-        boxShadow:     'none',
+        border:        isOver ? '2px solid #7c3aed' : '1px solid #e2e8f0',
+        background:    isOver ? '#faf5ff' : undefined,
+        transition:    'border-color 0.2s, background 0.2s',
+        boxShadow:     isOver ? '0 0 0 4px rgba(124, 58, 237, 0.12)' : 'none',
+        opacity:       isDragging ? 0.5 : 1,
+        transform:     dragTransform ? CSS.Translate.toString(dragTransform) : undefined,
       }}
     >
       {/* ── Header row ───────────────────────────────────────────────────────── */}
@@ -1976,6 +2021,22 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
           userSelect:    'none',
         }}
       >
+        {/* Drag handle — small grip icon, only this triggers workspace drag */}
+        <button
+          ref={setDragRef}
+          {...dragAttrs}
+          {...dragListeners}
+          onClick={(e) => e.stopPropagation()}
+          title="Drag this workspace to convert it into a task"
+          aria-label="Drag workspace"
+          style={{
+            background: 'none', border: 'none', padding: 4, cursor: 'grab',
+            color: '#94a3b8', display: 'flex', alignItems: 'center', flexShrink: 0,
+            marginRight: 2,
+          }}
+        >
+          <GripVertical size={14} />
+        </button>
         {/* Workspace name / rename */}
         {renaming ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }} onClick={e => e.stopPropagation()}>
@@ -2565,6 +2626,40 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
   const [showNewTask,      setShowNewTask]      = useState(false);
   const [showNewWorkspace, setShowNewWorkspace] = useState(false);
 
+  // ── DnD state ──────────────────────────────────────────────────────────────
+  // 8 px movement threshold so a normal click on a TaskCard or workspace header
+  // doesn't accidentally start a drag.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  );
+  // moveTaskModal: { task, srcWorkspace, destWorkspace } | null
+  const [moveTaskModal,  setMoveTaskModal]  = useState(null);
+  // convertWsModal: { srcWorkspace, destWorkspace } | null
+  const [convertWsModal, setConvertWsModal] = useState(null);
+
+  const handleDragEnd = (evt) => {
+    const a = evt.active?.data?.current;
+    const o = evt.over?.data?.current;
+    if (!a || !o || o.kind !== 'workspaceDropZone') return;
+
+    if (a.kind === 'task') {
+      // Same-workspace drop = no-op (we don't support reordering yet).
+      if (a.srcWorkspaceId === o.workspaceId) return;
+      setMoveTaskModal({
+        task:          a.task,
+        srcWorkspace:  a.srcWorkspace,
+        destWorkspace: o.workspace,
+      });
+    } else if (a.kind === 'workspace') {
+      // Can't drop a workspace on itself.
+      if (a.workspace.id === o.workspaceId) return;
+      setConvertWsModal({
+        srcWorkspace:  a.workspace,
+        destWorkspace: o.workspace,
+      });
+    }
+  };
+
   if (wsListLoading) {
     return <div className="empty-state fade-in"><p>Loading workspaces…</p></div>;
   }
@@ -2612,6 +2707,7 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
   };
 
   return (
+    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
     <div className="fade-in">
       {/* Page header */}
       <div className="page-head">
@@ -2680,6 +2776,59 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
           isFirst={i === 0}
         />
       ))}
+
+      {/* ── DnD modals ──────────────────────────────────────────────────────── */}
+      {moveTaskModal && (
+        <MoveTaskConfirmModal
+          task={moveTaskModal.task}
+          srcWorkspace={moveTaskModal.srcWorkspace}
+          destWorkspace={moveTaskModal.destWorkspace}
+          onCancel={() => setMoveTaskModal(null)}
+          onConfirm={async ({ destCategoryId, destSubcategoryId }) => {
+            try {
+              await moveTaskAcrossWorkspaces({
+                srcWorkspaceId:    moveTaskModal.srcWorkspace?.id || moveTaskModal.task?._srcWorkspaceId,
+                taskId:            moveTaskModal.task.id,
+                task:              moveTaskModal.task,
+                destWorkspaceId:   moveTaskModal.destWorkspace.id,
+                destCategoryId,
+                destSubcategoryId,
+                actor: { uid: user.uid, email: user.email, displayName: user.displayName || user.email },
+              });
+              if (showToast) showToast(`Task moved to "${moveTaskModal.destWorkspace.name}"`, 'success');
+              setMoveTaskModal(null);
+            } catch (e) {
+              logError(e, { location: 'KanbanBoard:moveTaskAcrossWorkspaces' }, user.uid);
+              throw e; // surfaced in the modal
+            }
+          }}
+        />
+      )}
+      {convertWsModal && (
+        <ConvertWorkspaceModal
+          srcWorkspace={convertWsModal.srcWorkspace}
+          destWorkspace={convertWsModal.destWorkspace}
+          onCancel={() => setConvertWsModal(null)}
+          onConfirm={async ({ mode, destCategoryId, destSubcategoryId }) => {
+            try {
+              await convertWorkspaceToTask({
+                srcWorkspace:     convertWsModal.srcWorkspace,
+                destWorkspaceId:  convertWsModal.destWorkspace.id,
+                destCategoryId,
+                destSubcategoryId,
+                mode,
+                actor: { uid: user.uid, email: user.email, displayName: user.displayName || user.email },
+              });
+              if (showToast) showToast(`Workspace converted to task in "${convertWsModal.destWorkspace.name}"`, 'success');
+              setConvertWsModal(null);
+            } catch (e) {
+              logError(e, { location: 'KanbanBoard:convertWorkspaceToTask' }, user.uid);
+              throw e; // surfaced in the modal
+            }
+          }}
+        />
+      )}
     </div>
+    </DndContext>
   );
 }
