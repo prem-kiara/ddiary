@@ -11,7 +11,8 @@ service cloud.firestore {
     function isSuperAdmin() {
       return request.auth != null && (
         request.auth.token.email == 'suren@dhanam.finance' ||
-        request.auth.token.email == 'gokul@dhanam.finance'
+        request.auth.token.email == 'gokul@dhanam.finance' ||
+        request.auth.token.email == 'prem.karnan@dhanam.finance'
       );
     }
 

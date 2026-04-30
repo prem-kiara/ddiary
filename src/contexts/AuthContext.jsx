@@ -18,7 +18,11 @@ const AuthContext = createContext(null);
 // Users whose email appears here gain platform-wide admin privileges:
 // they can delete and edit any task, workspace, category, and sub-category
 // regardless of which workspace they created or which role they hold.
-const SUPER_ADMIN_EMAILS = ['suren@dhanam.finance', 'gokul@dhanam.finance'];
+const SUPER_ADMIN_EMAILS = [
+  'suren@dhanam.finance',
+  'gokul@dhanam.finance',
+  'prem.karnan@dhanam.finance',
+];
 
 export function useAuth() {
   const ctx = useContext(AuthContext);

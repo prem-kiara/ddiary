@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Home, PenTool, CheckSquare, Settings, LogOut, List, Kanban } from 'lucide-react';
+import { Home, PenTool, CheckSquare, Settings, LogOut, List, Kanban, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import NotificationBell from './NotificationBell';
 import Avatar from './shared/Avatar';
@@ -17,12 +17,14 @@ function useActivePage() {
   if (pathname.startsWith('/team'))     return 'team';
   if (pathname.startsWith('/settings')) return 'settings';
   if (pathname.startsWith('/collaborate')) return 'collaborate';
+  if (pathname.startsWith('/dashboard')) return 'dashboard';
   return 'home';
 }
 
 export default function Layout({
   children, pendingCount,
   memberMode = false, collaboratorMode = false,
+  isSuperAdmin = false,
   notifications = [], unreadCount = 0, onMarkRead, onMarkAllRead,
 }) {
   const { user, logout } = useAuth();
@@ -33,6 +35,10 @@ export default function Layout({
     { id: 'home',     path: '/',         icon: Home,        label: 'Diary'    },
     { id: 'write',    path: '/write',    icon: PenTool,     label: 'Write'    },
     { id: 'tasks',    path: '/tasks',    icon: List,        label: 'Tasks'    },
+    // Platform Dashboard appears only for super-admins (suren / gokul / prem.karnan)
+    ...(isSuperAdmin
+      ? [{ id: 'dashboard', path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' }]
+      : []),
     { id: 'settings', path: '/settings', icon: Settings,    label: 'Settings' },
   ];
 

@@ -15,6 +15,7 @@ import DiaryList from './components/DiaryList';
 import DiaryView from './components/DiaryView';
 import DiaryEditor from './components/DiaryEditor';
 import SettingsPage from './components/SettingsPage';
+import Dashboard from './components/Dashboard';
 import './styles/diary.css';
 
 // ─── Route wrappers ──────────────────────────────────────────────────────────
@@ -71,7 +72,7 @@ function DiaryEditorPage({ entries, archivedEntries, onSave, onCancel, showToast
 // ─── Main app shell ──────────────────────────────────────────────────────────
 function DiaryApp() {
   const navigate = useNavigate();
-  const { user, loading: authLoading, isCollaborator, setWorkspaceId, joinWorkspace } = useAuth();
+  const { user, loading: authLoading, isCollaborator, isSuperAdmin, setWorkspaceId, joinWorkspace } = useAuth();
   const {
     entries, trashedEntries, archivedEntries, loading: entriesLoading,
     addEntry, updateEntry, deleteEntry, restoreEntry, purgeEntry,
@@ -202,7 +203,7 @@ function DiaryApp() {
     <>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       <WorkspaceInvitePrompt showToast={showToast} />
-      <Layout pendingCount={pendingCount} {...commonLayoutProps}>
+      <Layout pendingCount={pendingCount} isSuperAdmin={isSuperAdmin} {...commonLayoutProps}>
         <ErrorBoundary>
         <Routes>
           {/* Diary home */}
@@ -289,6 +290,14 @@ function DiaryApp() {
 
           {/* Settings */}
           <Route path="/settings" element={<SettingsPage showToast={showToast} />} />
+
+          {/* Platform Dashboard — super-admin only.
+              Component itself shows a friendly "restricted" view for non-admins,
+              but we also redirect at the route level to keep the URL honest. */}
+          <Route
+            path="/dashboard"
+            element={isSuperAdmin ? <Dashboard /> : <Navigate to="/" replace />}
+          />
 
           {/* Fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
