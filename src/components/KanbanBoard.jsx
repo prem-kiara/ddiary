@@ -6,7 +6,7 @@ import {
   Folder, FolderPlus, Bell, GripVertical,
 } from 'lucide-react';
 import {
-  DndContext, PointerSensor, useSensor, useSensors,
+  DndContext, PointerSensor, TouchSensor, useSensor, useSensors,
   useDraggable, useDroppable,
 } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
@@ -137,7 +137,7 @@ function CategoryPicker({ task, workspace, user, showToast }) {
     if (!name) { setNewCatMode(false); setNewCatName(''); return; }
     setBusy(true);
     try {
-      const newId = await addWorkspaceCategory(workspace.id, name);
+      const newId = await addWorkspaceCategory(workspace.id, name, { uid: user.uid, displayName: user.displayName, email: user.email });
       await moveWorkspaceTaskCategory(
         workspace.id,
         task.id,
@@ -155,7 +155,7 @@ function CategoryPicker({ task, workspace, user, showToast }) {
     if (!name || !currentCat) { setNewSubMode(false); setNewSubName(''); return; }
     setBusy(true);
     try {
-      const newSubId = await addWorkspaceSubcategory(workspace.id, currentCat.id, name);
+      const newSubId = await addWorkspaceSubcategory(workspace.id, currentCat.id, name, { uid: user.uid, displayName: user.displayName, email: user.email });
       await moveWorkspaceTaskCategory(
         workspace.id,
         task.id,
@@ -585,9 +585,21 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
             </span>
           )}
 
+          {/* Owner — small "by Name" pill so the creator is visible at a glance.
+              Distinguished from the assignee by the muted violet treatment. */}
+          {(task.createdByName || task.createdByEmail) && (
+            <span
+              title={`Created by ${task.createdByName || task.createdByEmail}`}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
+              style={{ background: '#f5f3ff', color: '#6d28d9', border: '1px solid #ddd6fe' }}
+            >
+              <User size={10} /> by {(task.createdByName || task.createdByEmail).split(' ')[0]}
+            </span>
+          )}
+
           {/* Assignee avatar */}
           {assigneeName ? (
-            <Avatar id={assigneeId} name={assigneeName} email={task.assigneeEmail} size="sm" title={assigneeName} />
+            <Avatar id={assigneeId} name={assigneeName} email={task.assigneeEmail} size="sm" title={`Assignee: ${assigneeName}`} />
           ) : (
             <span
               className="w-7 h-7 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center flex-shrink-0"
@@ -615,6 +627,20 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
       )}
     </>
   );
+}
+
+// ── Creator resolution (with legacy-data fallback) ───────────────────────────
+// Categories/sub-categories created BEFORE the createdBy stamp was added don't
+// carry that field. For those legacy items we fall back to the workspace
+// creator (the most reasonable assumption — the workspace owner almost always
+// seeded the early structure). Returns { name, exact } so callers can choose
+// to mark inferred attributions if desired.
+function _resolveCreator(item, workspace, members) {
+  if (item?.createdByName) return { name: item.createdByName, exact: true };
+  const wc = members?.find(m => m.uid === workspace?.createdBy);
+  const name = wc?.displayName || wc?.email;
+  if (name) return { name, exact: false };
+  return null;
 }
 
 // ── Status-distribution dots (shown on collapsed category/subcategory) ────────
@@ -693,6 +719,26 @@ function SubcategorySection({
             </span>
           )}
           <span className="text-xs text-slate-500 font-medium">({tasks.length})</span>
+          {/* Creator badge — same treatment as the category badge.
+              Falls back to the workspace creator for legacy sub-categories. */}
+          {(() => {
+            const c = _resolveCreator(subcategory, workspace, members);
+            if (!c) return null;
+            return (
+              <span
+                title={c.exact ? `Created by ${c.name}` : `Inferred — workspace owner ${c.name}`}
+                className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full"
+                style={{
+                  background:    '#f5f3ff',
+                  color:         '#6d28d9',
+                  border:        '1px solid #ddd6fe',
+                  textDecoration: c.exact ? 'none' : 'underline dotted',
+                }}
+              >
+                <User size={9} /> by {c.name.split(' ')[0]}
+              </span>
+            );
+          })()}
           {!expanded && <StatusDots tasks={tasks} />}
         </div>
 
@@ -799,7 +845,7 @@ function CategorySection({
     try {
       if (isUncategorized) {
         // Promote: creates a real category + moves all uncategorized tasks into it
-        await promoteUncategorizedToCategory(workspaceId, name);
+        await promoteUncategorizedToCategory(workspaceId, name, null, { uid: user.uid, displayName: user.displayName, email: user.email });
         if (showToast) showToast(`Category "${name}" created — uncategorized tasks moved in.`, 'success');
       } else {
         await renameWorkspaceCategory(workspaceId, category.id, name);
@@ -816,10 +862,10 @@ function CategorySection({
         // Promote: creates a new category named "Uncategorized Items" (or keeps the prior label if present)
         // plus the sub-category, and moves all uncategorized tasks into it.
         const parentName = category.name && category.name !== 'Uncategorized' ? category.name : 'General';
-        await promoteUncategorizedToCategory(workspaceId, parentName, sub);
+        await promoteUncategorizedToCategory(workspaceId, parentName, sub, { uid: user.uid, displayName: user.displayName, email: user.email });
         if (showToast) showToast(`Sub-category "${sub}" created under "${parentName}".`, 'success');
       } else {
-        await addWorkspaceSubcategory(workspaceId, category.id, sub);
+        await addWorkspaceSubcategory(workspaceId, category.id, sub, { uid: user.uid, displayName: user.displayName, email: user.email });
       }
     } catch (e) { toastError('Failed to add sub-category', e); }
     setNewSubName('');
@@ -867,6 +913,27 @@ function CategorySection({
           <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 text-xs font-semibold">
             {catTasks.length} task{catTasks.length === 1 ? '' : 's'}
           </span>
+          {/* Creator badge — explicit when stamped at create time, else falls
+              back to the workspace creator. Inferred attributions get a subtle
+              dotted underline so they're visually distinguishable. */}
+          {(() => {
+            const c = _resolveCreator(category, workspace, members);
+            if (!c) return null;
+            return (
+              <span
+                title={c.exact ? `Created by ${c.name}` : `Inferred — workspace owner ${c.name}`}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                style={{
+                  background:    '#f5f3ff',
+                  color:         '#6d28d9',
+                  border:        '1px solid #ddd6fe',
+                  textDecoration: c.exact ? 'none' : 'underline dotted',
+                }}
+              >
+                <User size={10} /> by {c.name.split(' ')[0]}
+              </span>
+            );
+          })()}
           <StatusDots tasks={catTasks} />
         </div>
 
@@ -1027,7 +1094,7 @@ function CategoryBoard({
     if (!name) { closeAdd(); return; }
     setSavingCat(true);
     try {
-      await addWorkspaceCategory(workspaceId, name);
+      await addWorkspaceCategory(workspaceId, name, { uid: user.uid, displayName: user.displayName, email: user.email });
       if (showToast) showToast(`Category "${name}" added.`, 'success');
       setNewCatName('');
       setAddingCategory(false);
@@ -1177,7 +1244,7 @@ function CategoryBoard({
 }
 
 // ── Add Task Modal ────────────────────────────────────────────────────────────
-function AddTaskModal({
+export function AddTaskModal({
   onClose, onAdd, members, workspaces, currentWorkspaceId, showToast,
   categories = [],  // categories of the CURRENT workspace, for the picker
   initialCategoryId = null, initialSubcategoryId = null, categoryContextLabel = null,
@@ -2072,6 +2139,26 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
                 <Edit2 size={12} />
               </button>
             )}
+            {/* Workspace creator — looked up from the loaded members list. */}
+            {(() => {
+              const creator = members.find(m => m.uid === workspace.createdBy);
+              const creatorName = creator?.displayName || creator?.email;
+              if (!creatorName) return null;
+              return (
+                <span
+                  title={`Created by ${creatorName}`}
+                  style={{
+                    fontSize: 11, color: '#7c3aed', background: '#f5f3ff',
+                    padding: '2px 7px', borderRadius: 10, fontWeight: 600,
+                    display: 'inline-flex', alignItems: 'center', gap: 3,
+                    flexShrink: 0, maxWidth: 160, overflow: 'hidden',
+                    textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}
+                >
+                  <User size={10} /> by {creatorName.split(' ')[0]}
+                </span>
+              );
+            })()}
             {/* Member count */}
             {!membersLoading && (
               <span style={{ fontSize: 12, color: '#94a3b8', display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0 }}>
@@ -2112,17 +2199,9 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
             <Plus size={13} /> Task
           </button>
 
-          {/* Delete workspace (admin only) */}
-          {isAdmin && (
-            <button
-              onClick={() => setShowDelete(true)}
-              title="Delete workspace"
-              className="btn-icon"
-              style={{ border: '1px solid #e0c8c8', color: '#dc262677', minWidth: 36, minHeight: 36 }}
-            >
-              <Trash2 size={13} />
-            </button>
-          )}
+          {/* Delete moved out of the header — see the small "Delete workspace"
+              link rendered at the bottom of the expanded body below. Keeping
+              destructive actions out of the header reduces accidental clicks. */}
         </div>
 
         {/* Expand / collapse chevron — always right-aligned for consistency */}
@@ -2320,6 +2399,27 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
             onAddCategoryClose={() => setShowAddCategory(false)}
             isAdmin={isAdmin}
           />
+
+          {/* Workspace delete — moved here from the header so it's deliberate.
+              Only admins/super-admins see it; only visible when expanded. */}
+          {isAdmin && !showDelete && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed #e2e8f0', textAlign: 'right' }}>
+              <button
+                onClick={() => setShowDelete(true)}
+                title="Delete this workspace"
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: '#dc2626aa', fontSize: 12, fontWeight: 600,
+                  display: 'inline-flex', alignItems: 'center', gap: 5,
+                  padding: '4px 8px', borderRadius: 6,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = '#fee2e2'; e.currentTarget.style.color = '#dc2626'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'none';    e.currentTarget.style.color = '#dc2626aa'; }}
+              >
+                <Trash2 size={12} /> Delete workspace
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -2627,10 +2727,14 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
   const [showNewWorkspace, setShowNewWorkspace] = useState(false);
 
   // ── DnD state ──────────────────────────────────────────────────────────────
-  // 8 px movement threshold so a normal click on a TaskCard or workspace header
-  // doesn't accidentally start a drag.
+  // PointerSensor (mouse/trackpad): 8 px movement threshold so a normal click
+  //   on a TaskCard or workspace header doesn't accidentally start a drag.
+  // TouchSensor (iPad/mobile): 250 ms long-press + 5 px tolerance so a finger
+  //   scroll doesn't get hijacked into a drag. Standard mobile DnD pattern —
+  //   user must press-and-hold to begin dragging.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor,   { activationConstraint: { delay: 250, tolerance: 5 } }),
   );
   // moveTaskModal: { task, srcWorkspace, destWorkspace } | null
   const [moveTaskModal,  setMoveTaskModal]  = useState(null);

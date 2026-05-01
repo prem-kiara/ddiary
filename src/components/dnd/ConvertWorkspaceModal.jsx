@@ -65,7 +65,7 @@ export default function ConvertWorkspaceModal({
 
   return (
     <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal-body" style={{ maxWidth: 540 }} onClick={e => e.stopPropagation()}>
+      <div className="modal-body" style={{ maxWidth: 540, width: 'min(540px, 95vw)', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <h3 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Convert workspace to task</h3>
           <button className="btn-icon" onClick={onCancel} aria-label="Close"><X size={20} /></button>

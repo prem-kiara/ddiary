@@ -137,5 +137,8 @@ export function usePlatformTasks({ includePersonal = false } = {}) {
   return {
     tasks,
     loading: tasksLoading || workspacesLoading,
+    // Expose the workspace list so callers (e.g. Dashboard's AddTaskModal)
+    // don't have to mount a second useMyWorkspaces listener.
+    workspaces,
   };
 }

@@ -368,11 +368,14 @@ export async function createWorkspace(uid, email, displayName, name, initialCate
 
   const catName = initialCategory?.name?.trim();
   if (catName) {
+    // Initial category inherits the workspace creator as its creator.
+    const stamp = _creatorStamp({ uid, email, displayName });
     const subName = initialCategory?.subcategoryName?.trim();
     payload.categories = [{
       id:   _newId('cat'),
       name: catName,
-      subcategories: subName ? [{ id: _newId('sub'), name: subName }] : [],
+      ...stamp,
+      subcategories: subName ? [{ id: _newId('sub'), name: subName, ...stamp }] : [],
     }];
   }
 
@@ -417,16 +420,32 @@ function _newId(prefix = 'c') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
+// Embeddable creator stamp for nested objects (categories, subcategories).
+// Categories live inside an array on the workspace doc, so we can't use
+// serverTimestamp() (only allowed at the top level of an update). ISO string
+// is good enough for "by X · 3 days ago"-style display.
+function _creatorStamp(actor) {
+  if (!actor?.uid) return {};
+  return {
+    createdBy:     actor.uid,
+    createdByName: actor.displayName || actor.email || null,
+    createdAt:     new Date().toISOString(),
+  };
+}
+
 async function _readCategories(workspaceId) {
   const snap = await getDoc(doc(db, 'workspaces', workspaceId));
   if (!snap.exists()) return [];
   return Array.isArray(snap.data().categories) ? snap.data().categories : [];
 }
 
-export async function addWorkspaceCategory(workspaceId, name) {
+export async function addWorkspaceCategory(workspaceId, name, actor = null) {
   const categories = await _readCategories(workspaceId);
   const newId = _newId('cat');
-  const next = [...categories, { id: newId, name: name.trim(), subcategories: [] }];
+  const next = [
+    ...categories,
+    { id: newId, name: name.trim(), subcategories: [], ..._creatorStamp(actor) },
+  ];
   await updateDoc(doc(db, 'workspaces', workspaceId), { categories: next });
   return newId;
 }
@@ -439,15 +458,17 @@ export async function addWorkspaceCategory(workspaceId, name) {
  *      created under the new category)
  * Returns { categoryId, subcategoryId }.
  */
-export async function promoteUncategorizedToCategory(workspaceId, name, subcategoryName = null) {
+export async function promoteUncategorizedToCategory(workspaceId, name, subcategoryName = null, actor = null) {
   const categories = await _readCategories(workspaceId);
   const categoryId = _newId('cat');
   const subcategoryId = subcategoryName ? _newId('sub') : null;
+  const stamp = _creatorStamp(actor);
   const newCat = {
     id: categoryId,
     name: name.trim(),
+    ...stamp,
     subcategories: subcategoryName
-      ? [{ id: subcategoryId, name: subcategoryName.trim() }]
+      ? [{ id: subcategoryId, name: subcategoryName.trim(), ...stamp }]
       : [],
   };
   await updateDoc(doc(db, 'workspaces', workspaceId), { categories: [...categories, newCat] });
@@ -487,11 +508,12 @@ export async function deleteWorkspaceCategory(workspaceId, categoryId) {
   } catch { /* non-fatal */ }
 }
 
-export async function addWorkspaceSubcategory(workspaceId, categoryId, name) {
+export async function addWorkspaceSubcategory(workspaceId, categoryId, name, actor = null) {
   const categories = await _readCategories(workspaceId);
   const newId = _newId('sub');
+  const newSub = { id: newId, name: name.trim(), ..._creatorStamp(actor) };
   const next = categories.map(c => c.id === categoryId
-    ? { ...c, subcategories: [...(c.subcategories || []), { id: newId, name: name.trim() }] }
+    ? { ...c, subcategories: [...(c.subcategories || []), newSub] }
     : c
   );
   await updateDoc(doc(db, 'workspaces', workspaceId), { categories: next });

@@ -296,7 +296,7 @@ function DiaryApp() {
               but we also redirect at the route level to keep the URL honest. */}
           <Route
             path="/dashboard"
-            element={isSuperAdmin ? <Dashboard /> : <Navigate to="/" replace />}
+            element={isSuperAdmin ? <Dashboard showToast={showToast} /> : <Navigate to="/" replace />}
           />
 
           {/* Fallback */}

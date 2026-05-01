@@ -18,10 +18,15 @@ import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ListTodo, AlertTriangle, Clock, Users, Calendar,
-  ArrowLeft, ChevronRight, Folder,
+  ArrowLeft, ChevronRight, ChevronUp, ChevronDown, Folder, Plus, User,
+  X as XIcon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlatformTasks } from '../hooks/usePlatformTasks';
+import { addWorkspaceTask, createWorkspace } from '../hooks/useWorkspace';
+import { notifyTaskAssigned } from '../utils/emailNotifications';
+import { logError } from '../utils/errorLogger';
+import { AddTaskModal } from './KanbanBoard';
 
 // ─── Date helpers (local timezone) ─────────────────────────────────────────
 const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
@@ -58,49 +63,153 @@ function Tile({ icon: Icon, label, count, accent, onClick, active, children }) {
   );
 }
 
+// ─── Sortable column header ────────────────────────────────────────────────
+// Click to sort by this column. Clicking the active column toggles direction.
+function SortHeader({ column, label, sort, setSort, className = '' }) {
+  const active = sort.column === column;
+  const Arrow  = active && sort.direction === 'asc' ? ChevronUp : ChevronDown;
+  return (
+    <button
+      onClick={() => setSort(s => s.column === column
+        ? { column, direction: s.direction === 'asc' ? 'desc' : 'asc' }
+        : { column, direction: 'asc' }
+      )}
+      className={`text-left text-xs font-medium uppercase tracking-wide flex items-center gap-1 ${active ? 'text-violet-700' : 'text-slate-500 hover:text-slate-700'} ${className}`}
+    >
+      {label}
+      {active && <Arrow size={12} />}
+    </button>
+  );
+}
+
 // ─── Drill-down list row ───────────────────────────────────────────────────
+const ownerKey = (t) => t.createdByName || t.createdByEmail || t.ownerName || '—';
+
 function TaskRow({ task }) {
   const overdue = (() => {
     const d = dueDateMs(task);
     return d && d < startOfToday() && !isDoneTask(task);
   })();
+  const StatusPill = (
+    <span className={`inline-flex px-2 py-0.5 rounded-full font-medium text-xs whitespace-nowrap ${
+      isDoneTask(task)              ? 'bg-emerald-50 text-emerald-700'
+      : task.status === 'review'    ? 'bg-blue-50 text-blue-700'
+      : task.status === 'in_progress' ? 'bg-amber-50 text-amber-700'
+      : 'bg-slate-100 text-slate-700'
+    }`}>
+      {(task.status || 'open').replace('_', ' ')}
+    </span>
+  );
+
   return (
-    <div className="grid grid-cols-12 gap-3 items-center px-4 py-3 border-b border-slate-100 hover:bg-slate-50">
-      <div className="col-span-12 md:col-span-5">
-        <div className="font-medium text-slate-900 truncate">{task.text || '(no title)'}</div>
-        <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-1 truncate">
-          <Folder size={12} className="shrink-0" />
-          <span className="truncate">{task._label}</span>
+    <div className="px-4 py-3 border-b border-slate-100 hover:bg-slate-50">
+      {/* ── Mobile (< md): stacked card with explicit field labels ─────── */}
+      <div className="md:hidden">
+        <div className="font-medium text-slate-900 break-words">{task.text || '(no title)'}</div>
+        <div className="text-xs text-slate-500 mt-1 flex items-start gap-1">
+          <Folder size={12} className="shrink-0 mt-0.5" />
+          <span className="break-words">{task._label}</span>
+        </div>
+        <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+          <div className="truncate">
+            <span className="text-slate-400">Owner: </span>
+            <span className="text-slate-700 font-medium">{ownerKey(task)}</span>
+          </div>
+          <div className="truncate">
+            <span className="text-slate-400">Assignee: </span>
+            <span className="text-slate-700 font-medium">{assigneeKey(task)}</span>
+          </div>
+          <div className="truncate">
+            <span className="text-slate-400">Due: </span>
+            <span className={`tabular-nums font-medium ${overdue ? 'text-red-600' : 'text-slate-700'}`}>
+              {formatDue(task.dueDate)}
+            </span>
+          </div>
+          <div className="truncate">{StatusPill}</div>
         </div>
       </div>
-      <div className="col-span-6 md:col-span-3 text-sm text-slate-700 truncate">
-        {assigneeKey(task)}
-      </div>
-      <div className={`col-span-3 md:col-span-2 text-sm tabular-nums ${overdue ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>
-        {formatDue(task.dueDate)}
-      </div>
-      <div className="col-span-3 md:col-span-2 text-xs">
-        <span className={`inline-flex px-2 py-0.5 rounded-full font-medium ${
-          isDoneTask(task)            ? 'bg-emerald-50 text-emerald-700'
-          : task.status === 'review'  ? 'bg-blue-50 text-blue-700'
-          : task.status === 'in_progress' ? 'bg-amber-50 text-amber-700'
-          : 'bg-slate-100 text-slate-700'
-        }`}>
-          {(task.status || 'open').replace('_', ' ')}
-        </span>
+
+      {/* ── Desktop (md+): tight 12-col grid row ─────────────────────────── */}
+      <div className="hidden md:grid grid-cols-12 gap-3 items-center">
+        <div className="col-span-4 min-w-0">
+          <div className="font-medium text-slate-900 truncate">{task.text || '(no title)'}</div>
+          <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-1 truncate">
+            <Folder size={12} className="shrink-0" />
+            <span className="truncate">{task._label}</span>
+          </div>
+        </div>
+        <div className="col-span-2 text-sm text-slate-700 truncate flex items-center gap-1.5" title={`Created by ${ownerKey(task)}`}>
+          <User size={12} className="text-slate-400 shrink-0" />
+          <span className="truncate">{ownerKey(task)}</span>
+        </div>
+        <div className="col-span-2 text-sm text-slate-700 truncate">
+          {assigneeKey(task)}
+        </div>
+        <div className={`col-span-2 text-sm tabular-nums ${overdue ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>
+          {formatDue(task.dueDate)}
+        </div>
+        <div className="col-span-2">{StatusPill}</div>
       </div>
     </div>
   );
 }
 
 // ─── Main component ────────────────────────────────────────────────────────
-export default function Dashboard() {
-  const { isSuperAdmin } = useAuth();
+export default function Dashboard({ showToast } = {}) {
+  const { user, isSuperAdmin } = useAuth();
   const navigate = useNavigate();
-  const [includePersonal, setIncludePersonal] = useState(false);
-  const { tasks, loading } = usePlatformTasks({ includePersonal });
+  // Workspace tasks only — personal-diary tasks are intentionally not aggregated.
+  const { tasks, loading, workspaces } = usePlatformTasks({ includePersonal: false });
+  const [showNewTask, setShowNewTask] = useState(false);
+
+  // ── Handler for AddTaskModal — creates the task in the chosen workspace,
+  //    optionally creating the workspace first. Mirror of KanbanBoard's
+  //    handleTopLevelAdd so the UX is identical between Team Board and Dashboard.
+  const handleTopLevelAdd = async (taskData, wsOptions) => {
+    let wsId = wsOptions.targetWorkspaceId || workspaces?.[0]?.id || null;
+    try {
+      if (wsOptions.newWorkspaceName) {
+        wsId = await createWorkspace(
+          user.uid, user.email, user.displayName || user.email,
+          wsOptions.newWorkspaceName,
+          wsOptions.newWorkspaceCategory || null,
+        );
+        if (showToast) showToast(`Workspace "${wsOptions.newWorkspaceName}" created!`, 'success');
+      }
+    } catch (e) {
+      e.message = `Could not create workspace: ${e?.message || e}`;
+      throw e;
+    }
+    if (wsId) {
+      try {
+        await addWorkspaceTask(wsId, taskData, {
+          uid: user.uid, email: user.email, displayName: user.displayName || user.email,
+        });
+      } catch (e) {
+        e.message = `Workspace created, but task add failed: ${e?.message || e}`;
+        throw e;
+      }
+      if (taskData.assigneeEmail) {
+        notifyTaskAssigned({
+          assigneeEmail: taskData.assigneeEmail,
+          assigneeName:  taskData.assigneeName,
+          taskText:      taskData.text,
+          dueDate:       taskData.dueDate,
+          priority:      taskData.priority,
+          ownerName:     user.displayName || user.email,
+          ownerUid:      user.uid,
+        }).catch((err) => logError(err, { location: 'Dashboard:notifyTaskAssigned' }));
+      }
+    }
+  };
   // drillDown: { kind: 'total' | 'outstanding' | 'dueToday' | 'overdue' | 'assignee' | 'bucket', value?: string }
   const [drillDown, setDrillDown] = useState(null);
+
+  // ── Drill-down filters + sort (layered on top of the drill-down kind) ────
+  const [filters, setFilters] = useState({ workspace: 'all', assignee: 'all', status: 'all' });
+  const [sort,    setSort]    = useState({ column: 'due', direction: 'asc' });
+  const resetFilters = () => setFilters({ workspace: 'all', assignee: 'all', status: 'all' });
+  const filtersActive = filters.workspace !== 'all' || filters.assignee !== 'all' || filters.status !== 'all';
 
   // ── Aggregations (recomputed only when tasks change) ─────────────────────
   // NOTE: All hooks must run unconditionally — the non-super-admin guard
@@ -172,16 +281,60 @@ export default function Dashboard() {
     return [];
   }, [drillDown, tasks, sod, eod, weekEnd]);
 
-  // ── Sort drill-down tasks: overdue first, then by due date asc ───────────
+  // ── Filter option lists (built from the FULL task pool, not the drill set,
+  //    so options stay stable as you filter)
+  const filterOptions = useMemo(() => {
+    const wsSet = new Set();
+    const asSet = new Set();
+    tasks.forEach(t => {
+      const wsLabel = t._kind === 'workspace' ? (t._label?.split(' › ')[0] || '') : (t._label || '');
+      if (wsLabel) wsSet.add(wsLabel);
+      asSet.add(assigneeKey(t));
+    });
+    return {
+      workspaces: ['all', ...[...wsSet].sort((a, b) => a.localeCompare(b))],
+      assignees:  ['all', ...[...asSet].sort((a, b) => a.localeCompare(b))],
+      statuses:   ['all', 'open', 'in_progress', 'review', 'done'],
+    };
+  }, [tasks]);
+
+  // ── Apply filter dropdowns on top of the drill-down kind ─────────────────
+  const drillFiltered = useMemo(() => {
+    return drillTasks.filter(t => {
+      if (filters.workspace !== 'all') {
+        const wsLabel = t._kind === 'workspace' ? (t._label?.split(' › ')[0] || '') : (t._label || '');
+        if (wsLabel !== filters.workspace) return false;
+      }
+      if (filters.assignee !== 'all' && assigneeKey(t) !== filters.assignee) return false;
+      if (filters.status !== 'all') {
+        const taskStatus = isDoneTask(t) ? 'done' : (t.status || 'open');
+        if (taskStatus !== filters.status) return false;
+      }
+      return true;
+    });
+  }, [drillTasks, filters]);
+
+  // ── Sort drill-down tasks per the active sort spec ───────────────────────
   const drillSorted = useMemo(() => {
-    const arr = [...drillTasks];
+    const arr = [...drillFiltered];
+    const dir = sort.direction === 'asc' ? 1 : -1;
     arr.sort((a, b) => {
+      if (sort.column === 'task')     return dir * (a.text || '').localeCompare(b.text || '');
+      if (sort.column === 'path')     return dir * (a._label || '').localeCompare(b._label || '');
+      if (sort.column === 'owner')    return dir * ownerKey(a).localeCompare(ownerKey(b));
+      if (sort.column === 'assignee') return dir * assigneeKey(a).localeCompare(assigneeKey(b));
+      if (sort.column === 'status') {
+        const sa = isDoneTask(a) ? 'done' : (a.status || 'open');
+        const sb = isDoneTask(b) ? 'done' : (b.status || 'open');
+        return dir * sa.localeCompare(sb);
+      }
+      // 'due'
       const ad = dueDateMs(a) ?? Infinity;
       const bd = dueDateMs(b) ?? Infinity;
-      return ad - bd;
+      return dir * (ad - bd);
     });
     return arr;
-  }, [drillTasks]);
+  }, [drillFiltered, sort]);
 
   const drillTitle = (() => {
     if (!drillDown) return '';
@@ -225,16 +378,25 @@ export default function Dashboard() {
             <p className="text-sm text-slate-500">Super-admin overview · {tasks.length} task{tasks.length === 1 ? '' : 's'} loaded</p>
           </div>
         </div>
-        <label className="inline-flex items-center gap-2 text-sm text-slate-700 select-none">
-          <input
-            type="checkbox"
-            checked={includePersonal}
-            onChange={(e) => setIncludePersonal(e.target.checked)}
-            className="rounded border-slate-300 text-violet-600 focus:ring-violet-500"
-          />
-          Include personal-diary tasks
-        </label>
+        <button
+          onClick={() => setShowNewTask(true)}
+          className="btn btn-teal btn-sm inline-flex items-center gap-1.5"
+          title="Create a task in any workspace"
+        >
+          <Plus size={14} /> New Task
+        </button>
       </div>
+
+      {/* AddTaskModal — same modal Team Board uses, so the UX matches. */}
+      {showNewTask && (
+        <AddTaskModal
+          onClose={() => setShowNewTask(false)}
+          onAdd={handleTopLevelAdd}
+          members={[]}
+          workspaces={workspaces || []}
+          showToast={showToast}
+        />
+      )}
 
       {loading && (
         <div className="text-sm text-slate-500 mb-4">Loading platform tasks…</div>
@@ -275,34 +437,36 @@ export default function Dashboard() {
           active={drillDown?.kind === 'overdue'}
         />
 
-        {/* By assignee — count is unique assignees, with top 3 listed inside */}
+        {/* By assignee — count is unique assignees; FULL list shown inside (scrollable) */}
         <Tile
           icon={Users}
           label="By assignee"
           count={counts.assigneeList.length}
           accent="bg-emerald-100 text-emerald-700"
-          onClick={() => counts.assigneeList[0] && setDrillDown({ kind: 'assignee', value: counts.assigneeList[0][0] })}
+          onClick={() => setDrillDown({ kind: 'outstanding' })}
           active={drillDown?.kind === 'assignee'}
         >
-          {counts.assigneeList.slice(0, 4).map(([name, n]) => (
-            <button
-              key={name}
-              onClick={(e) => { e.stopPropagation(); setDrillDown({ kind: 'assignee', value: name }); }}
-              className="w-full flex justify-between items-center text-left hover:text-violet-700"
-            >
-              <span className="truncate">{name}</span>
-              <span className="tabular-nums font-semibold ml-2">{n}</span>
-            </button>
-          ))}
+          <div className="max-h-32 overflow-y-auto pr-1 -mr-1 space-y-1">
+            {counts.assigneeList.map(([name, n]) => (
+              <button
+                key={name}
+                onClick={(e) => { e.stopPropagation(); setDrillDown({ kind: 'assignee', value: name }); }}
+                className="w-full flex justify-between items-center text-left hover:text-violet-700"
+              >
+                <span className="truncate">{name}</span>
+                <span className="tabular-nums font-semibold ml-2">{n}</span>
+              </button>
+            ))}
+          </div>
         </Tile>
 
-        {/* By due date — count is total bucketed; bucket rows clickable */}
+        {/* By due date — buckets listed; click a bucket row to drill in */}
         <Tile
           icon={Calendar}
           label="By due date"
           count={counts.outstanding}
           accent="bg-violet-100 text-violet-700"
-          onClick={() => setDrillDown({ kind: 'bucket', value: 'Overdue' })}
+          onClick={() => setDrillDown({ kind: 'outstanding' })}
           active={drillDown?.kind === 'bucket'}
         >
           {Object.entries(counts.buckets).map(([name, n]) => (
@@ -321,30 +485,109 @@ export default function Dashboard() {
       {/* Drill-down panel */}
       {drillDown && (
         <div className="mt-6 bg-white rounded-2xl border border-slate-200 shadow-sm">
+          {/* Title row */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100">
-            <div className="flex items-center gap-2">
-              <ChevronRight size={16} className="text-slate-400" />
-              <h2 className="font-semibold text-slate-900">{drillTitle}</h2>
-              <span className="text-xs text-slate-500">· {drillSorted.length} result{drillSorted.length === 1 ? '' : 's'}</span>
+            <div className="flex items-center gap-2 min-w-0">
+              <ChevronRight size={16} className="text-slate-400 shrink-0" />
+              <h2 className="font-semibold text-slate-900 truncate">{drillTitle}</h2>
+              <span className="text-xs text-slate-500 shrink-0">
+                · {drillSorted.length} of {drillFiltered.length === drillTasks.length ? drillTasks.length : `${drillTasks.length} (filtered)`}
+              </span>
             </div>
             <button
-              onClick={() => setDrillDown(null)}
-              className="text-xs text-slate-500 hover:text-slate-700"
+              onClick={() => { setDrillDown(null); resetFilters(); }}
+              className="inline-flex items-center justify-center gap-1 text-xs text-slate-500 hover:text-slate-700 shrink-0 px-3 py-1.5 rounded-md hover:bg-slate-100 min-w-[44px] min-h-[36px]"
+              aria-label="Close drill-down"
             >
-              Close
+              <XIcon size={14} /> <span className="hidden sm:inline">Close</span>
             </button>
           </div>
 
-          {/* Column headers (desktop) */}
-          <div className="hidden md:grid grid-cols-12 gap-3 px-4 py-2 text-xs font-medium uppercase tracking-wide text-slate-500 border-b border-slate-100 bg-slate-50">
-            <div className="col-span-5">Task / Path</div>
-            <div className="col-span-3">Assignee</div>
-            <div className="col-span-2">Due</div>
-            <div className="col-span-2">Status</div>
+          {/* Filter dropdowns */}
+          <div className="flex items-center gap-2 px-4 py-2.5 border-b border-slate-100 bg-slate-50 flex-wrap">
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wide mr-1">Filter:</span>
+            <select
+              value={filters.workspace}
+              onChange={(e) => setFilters(f => ({ ...f, workspace: e.target.value }))}
+              className="text-xs rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-200 max-w-[200px]"
+              title="Filter by workspace"
+            >
+              {filterOptions.workspaces.map(w => (
+                <option key={w} value={w}>{w === 'all' ? 'All workspaces' : w}</option>
+              ))}
+            </select>
+            <select
+              value={filters.assignee}
+              onChange={(e) => setFilters(f => ({ ...f, assignee: e.target.value }))}
+              className="text-xs rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-200 max-w-[200px]"
+              title="Filter by assignee"
+            >
+              {filterOptions.assignees.map(a => (
+                <option key={a} value={a}>{a === 'all' ? 'All assignees' : a}</option>
+              ))}
+            </select>
+            <select
+              value={filters.status}
+              onChange={(e) => setFilters(f => ({ ...f, status: e.target.value }))}
+              className="text-xs rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-200"
+              title="Filter by status"
+            >
+              {filterOptions.statuses.map(s => (
+                <option key={s} value={s}>
+                  {s === 'all' ? 'All statuses' : s.replace('_', ' ')}
+                </option>
+              ))}
+            </select>
+            {filtersActive && (
+              <button
+                onClick={resetFilters}
+                className="inline-flex items-center gap-1 text-xs text-violet-700 hover:text-violet-900 ml-1"
+              >
+                <XIcon size={12} /> Reset filters
+              </button>
+            )}
+          </div>
+
+          {/* Mobile sort dropdown — desktop has clickable column headers below,
+              but those are hidden on small screens, so phones get this. */}
+          <div className="md:hidden flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50/50">
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wide">Sort:</span>
+            <select
+              value={sort.column}
+              onChange={(e) => setSort(s => ({ column: e.target.value, direction: s.direction }))}
+              className="text-xs rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-700 focus:outline-none focus:ring-2 focus:ring-violet-200"
+            >
+              <option value="due">Due date</option>
+              <option value="task">Task title</option>
+              <option value="owner">Owner</option>
+              <option value="assignee">Assignee</option>
+              <option value="status">Status</option>
+            </select>
+            <button
+              onClick={() => setSort(s => ({ ...s, direction: s.direction === 'asc' ? 'desc' : 'asc' }))}
+              className="inline-flex items-center gap-1 text-xs rounded-md border border-slate-200 bg-white px-2 py-1 text-slate-700 hover:bg-slate-100"
+              title={`Currently ${sort.direction === 'asc' ? 'ascending' : 'descending'} — tap to flip`}
+            >
+              {sort.direction === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              {sort.direction === 'asc' ? 'Asc' : 'Desc'}
+            </button>
+          </div>
+
+          {/* Sortable column headers (desktop) */}
+          <div className="hidden md:grid grid-cols-12 gap-3 px-4 py-2 border-b border-slate-100 bg-slate-50/50">
+            <SortHeader column="task"     label="Task / Path" sort={sort} setSort={setSort} className="col-span-4" />
+            <SortHeader column="owner"    label="Owner"       sort={sort} setSort={setSort} className="col-span-2" />
+            <SortHeader column="assignee" label="Assignee"    sort={sort} setSort={setSort} className="col-span-2" />
+            <SortHeader column="due"      label="Due"         sort={sort} setSort={setSort} className="col-span-2" />
+            <SortHeader column="status"   label="Status"      sort={sort} setSort={setSort} className="col-span-2" />
           </div>
 
           {drillSorted.length === 0 ? (
-            <div className="px-4 py-10 text-center text-sm text-slate-500">No tasks match this filter.</div>
+            <div className="px-4 py-10 text-center text-sm text-slate-500">
+              {filtersActive
+                ? 'No tasks match the current filters.'
+                : 'No tasks match this filter.'}
+            </div>
           ) : (
             <div>
               {drillSorted.map(t => <TaskRow key={t._path} task={t} />)}
