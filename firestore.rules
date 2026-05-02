@@ -72,13 +72,18 @@ service cloud.firestore {
       }
     }
 
-    // ─── Collection-group: lets assignees query their personal tasks ─────────
+    // ─── Collection-group: lets assignees + creators query their tasks ───────
+    // Used by:
+    //   - useAssignedTasks (where assigneeEmail == me)
+    //   - usePlatformTasks "mine" mode  (where assigneeEmail == me OR createdBy == me)
+    //   - useReminderDispatcher  (where createdBy == me)
     // NOTE: update is intentionally omitted here — specific rules above handle it.
     match /{path=**}/tasks/{taskId} {
       allow read: if isSuperAdmin()
                    || (request.auth != null
                        && (resource.data.assigneeUid   == request.auth.uid
-                           || resource.data.assigneeEmail == request.auth.token.email));
+                           || resource.data.assigneeEmail == request.auth.token.email
+                           || resource.data.createdBy    == request.auth.uid));
     }
 
     // ─── User directory — lets the owner discover who has signed up ───────

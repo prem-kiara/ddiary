@@ -1,41 +1,28 @@
 /**
- * "Ask each time" modal for the workspace → task drag-and-drop.
+ * Modal shown when a user drags a workspace and drops it on another workspace.
  *
- * Three modes for handling the source workspace's existing tasks:
- *   - siblings  — each src task becomes a separate task in the destination
- *   - checklist — src tasks become a checklist in the new task's notes
- *   - block     — proceed only if the src workspace has zero tasks
+ * Behavior: the source workspace becomes a CATEGORY (or SUB-CATEGORY) inside
+ * the destination, and all of its tasks land under that new bucket. The source
+ * workspace is then deleted.
  *
- * In all modes the source workspace is deleted after the conversion.
+ * Choices:
+ *   - Bucket type: top-level category, or sub-category under a chosen parent
+ *   - Bucket name: defaults to the source workspace's name, but editable
+ *
+ * Caveat: any category/sub-category structure inside the source workspace is
+ * flattened — every source task lands directly under the new bucket. (Nested
+ * preservation can be added later if needed.)
  */
 import { useEffect, useState } from 'react';
-import { X, AlertTriangle } from 'lucide-react';
+import { X, AlertTriangle, Folder, FolderTree } from 'lucide-react';
 import { countWorkspaceTasks } from '../../utils/dndMutations';
-
-const MODES = [
-  {
-    id:    'siblings',
-    label: 'Migrate tasks as siblings',
-    desc:  'Each task in the source workspace becomes a separate task in the destination, alongside the new converted task.',
-  },
-  {
-    id:    'checklist',
-    label: 'Convert tasks to checklist',
-    desc:  'Source tasks become a checklist in the new task’s notes. Loses status, assignee, and due dates per task.',
-  },
-  {
-    id:    'block',
-    label: 'Only if source is empty',
-    desc:  'Convert only if the source workspace has no tasks. Safest if you’re sure it was created by accident.',
-  },
-];
 
 export default function ConvertWorkspaceModal({
   srcWorkspace, destWorkspace, onConfirm, onCancel,
 }) {
-  const [mode, setMode] = useState('siblings');
-  const [destCategoryId, setDestCategoryId] = useState(null);
-  const [destSubcategoryId, setDestSubcategoryId] = useState(null);
+  const [bucketName, setBucketName] = useState(srcWorkspace?.name || '');
+  const [asSubcategory, setAsSubcategory] = useState(false);
+  const [parentCategoryId, setParentCategoryId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [srcTaskCount, setSrcTaskCount] = useState(null);
@@ -48,92 +35,157 @@ export default function ConvertWorkspaceModal({
     return () => { cancelled = true; };
   }, [srcWorkspace?.id]);
 
-  const cats = destWorkspace?.categories || [];
-  const selectedCat = cats.find(c => c.id === destCategoryId);
-  const subs = selectedCat?.subcategories || [];
+  const destCats = destWorkspace?.categories || [];
+  const canSubcategory = destCats.length > 0;
+
+  // Auto-pick first parent when switching to sub-category
+  useEffect(() => {
+    if (asSubcategory && !parentCategoryId && destCats.length > 0) {
+      setParentCategoryId(destCats[0].id);
+    }
+  }, [asSubcategory, parentCategoryId, destCats]);
 
   const handleConfirm = async () => {
     setError('');
+    const trimmed = (bucketName || '').trim();
+    if (!trimmed) {
+      setError('Give the new bucket a name.');
+      return;
+    }
+    if (asSubcategory && !parentCategoryId) {
+      setError('Pick a parent category to nest the new sub-category under.');
+      return;
+    }
     setSubmitting(true);
     try {
-      await onConfirm({ mode, destCategoryId, destSubcategoryId });
+      await onConfirm({
+        bucketName:       trimmed,
+        asSubcategory,
+        parentCategoryId: asSubcategory ? parentCategoryId : null,
+      });
     } catch (e) {
       setError(e?.message || 'Conversion failed.');
       setSubmitting(false);
     }
   };
 
+  const parentName = destCats.find(c => c.id === parentCategoryId)?.name || '';
+  const previewPath = asSubcategory
+    ? `${destWorkspace?.name} › ${parentName} › ${bucketName.trim() || '(name)'}`
+    : `${destWorkspace?.name} › ${bucketName.trim() || '(name)'}`;
+
   return (
     <div className="modal-overlay" onClick={onCancel}>
-      <div className="modal-body" style={{ maxWidth: 540, width: 'min(540px, 95vw)', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+      <div
+        className="modal-body"
+        style={{ maxWidth: 540, width: 'min(540px, 95vw)', maxHeight: '90vh', overflowY: 'auto' }}
+        onClick={e => e.stopPropagation()}
+      >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <h3 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>Convert workspace to task</h3>
+          <h3 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>
+            Move workspace into <em style={{ color: '#7c3aed', fontStyle: 'normal' }}>{destWorkspace?.name}</em>
+          </h3>
           <button className="btn-icon" onClick={onCancel} aria-label="Close"><X size={20} /></button>
         </div>
 
-        <div style={{ background: '#fef3c7', border: '1px solid #fde68a', padding: 10, borderRadius: 8, marginBottom: 14, display: 'flex', gap: 8 }}>
-          <AlertTriangle size={16} color="#b45309" style={{ flexShrink: 0, marginTop: 2 }} />
-          <div style={{ fontSize: 13, color: '#78350f', lineHeight: 1.5 }}>
-            This will <strong>delete</strong> the workspace <em>{srcWorkspace?.name}</em>
+        <div style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', padding: 10, borderRadius: 8, marginBottom: 14, display: 'flex', gap: 8 }}>
+          <AlertTriangle size={16} color="#6d28d9" style={{ flexShrink: 0, marginTop: 2 }} />
+          <div style={{ fontSize: 13, color: '#5b21b6', lineHeight: 1.5 }}>
+            <strong>{srcWorkspace?.name}</strong>
             {srcTaskCount !== null && srcTaskCount > 0 && (
-              <> (currently has <strong>{srcTaskCount}</strong> task{srcTaskCount === 1 ? '' : 's'})</>
+              <> ({srcTaskCount} task{srcTaskCount === 1 ? '' : 's'})</>
             )}
-            {' '}and create a new task in <em>{destWorkspace?.name}</em>. Comments, activity, and member assignments are not migrated.
+            {' '}will become a {asSubcategory ? 'sub-category' : 'category'} in <strong>{destWorkspace?.name}</strong>, and the workspace itself will be deleted. Comments, activity, and member assignments don't carry over.
           </div>
         </div>
 
-        <label className="label">How to handle source tasks</label>
+        {/* Bucket type radio */}
+        <label className="label">Convert as</label>
         <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
-          {MODES.map(m => (
-            <label
-              key={m.id}
-              style={{
-                border:       mode === m.id ? '2px solid #7c3aed' : '1px solid #e2e8f0',
-                borderRadius: 8,
-                padding:      10,
-                cursor:       'pointer',
-                display:      'flex',
-                gap:          10,
-                background:   mode === m.id ? '#f5f3ff' : '#fff',
-              }}
-            >
-              <input
-                type="radio" name="convertMode" value={m.id}
-                checked={mode === m.id}
-                onChange={() => setMode(m.id)}
-                style={{ marginTop: 2 }}
-              />
-              <div>
-                <div style={{ fontWeight: 600, fontSize: 14 }}>{m.label}</div>
-                <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>{m.desc}</div>
+          <label
+            style={{
+              border:       !asSubcategory ? '2px solid #7c3aed' : '1px solid #e2e8f0',
+              borderRadius: 8, padding: 10, cursor: 'pointer',
+              display: 'flex', gap: 10, alignItems: 'flex-start',
+              background:   !asSubcategory ? '#f5f3ff' : '#fff',
+            }}
+          >
+            <input
+              type="radio" name="bucketType"
+              checked={!asSubcategory}
+              onChange={() => setAsSubcategory(false)}
+              style={{ marginTop: 2 }}
+            />
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Folder size={14} /> Category (top level)
               </div>
-            </label>
-          ))}
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                Becomes a new category in {destWorkspace?.name}.
+              </div>
+            </div>
+          </label>
+
+          <label
+            style={{
+              border:       asSubcategory ? '2px solid #7c3aed' : '1px solid #e2e8f0',
+              borderRadius: 8, padding: 10,
+              cursor:       canSubcategory ? 'pointer' : 'not-allowed',
+              display: 'flex', gap: 10, alignItems: 'flex-start',
+              background:   asSubcategory ? '#f5f3ff' : '#fff',
+              opacity:      canSubcategory ? 1 : 0.55,
+            }}
+          >
+            <input
+              type="radio" name="bucketType"
+              checked={asSubcategory}
+              disabled={!canSubcategory}
+              onChange={() => canSubcategory && setAsSubcategory(true)}
+              style={{ marginTop: 2 }}
+            />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <FolderTree size={14} /> Sub-category
+              </div>
+              <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                {canSubcategory
+                  ? `Nested under one of ${destWorkspace?.name}'s existing categories.`
+                  : `${destWorkspace?.name} has no categories yet — create one first.`}
+              </div>
+              {asSubcategory && canSubcategory && (
+                <select
+                  value={parentCategoryId || ''}
+                  onChange={(e) => setParentCategoryId(e.target.value || null)}
+                  className="input"
+                  style={{ marginTop: 8 }}
+                >
+                  {destCats.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </label>
         </div>
 
-        <label className="label">Category in destination</label>
-        <select
-          value={destCategoryId || ''}
-          onChange={(e) => { setDestCategoryId(e.target.value || null); setDestSubcategoryId(null); }}
+        {/* Editable bucket name */}
+        <label className="label">{asSubcategory ? 'Sub-category' : 'Category'} name</label>
+        <input
+          type="text"
+          value={bucketName}
+          onChange={(e) => setBucketName(e.target.value)}
+          placeholder={srcWorkspace?.name}
           className="input"
-        >
-          <option value="">Uncategorized</option>
-          {cats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
+          autoFocus
+        />
 
-        {subs.length > 0 && (
-          <>
-            <label className="label" style={{ marginTop: 8 }}>Sub-category</label>
-            <select
-              value={destSubcategoryId || ''}
-              onChange={(e) => setDestSubcategoryId(e.target.value || null)}
-              className="input"
-            >
-              <option value="">— none —</option>
-              {subs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </>
-        )}
+        {/* Live preview */}
+        <div style={{ marginTop: 10, fontSize: 12, color: '#64748b' }}>
+          Preview: <code style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: 4, color: '#0f172a' }}>
+            {previewPath}
+          </code>
+          {srcTaskCount > 0 && <> · {srcTaskCount} task{srcTaskCount === 1 ? '' : 's'} will land here</>}
+        </div>
 
         {error && (
           <div style={{ background: '#fee2e2', color: '#b91c1c', padding: 8, borderRadius: 6, fontSize: 13, marginTop: 12 }}>

@@ -291,12 +291,12 @@ function DiaryApp() {
           {/* Settings */}
           <Route path="/settings" element={<SettingsPage showToast={showToast} />} />
 
-          {/* Platform Dashboard — super-admin only.
-              Component itself shows a friendly "restricted" view for non-admins,
-              but we also redirect at the route level to keep the URL honest. */}
+          {/* Dashboard — open to all users.
+              Default view shows tasks the user is assigned to or created.
+              Super-admins get a Global toggle inside the page. */}
           <Route
             path="/dashboard"
-            element={isSuperAdmin ? <Dashboard showToast={showToast} /> : <Navigate to="/" replace />}
+            element={<Dashboard showToast={showToast} />}
           />
 
           {/* Fallback */}

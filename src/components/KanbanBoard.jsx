@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, createContext, useContext } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Plus, X, ChevronDown, ChevronRight, User, Calendar, Send,
   Circle, Clock, Eye, CheckCircle, Trash2, Copy, Check as CheckIcon,
@@ -12,7 +13,18 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import MoveTaskConfirmModal from './dnd/MoveTaskConfirmModal';
 import ConvertWorkspaceModal from './dnd/ConvertWorkspaceModal';
-import { moveTaskAcrossWorkspaces, convertWorkspaceToTask } from '../utils/dndMutations';
+import { moveTaskAcrossWorkspaces, convertWorkspaceToCategory } from '../utils/dndMutations';
+
+// ─── Deep-link context ─────────────────────────────────────────────────────
+// Carries router-state values from KanbanBoard down to nested components so
+// they can auto-expand / auto-open when navigated to from the Dashboard.
+// All four ids may be null when the user landed here normally (no deep link).
+const DeepLinkContext = createContext({
+  openWorkspaceId:   null,
+  openCategoryId:    null,
+  openSubcategoryId: null,
+  openTaskId:        null,
+});
 import { useAuth } from '../contexts/AuthContext';
 import {
   useMyWorkspaces, useWorkspace, useWorkspaceTasks,
@@ -499,6 +511,17 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
   const assigneeName = assignee?.displayName || task.assigneeName || null;
   const assigneeId   = assignee?.uid || task.assigneeEmail || assigneeName || 'unassigned';
 
+  // ── Deep-link auto-open ──────────────────────────────────────────────────
+  // When the Dashboard navigated to this exact task, open the detail modal.
+  // The parent WorkspaceItem + CategorySection + SubcategorySection have
+  // already auto-expanded by the time this card mounts.
+  const { openTaskId, openWorkspaceId } = useContext(DeepLinkContext);
+  useEffect(() => {
+    if (openTaskId && openTaskId === task.id && openWorkspaceId === workspaceId) {
+      setOpen(true);
+    }
+  }, [openTaskId, openWorkspaceId, task.id, workspaceId]);
+
   // ── Make this card draggable for cross-workspace moves ─────────────────────
   // Drag is gated by an 8 px movement threshold (set on the global sensor),
   // so a normal click still opens the detail modal without false-starting a drag.
@@ -683,6 +706,12 @@ function SubcategorySection({
     });
   };
 
+  // Auto-expand when the Dashboard deep-linked to a task in this subcategory
+  const { openSubcategoryId } = useContext(DeepLinkContext);
+  useEffect(() => {
+    if (openSubcategoryId && openSubcategoryId === subcategory.id) setExpanded(true);
+  }, [openSubcategoryId, subcategory.id]);
+
   const [renaming,   setRenaming]   = useState(false);
   const [renameText, setRenameText] = useState(subcategory.name);
 
@@ -815,6 +844,12 @@ function CategorySection({
   onAddTaskHere, // (categoryId, subcategoryId) => void
 }) {
   const [expanded, setExpanded] = useState(false);
+
+  // Auto-expand when the Dashboard deep-linked to a task in this category
+  const { openCategoryId } = useContext(DeepLinkContext);
+  useEffect(() => {
+    if (openCategoryId && openCategoryId === category.id) setExpanded(true);
+  }, [openCategoryId, category.id]);
   const [renaming,   setRenaming]   = useState(false);
   const [renameText, setRenameText] = useState(category.name || '');
   const [addingSub,  setAddingSub]  = useState(false);
@@ -1869,6 +1904,23 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
       return stored !== null ? stored === 'true' : isFirst;
     } catch { return isFirst; }
   });
+
+  // ── Deep-link auto-expand + scroll into view ─────────────────────────────
+  // When the Dashboard navigated to a task in this workspace, auto-expand
+  // the card and scroll it to the top of the viewport so the user lands at
+  // the right place. Children (CategorySection / TaskCard) handle the rest.
+  const { openWorkspaceId } = useContext(DeepLinkContext);
+  const wsScrollRef = useRef(null);
+  useEffect(() => {
+    if (openWorkspaceId && openWorkspaceId === workspace.id) {
+      setExpanded(true);
+      // Defer scroll to next tick so the expanded body has measured.
+      const t = setTimeout(() => {
+        wsScrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 250);
+      return () => clearTimeout(t);
+    }
+  }, [openWorkspaceId, workspace.id]);
   const [showInvite,      setShowInvite]      = useState(false);
   const [showAddTask,     setShowAddTask]     = useState(false);
   const [showAddCategory, setShowAddCategory] = useState(false);
@@ -2063,7 +2115,7 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
 
   return (
     <div
-      ref={setDropRef}
+      ref={(el) => { setDropRef(el); wsScrollRef.current = el; }}
       className="card"
       style={{
         marginBottom:  10,
@@ -2717,7 +2769,33 @@ function NewWorkspaceModal({ onClose, onCreated, showToast, user }) {
 // ── Main KanbanBoard ──────────────────────────────────────────────────────────
 export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const { workspaces: rawWorkspaces, loading: wsListLoading } = useMyWorkspaces();
+
+  // ── Deep-link consumption ────────────────────────────────────────────────
+  // The Dashboard navigates here with router state when a user clicks a task.
+  // We expose the values via DeepLinkContext so nested components can react,
+  // then clear the state after a short delay so back/forward + refresh don't
+  // re-trigger.
+  const deepLink = location.state || {};
+  const deepLinkValue = useMemo(() => ({
+    openWorkspaceId:   deepLink.openWorkspaceId   || null,
+    openCategoryId:    deepLink.openCategoryId    || null,
+    openSubcategoryId: deepLink.openSubcategoryId || null,
+    openTaskId:        deepLink.openTaskId        || null,
+  }), [deepLink.openWorkspaceId, deepLink.openCategoryId, deepLink.openSubcategoryId, deepLink.openTaskId]);
+
+  useEffect(() => {
+    if (deepLinkValue.openTaskId || deepLinkValue.openWorkspaceId) {
+      // Children consume the state on mount (fast). 1500 ms gives slow loads
+      // a chance and avoids the state surviving a refresh.
+      const t = setTimeout(() => {
+        navigate(location.pathname, { replace: true, state: null });
+      }, 1500);
+      return () => clearTimeout(t);
+    }
+  }, [deepLinkValue.openTaskId, deepLinkValue.openWorkspaceId, navigate, location.pathname]);
   // Sort workspaces alphabetically by name (case-insensitive, locale-aware).
   // Using a stable shallow copy so we don't mutate the hook's array.
   const workspaces = [...(rawWorkspaces || [])].sort((a, b) =>
@@ -2811,6 +2889,7 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
   };
 
   return (
+    <DeepLinkContext.Provider value={deepLinkValue}>
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
     <div className="fade-in">
       {/* Page header */}
@@ -2913,20 +2992,26 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
           srcWorkspace={convertWsModal.srcWorkspace}
           destWorkspace={convertWsModal.destWorkspace}
           onCancel={() => setConvertWsModal(null)}
-          onConfirm={async ({ mode, destCategoryId, destSubcategoryId }) => {
+          onConfirm={async ({ bucketName, asSubcategory, parentCategoryId }) => {
             try {
-              await convertWorkspaceToTask({
-                srcWorkspace:     convertWsModal.srcWorkspace,
-                destWorkspaceId:  convertWsModal.destWorkspace.id,
-                destCategoryId,
-                destSubcategoryId,
-                mode,
+              const result = await convertWorkspaceToCategory({
+                srcWorkspace:    convertWsModal.srcWorkspace,
+                destWorkspaceId: convertWsModal.destWorkspace.id,
+                asSubcategory,
+                parentCategoryId,
+                bucketName,
                 actor: { uid: user.uid, email: user.email, displayName: user.displayName || user.email },
               });
-              if (showToast) showToast(`Workspace converted to task in "${convertWsModal.destWorkspace.name}"`, 'success');
+              if (showToast) {
+                const where = asSubcategory ? 'sub-category' : 'category';
+                const taskBit = result.taskCount
+                  ? ` with ${result.taskCount} task${result.taskCount === 1 ? '' : 's'}`
+                  : '';
+                showToast(`Created "${bucketName}" ${where} in ${convertWsModal.destWorkspace.name}${taskBit}`, 'success');
+              }
               setConvertWsModal(null);
             } catch (e) {
-              logError(e, { location: 'KanbanBoard:convertWorkspaceToTask' }, user.uid);
+              logError(e, { location: 'KanbanBoard:convertWorkspaceToCategory' }, user.uid);
               throw e; // surfaced in the modal
             }
           }}
@@ -2934,5 +3019,6 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
       )}
     </div>
     </DndContext>
+    </DeepLinkContext.Provider>
   );
 }

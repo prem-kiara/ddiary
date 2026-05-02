@@ -19,7 +19,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ListTodo, AlertTriangle, Clock, Users, Calendar,
   ArrowLeft, ChevronRight, ChevronUp, ChevronDown, Folder, Plus, User,
-  X as XIcon,
+  Globe, UserCircle, X as XIcon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlatformTasks } from '../hooks/usePlatformTasks';
@@ -85,7 +85,7 @@ function SortHeader({ column, label, sort, setSort, className = '' }) {
 // ─── Drill-down list row ───────────────────────────────────────────────────
 const ownerKey = (t) => t.createdByName || t.createdByEmail || t.ownerName || '—';
 
-function TaskRow({ task }) {
+function TaskRow({ task, onOpen }) {
   const overdue = (() => {
     const d = dueDateMs(task);
     return d && d < startOfToday() && !isDoneTask(task);
@@ -102,7 +102,12 @@ function TaskRow({ task }) {
   );
 
   return (
-    <div className="px-4 py-3 border-b border-slate-100 hover:bg-slate-50">
+    <button
+      type="button"
+      onClick={() => onOpen?.(task)}
+      className="w-full text-left px-4 py-3 border-b border-slate-100 hover:bg-violet-50/40 focus:bg-violet-50 focus:outline-none transition-colors cursor-pointer"
+      title="Open this task in the Team Board"
+    >
       {/* ── Mobile (< md): stacked card with explicit field labels ─────── */}
       <div className="md:hidden">
         <div className="font-medium text-slate-900 break-words">{task.text || '(no title)'}</div>
@@ -150,7 +155,7 @@ function TaskRow({ task }) {
         </div>
         <div className="col-span-2">{StatusPill}</div>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -158,9 +163,25 @@ function TaskRow({ task }) {
 export default function Dashboard({ showToast } = {}) {
   const { user, isSuperAdmin } = useAuth();
   const navigate = useNavigate();
-  // Workspace tasks only — personal-diary tasks are intentionally not aggregated.
-  const { tasks, loading, workspaces } = usePlatformTasks({ includePersonal: false });
+  // View mode — 'mine' (default for everyone) shows tasks I'm assigned to or
+  // I created. 'global' is super-admin only and shows every task on the
+  // platform. The hook silently downgrades to 'mine' for non-super-admins.
+  const [viewMode, setViewMode] = useState('mine');
+  const { tasks, loading, workspaces, effectiveMode } = usePlatformTasks({ mode: viewMode });
   const [showNewTask, setShowNewTask] = useState(false);
+
+  // Click a row -> deep-link into the Team Board with full context so the
+  // workspace, category, sub-category all auto-expand and the task modal opens.
+  const openTaskInTeamBoard = (task) => {
+    navigate('/tasks', {
+      state: {
+        openWorkspaceId:    task._parentId,
+        openCategoryId:     task.categoryId    || null,
+        openSubcategoryId:  task.subcategoryId || null,
+        openTaskId:         task.id,
+      },
+    });
+  };
 
   // ── Handler for AddTaskModal — creates the task in the chosen workspace,
   //    optionally creating the workspace first. Mirror of KanbanBoard's
@@ -369,22 +390,42 @@ export default function Dashboard({ showToast } = {}) {
     <div className="max-w-7xl mx-auto p-4 md:p-6">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-violet-100 text-violet-700 flex items-center justify-center">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-xl bg-violet-100 text-violet-700 flex items-center justify-center shrink-0">
             <LayoutDashboard size={20} />
           </div>
-          <div>
-            <h1 className="text-xl md:text-2xl font-bold text-slate-900">Platform Dashboard</h1>
-            <p className="text-sm text-slate-500">Super-admin overview · {tasks.length} task{tasks.length === 1 ? '' : 's'} loaded</p>
+          <div className="min-w-0">
+            <h1 className="text-xl md:text-2xl font-bold text-slate-900 truncate">
+              {effectiveMode === 'global' ? 'Platform Dashboard' : 'My Dashboard'}
+            </h1>
+            <p className="text-sm text-slate-500">
+              {effectiveMode === 'global'
+                ? <>Super-admin overview · {tasks.length} task{tasks.length === 1 ? '' : 's'} loaded</>
+                : <>Tasks assigned to or created by you · {tasks.length} task{tasks.length === 1 ? '' : 's'} loaded</>}
+            </p>
           </div>
         </div>
-        <button
-          onClick={() => setShowNewTask(true)}
-          className="btn btn-teal btn-sm inline-flex items-center gap-1.5"
-          title="Create a task in any workspace"
-        >
-          <Plus size={14} /> New Task
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Super-admin only: toggle between My tasks and Global view. */}
+          {isSuperAdmin && (
+            <button
+              onClick={() => setViewMode(m => m === 'mine' ? 'global' : 'mine')}
+              className={`btn btn-sm inline-flex items-center gap-1.5 ${effectiveMode === 'global' ? 'btn-purple' : 'btn-outline'}`}
+              title={effectiveMode === 'global' ? 'Currently showing all platform tasks — click for My tasks only' : 'Currently showing My tasks — click for Global view'}
+            >
+              {effectiveMode === 'global'
+                ? <><Globe size={14} /> Global view</>
+                : <><UserCircle size={14} /> My tasks</>}
+            </button>
+          )}
+          <button
+            onClick={() => setShowNewTask(true)}
+            className="btn btn-teal btn-sm inline-flex items-center gap-1.5"
+            title="Create a task in any workspace"
+          >
+            <Plus size={14} /> New Task
+          </button>
+        </div>
       </div>
 
       {/* AddTaskModal — same modal Team Board uses, so the UX matches. */}
@@ -590,7 +631,9 @@ export default function Dashboard({ showToast } = {}) {
             </div>
           ) : (
             <div>
-              {drillSorted.map(t => <TaskRow key={t._path} task={t} />)}
+              {drillSorted.map(t => (
+                <TaskRow key={t._path} task={t} onOpen={openTaskInTeamBoard} />
+              ))}
             </div>
           )}
         </div>
