@@ -166,12 +166,18 @@ export function usePlatformTasks({ mode = 'mine' } = {}) {
         const ws  = wsLookup[t._parentId];
         const cat = ws?.categories?.[t.categoryId];
         const sub = cat?.subs?.[t.subcategoryId];
-        const parts = [
-          ws?.name || '(unknown workspace)',
-          cat?.name || 'Uncategorized',
-          ...(sub ? [sub] : []),
-        ];
-        return { ...t, _kind: 'workspace', _label: parts.join(' › ') };
+        const wsName     = ws?.name  || '(unknown workspace)';
+        const catName    = cat?.name || 'Uncategorized';
+        const subName    = sub || null;
+        const parts = [wsName, catName, ...(subName ? [subName] : [])];
+        return {
+          ...t,
+          _kind:            'workspace',
+          _label:           parts.join(' › '),
+          _workspaceName:   wsName,
+          _categoryName:    catName,
+          _subcategoryName: subName,
+        };
       });
   }, [rawTasks, wsLookup]);
 

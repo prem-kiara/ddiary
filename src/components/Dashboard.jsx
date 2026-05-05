@@ -14,19 +14,20 @@
  * Toggle at the top includes/excludes personal-diary tasks
  * (users/{uid}/tasks) alongside workspace tasks.
  */
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, ListTodo, AlertTriangle, Clock, Users, Calendar,
   ArrowLeft, ChevronRight, ChevronUp, ChevronDown, Folder, Plus, User,
-  Globe, UserCircle, X as XIcon,
+  Globe, UserCircle, Check, X as XIcon,
 } from 'lucide-react';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlatformTasks } from '../hooks/usePlatformTasks';
-import { addWorkspaceTask, createWorkspace } from '../hooks/useWorkspace';
+import { addWorkspaceTask } from '../hooks/useWorkspace';
 import { notifyTaskAssigned } from '../utils/emailNotifications';
 import { logError } from '../utils/errorLogger';
-import { AddTaskModal } from './KanbanBoard';
 
 // ─── Date helpers (local timezone) ─────────────────────────────────────────
 const startOfToday = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
@@ -101,6 +102,8 @@ function TaskRow({ task, onOpen }) {
     </span>
   );
 
+  const dash = <span className="text-slate-400">—</span>;
+
   return (
     <button
       type="button"
@@ -111,11 +114,18 @@ function TaskRow({ task, onOpen }) {
       {/* ── Mobile (< md): stacked card with explicit field labels ─────── */}
       <div className="md:hidden">
         <div className="font-medium text-slate-900 break-words">{task.text || '(no title)'}</div>
-        <div className="text-xs text-slate-500 mt-1 flex items-start gap-1">
-          <Folder size={12} className="shrink-0 mt-0.5" />
-          <span className="break-words">{task._label}</span>
+        <div className="text-xs text-slate-500 mt-1 truncate" title={task._workspaceName}>
+          {task._workspaceName}
         </div>
         <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+          <div className="truncate">
+            <span className="text-slate-400">Category: </span>
+            <span className="text-slate-700 font-medium">{task._categoryName}</span>
+          </div>
+          <div className="truncate">
+            <span className="text-slate-400">Sub-category: </span>
+            <span className="text-slate-700 font-medium">{task._subcategoryName || '—'}</span>
+          </div>
           <div className="truncate">
             <span className="text-slate-400">Owner: </span>
             <span className="text-slate-700 font-medium">{ownerKey(task)}</span>
@@ -134,28 +144,231 @@ function TaskRow({ task, onOpen }) {
         </div>
       </div>
 
-      {/* ── Desktop (md+): tight 12-col grid row ─────────────────────────── */}
+      {/* ── Desktop (md+): 12-col grid with Category + Sub-category broken
+            out into their own columns. Workspace name sits as a small
+            subtitle under the task title. */}
       <div className="hidden md:grid grid-cols-12 gap-3 items-center">
-        <div className="col-span-4 min-w-0">
+        <div className="col-span-3 min-w-0">
           <div className="font-medium text-slate-900 truncate">{task.text || '(no title)'}</div>
-          <div className="text-xs text-slate-500 mt-0.5 flex items-center gap-1 truncate">
-            <Folder size={12} className="shrink-0" />
-            <span className="truncate">{task._label}</span>
+          <div className="text-xs text-slate-500 mt-0.5 truncate" title={task._workspaceName}>
+            {task._workspaceName}
           </div>
         </div>
-        <div className="col-span-2 text-sm text-slate-700 truncate flex items-center gap-1.5" title={`Created by ${ownerKey(task)}`}>
-          <User size={12} className="text-slate-400 shrink-0" />
-          <span className="truncate">{ownerKey(task)}</span>
+        <div className="col-span-2 text-sm text-slate-700 truncate" title={task._categoryName}>
+          {task._categoryName}
         </div>
-        <div className="col-span-2 text-sm text-slate-700 truncate">
+        <div className="col-span-2 text-sm text-slate-700 truncate" title={task._subcategoryName || ''}>
+          {task._subcategoryName || dash}
+        </div>
+        <div className="col-span-1 text-sm text-slate-700 truncate" title={`Created by ${ownerKey(task)}`}>
+          {ownerKey(task)}
+        </div>
+        <div className="col-span-1 text-sm text-slate-700 truncate" title={assigneeKey(task)}>
           {assigneeKey(task)}
         </div>
-        <div className={`col-span-2 text-sm tabular-nums ${overdue ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>
+        <div className={`col-span-1 text-sm tabular-nums ${overdue ? 'text-red-600 font-semibold' : 'text-slate-600'}`}>
           {formatDue(task.dueDate)}
         </div>
         <div className="col-span-2">{StatusPill}</div>
       </div>
     </button>
+  );
+}
+
+// ─── Inline "add task" row ─────────────────────────────────────────────────
+// Excel-style row that appears at the top of the drill-down list when the
+// user clicks + New Task. Workspace selection cascades to category +
+// sub-category options, and members of the chosen workspace populate the
+// assignee dropdown.
+//
+// Keyboard:
+//   Enter — save (input clears, row stays for the next task)
+//   Esc   — cancel and remove the row
+function InlineTaskRow({ workspaces, defaultWorkspaceId, onSave, onCancel, currentUserName }) {
+  const [workspaceId,   setWorkspaceId]   = useState(defaultWorkspaceId || workspaces[0]?.id || '');
+  const [text,          setText]          = useState('');
+  const [categoryId,    setCategoryId]    = useState('');
+  const [subcategoryId, setSubcategoryId] = useState('');
+  const [assigneeUid,   setAssigneeUid]   = useState('');
+  const [dueDate,       setDueDate]       = useState('');
+  const [status,        setStatus]        = useState('open');
+  const [members,       setMembers]       = useState([]);
+  const [saving,        setSaving]        = useState(false);
+  const [error,         setError]         = useState('');
+
+  // Live members for the chosen workspace (drives the Assignee dropdown).
+  useEffect(() => {
+    setMembers([]);
+    setAssigneeUid('');
+    if (!workspaceId) return;
+    const unsub = onSnapshot(
+      collection(db, 'workspaces', workspaceId, 'members'),
+      (snap) => setMembers(snap.docs.map(d => ({ uid: d.id, ...d.data() }))),
+      () => {}
+    );
+    return unsub;
+  }, [workspaceId]);
+
+  const ws   = workspaces.find(w => w.id === workspaceId);
+  const cats = ws?.categories || [];
+  const cat  = cats.find(c => c.id === categoryId);
+  const subs = cat?.subcategories || [];
+
+  const canSave = !!text.trim() && !!workspaceId && !saving;
+
+  const handleSave = async (keepOpen = true) => {
+    if (!canSave) return;
+    setError('');
+    setSaving(true);
+    try {
+      const assignee = members.find(m => m.uid === assigneeUid);
+      await onSave({
+        workspaceId,
+        text:           text.trim(),
+        categoryId:     categoryId    || null,
+        subcategoryId:  categoryId ? (subcategoryId || null) : null,
+        assigneeUid:    assigneeUid   || null,
+        assigneeEmail:  assignee?.email?.toLowerCase() || null,
+        assigneeName:   assignee?.displayName || assignee?.email || null,
+        dueDate:        dueDate       || null,
+        status,
+      });
+      // Clear the title + due so the user can keep adding rows quickly.
+      // Workspace / category / subcategory / assignee stay so batch entry
+      // into the same bucket is one Enter per task.
+      setText('');
+      setDueDate('');
+      if (!keepOpen) onCancel();
+    } catch (e) {
+      setError(e?.message || 'Failed to add task.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleKey = (e) => {
+    if (e.key === 'Enter')  { e.preventDefault(); handleSave(true); }
+    if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+  };
+
+  if (workspaces.length === 0) {
+    return (
+      <div className="px-4 py-4 border-b border-violet-200 bg-violet-50/50 text-sm text-slate-600">
+        You're not a member of any workspace yet.
+        <button onClick={onCancel} className="ml-2 text-violet-700 hover:underline">Cancel</button>
+      </div>
+    );
+  }
+
+  const cellSelect = "w-full text-xs border border-slate-300 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-violet-200";
+
+  return (
+    <div className="border-b-2 border-violet-200 bg-violet-50/40">
+      {/* ── Mobile: stacked form ───────────────────────────────────────── */}
+      <div className="md:hidden p-4 space-y-2">
+        <input
+          autoFocus
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={handleKey}
+          placeholder="Task title (required)"
+          className="w-full px-2 py-1.5 text-sm border border-violet-300 rounded focus:outline-none focus:ring-2 focus:ring-violet-200"
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <select value={workspaceId} onChange={e => { setWorkspaceId(e.target.value); setCategoryId(''); setSubcategoryId(''); }} className={cellSelect}>
+            <option value="">Pick workspace…</option>
+            {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+          <select value={categoryId} onChange={e => { setCategoryId(e.target.value); setSubcategoryId(''); }} className={cellSelect} disabled={!workspaceId}>
+            <option value="">Uncategorized</option>
+            {cats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <select value={subcategoryId} onChange={e => setSubcategoryId(e.target.value)} className={cellSelect} disabled={!categoryId || subs.length === 0}>
+            <option value="">— none —</option>
+            {subs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <select value={assigneeUid} onChange={e => setAssigneeUid(e.target.value)} className={cellSelect} disabled={!workspaceId}>
+            <option value="">Unassigned</option>
+            {members.map(m => <option key={m.uid} value={m.uid}>{m.displayName || m.email}</option>)}
+          </select>
+          <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className={cellSelect} />
+          <select value={status} onChange={e => setStatus(e.target.value)} className={cellSelect}>
+            <option value="open">Open</option>
+            <option value="in_progress">In progress</option>
+            <option value="review">Review</option>
+            <option value="done">Done</option>
+          </select>
+        </div>
+        {error && <div className="text-xs text-red-600">{error}</div>}
+        <div className="flex gap-2 justify-end pt-1">
+          <button onClick={onCancel} className="text-xs px-3 py-1.5 rounded border border-slate-300 text-slate-700">Cancel</button>
+          <button onClick={() => handleSave(true)} disabled={!canSave} className="inline-flex items-center gap-1 text-xs px-3 py-1.5 rounded bg-violet-600 text-white disabled:opacity-40 hover:bg-violet-700">
+            <Check size={12} /> {saving ? 'Saving…' : 'Add task'}
+          </button>
+        </div>
+      </div>
+
+      {/* ── Desktop: inline grid matching the column layout ────────────── */}
+      <div className="hidden md:grid grid-cols-12 gap-3 items-center px-4 py-2.5">
+        <div className="col-span-3 min-w-0 space-y-1">
+          <input
+            autoFocus
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={handleKey}
+            placeholder="Task title (required) — Enter to save, Esc to cancel"
+            className="w-full px-2 py-1 text-sm border border-violet-300 rounded focus:outline-none focus:ring-2 focus:ring-violet-200"
+          />
+          <select
+            value={workspaceId}
+            onChange={e => { setWorkspaceId(e.target.value); setCategoryId(''); setSubcategoryId(''); }}
+            className={cellSelect + ' text-slate-600'}
+          >
+            <option value="">Pick workspace…</option>
+            {workspaces.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+        </div>
+        <div className="col-span-2">
+          <select value={categoryId} onChange={e => { setCategoryId(e.target.value); setSubcategoryId(''); }} className={cellSelect} disabled={!workspaceId}>
+            <option value="">Uncategorized</option>
+            {cats.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div className="col-span-2">
+          <select value={subcategoryId} onChange={e => setSubcategoryId(e.target.value)} className={cellSelect} disabled={!categoryId || subs.length === 0}>
+            <option value="">— none —</option>
+            {subs.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+        <div className="col-span-1 text-xs text-slate-500 truncate" title={`Owner: ${currentUserName}`}>
+          you
+        </div>
+        <div className="col-span-1">
+          <select value={assigneeUid} onChange={e => setAssigneeUid(e.target.value)} className={cellSelect} disabled={!workspaceId}>
+            <option value="">—</option>
+            {members.map(m => <option key={m.uid} value={m.uid}>{(m.displayName || m.email || '').split(' ')[0]}</option>)}
+          </select>
+        </div>
+        <div className="col-span-1">
+          <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} onKeyDown={handleKey} className={cellSelect} />
+        </div>
+        <div className="col-span-2 flex items-center gap-1 min-w-0">
+          <select value={status} onChange={e => setStatus(e.target.value)} className={cellSelect + ' flex-1'}>
+            <option value="open">Open</option>
+            <option value="in_progress">In progress</option>
+            <option value="review">Review</option>
+            <option value="done">Done</option>
+          </select>
+          <button onClick={() => handleSave(true)} disabled={!canSave} className="px-2 py-1 text-xs rounded bg-violet-600 text-white disabled:opacity-40 hover:bg-violet-700 shrink-0" title="Save (Enter) — keeps row open for the next task">
+            <Check size={12} />
+          </button>
+          <button onClick={onCancel} className="px-2 py-1 text-xs rounded border border-slate-300 text-slate-600 hover:bg-slate-100 shrink-0" title="Cancel (Esc)">
+            <XIcon size={12} />
+          </button>
+        </div>
+        {error && <div className="col-span-12 text-xs text-red-600 mt-1">{error}</div>}
+      </div>
+    </div>
   );
 }
 
@@ -168,7 +381,7 @@ export default function Dashboard({ showToast } = {}) {
   // platform. The hook silently downgrades to 'mine' for non-super-admins.
   const [viewMode, setViewMode] = useState('mine');
   const { tasks, loading, workspaces, effectiveMode } = usePlatformTasks({ mode: viewMode });
-  const [showNewTask, setShowNewTask] = useState(false);
+  const [addingInline, setAddingInline] = useState(false);
 
   // Click a row -> deep-link into the Team Board with full context so the
   // workspace, category, sub-category all auto-expand and the task modal opens.
@@ -183,48 +396,46 @@ export default function Dashboard({ showToast } = {}) {
     });
   };
 
-  // ── Handler for AddTaskModal — creates the task in the chosen workspace,
-  //    optionally creating the workspace first. Mirror of KanbanBoard's
-  //    handleTopLevelAdd so the UX is identical between Team Board and Dashboard.
-  const handleTopLevelAdd = async (taskData, wsOptions) => {
-    let wsId = wsOptions.targetWorkspaceId || workspaces?.[0]?.id || null;
-    try {
-      if (wsOptions.newWorkspaceName) {
-        wsId = await createWorkspace(
-          user.uid, user.email, user.displayName || user.email,
-          wsOptions.newWorkspaceName,
-          wsOptions.newWorkspaceCategory || null,
-        );
-        if (showToast) showToast(`Workspace "${wsOptions.newWorkspaceName}" created!`, 'success');
-      }
-    } catch (e) {
-      e.message = `Could not create workspace: ${e?.message || e}`;
-      throw e;
+  // Inline-add handler — called by the InlineTaskRow on Save.
+  const handleInlineAdd = async (taskData) => {
+    const wsId = taskData.workspaceId;
+    if (!wsId || !taskData.text) return;
+    const actor = { uid: user.uid, email: user.email, displayName: user.displayName || user.email };
+    await addWorkspaceTask(wsId, {
+      text:          taskData.text,
+      status:        taskData.status   || 'open',
+      priority:      'medium',
+      dueDate:       taskData.dueDate  || null,
+      assigneeUid:   taskData.assigneeUid   || null,
+      assigneeEmail: taskData.assigneeEmail || null,
+      assigneeName:  taskData.assigneeName  || null,
+      categoryId:    taskData.categoryId    || null,
+      subcategoryId: taskData.subcategoryId || null,
+    }, actor);
+
+    if (taskData.assigneeEmail) {
+      notifyTaskAssigned({
+        assigneeEmail: taskData.assigneeEmail,
+        assigneeName:  taskData.assigneeName,
+        taskText:      taskData.text,
+        dueDate:       taskData.dueDate,
+        priority:      'medium',
+        ownerName:     user.displayName || user.email,
+        ownerUid:      user.uid,
+      }).catch((err) => logError(err, { location: 'Dashboard:notifyTaskAssigned' }));
     }
-    if (wsId) {
-      try {
-        await addWorkspaceTask(wsId, taskData, {
-          uid: user.uid, email: user.email, displayName: user.displayName || user.email,
-        });
-      } catch (e) {
-        e.message = `Workspace created, but task add failed: ${e?.message || e}`;
-        throw e;
-      }
-      if (taskData.assigneeEmail) {
-        notifyTaskAssigned({
-          assigneeEmail: taskData.assigneeEmail,
-          assigneeName:  taskData.assigneeName,
-          taskText:      taskData.text,
-          dueDate:       taskData.dueDate,
-          priority:      taskData.priority,
-          ownerName:     user.displayName || user.email,
-          ownerUid:      user.uid,
-        }).catch((err) => logError(err, { location: 'Dashboard:notifyTaskAssigned' }));
-      }
-    }
+    if (showToast) showToast('Task added', 'success');
   };
+
   // drillDown: { kind: 'total' | 'outstanding' | 'dueToday' | 'overdue' | 'assignee' | 'bucket', value?: string }
   const [drillDown, setDrillDown] = useState(null);
+
+  // Open + New Task: enable inline mode AND auto-open the drill-down to
+  // 'outstanding' so the new row sits at the top of a visible list.
+  const startInlineAdd = () => {
+    setAddingInline(true);
+    if (!drillDown) setDrillDown({ kind: 'outstanding' });
+  };
 
   // ── Drill-down filters + sort (layered on top of the drill-down kind) ────
   const [filters, setFilters] = useState({ workspace: 'all', assignee: 'all', status: 'all' });
@@ -342,6 +553,8 @@ export default function Dashboard({ showToast } = {}) {
     arr.sort((a, b) => {
       if (sort.column === 'task')     return dir * (a.text || '').localeCompare(b.text || '');
       if (sort.column === 'path')     return dir * (a._label || '').localeCompare(b._label || '');
+      if (sort.column === 'category') return dir * (a._categoryName || '').localeCompare(b._categoryName || '');
+      if (sort.column === 'subcat')   return dir * (a._subcategoryName || '').localeCompare(b._subcategoryName || '');
       if (sort.column === 'owner')    return dir * ownerKey(a).localeCompare(ownerKey(b));
       if (sort.column === 'assignee') return dir * assigneeKey(a).localeCompare(assigneeKey(b));
       if (sort.column === 'status') {
@@ -419,25 +632,15 @@ export default function Dashboard({ showToast } = {}) {
             </button>
           )}
           <button
-            onClick={() => setShowNewTask(true)}
-            className="btn btn-teal btn-sm inline-flex items-center gap-1.5"
-            title="Create a task in any workspace"
+            onClick={startInlineAdd}
+            disabled={addingInline}
+            className="btn btn-teal btn-sm inline-flex items-center gap-1.5 disabled:opacity-50"
+            title="Add a task inline at the top of the list"
           >
             <Plus size={14} /> New Task
           </button>
         </div>
       </div>
-
-      {/* AddTaskModal — same modal Team Board uses, so the UX matches. */}
-      {showNewTask && (
-        <AddTaskModal
-          onClose={() => setShowNewTask(false)}
-          onAdd={handleTopLevelAdd}
-          members={[]}
-          workspaces={workspaces || []}
-          showToast={showToast}
-        />
-      )}
 
       {loading && (
         <div className="text-sm text-slate-500 mb-4">Loading platform tasks…</div>
@@ -600,6 +803,8 @@ export default function Dashboard({ showToast } = {}) {
             >
               <option value="due">Due date</option>
               <option value="task">Task title</option>
+              <option value="category">Category</option>
+              <option value="subcat">Sub-category</option>
               <option value="owner">Owner</option>
               <option value="assignee">Assignee</option>
               <option value="status">Status</option>
@@ -616,14 +821,27 @@ export default function Dashboard({ showToast } = {}) {
 
           {/* Sortable column headers (desktop) */}
           <div className="hidden md:grid grid-cols-12 gap-3 px-4 py-2 border-b border-slate-100 bg-slate-50/50">
-            <SortHeader column="task"     label="Task / Path" sort={sort} setSort={setSort} className="col-span-4" />
-            <SortHeader column="owner"    label="Owner"       sort={sort} setSort={setSort} className="col-span-2" />
-            <SortHeader column="assignee" label="Assignee"    sort={sort} setSort={setSort} className="col-span-2" />
-            <SortHeader column="due"      label="Due"         sort={sort} setSort={setSort} className="col-span-2" />
-            <SortHeader column="status"   label="Status"      sort={sort} setSort={setSort} className="col-span-2" />
+            <SortHeader column="task"     label="Task / Workspace" sort={sort} setSort={setSort} className="col-span-3" />
+            <SortHeader column="category" label="Category"         sort={sort} setSort={setSort} className="col-span-2" />
+            <SortHeader column="subcat"   label="Sub-category"     sort={sort} setSort={setSort} className="col-span-2" />
+            <SortHeader column="owner"    label="Owner"            sort={sort} setSort={setSort} className="col-span-1" />
+            <SortHeader column="assignee" label="Assignee"         sort={sort} setSort={setSort} className="col-span-1" />
+            <SortHeader column="due"      label="Due"              sort={sort} setSort={setSort} className="col-span-1" />
+            <SortHeader column="status"   label="Status"           sort={sort} setSort={setSort} className="col-span-2" />
           </div>
 
-          {drillSorted.length === 0 ? (
+          {/* Inline add row — sits at the top of the list when active. */}
+          {addingInline && (
+            <InlineTaskRow
+              workspaces={workspaces || []}
+              defaultWorkspaceId={null}
+              currentUserName={user?.displayName || user?.email}
+              onCancel={() => setAddingInline(false)}
+              onSave={handleInlineAdd}
+            />
+          )}
+
+          {drillSorted.length === 0 && !addingInline ? (
             <div className="px-4 py-10 text-center text-sm text-slate-500">
               {filtersActive
                 ? 'No tasks match the current filters.'

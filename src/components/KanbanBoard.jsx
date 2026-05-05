@@ -300,15 +300,30 @@ function TaskDetailModal({ task, workspace, workspaceId, members, onDelete, curr
   return (
     <div className="sheet-modal-overlay" onClick={onClose}>
       <div
-        className="sheet-modal"
+        className="sheet-modal sheet-modal-xl"
         onClick={e => e.stopPropagation()}
-        style={{ padding: 0, overflow: 'hidden' }}
+        style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
       >
         {/* Header */}
-        <div style={{ padding: '16px 18px 12px', borderBottom: '1px solid #ede0c8', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+        <div style={{ padding: '16px 18px 12px', borderBottom: '1px solid #ede0c8', display: 'flex', gap: 10, alignItems: 'flex-start', flexShrink: 0 }}>
           <div style={{ width: 4, borderRadius: 2, background: priority, alignSelf: 'stretch', flexShrink: 0, minHeight: 20 }} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: '#0f172a', lineHeight: 1.4, wordBreak: 'break-word' }}>{task.text}</div>
+            {/* Title — capped at ~200px tall with its own scroll so long
+                pasted content doesn't push the rest of the modal off-screen. */}
+            <div
+              style={{
+                fontSize:    15,
+                fontWeight:  700,
+                color:       '#0f172a',
+                lineHeight:  1.4,
+                wordBreak:   'break-word',
+                maxHeight:   200,
+                overflowY:   'auto',
+                paddingRight: 6,
+              }}
+            >
+              {task.text}
+            </div>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
               {/* Status badge */}
               <span style={{ background: statusCfg.bg, color: statusCfg.color, border: `1px solid ${statusCfg.color}44`, fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 20 }}>
