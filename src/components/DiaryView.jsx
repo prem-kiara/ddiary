@@ -27,6 +27,32 @@ const wasEdited = (createdAt, updatedAt) => {
   return u.getTime() - c.getTime() > 1000;
 };
 
+/**
+ * Parses inline formatting markers and returns an array of React nodes.
+ * Supported: **bold**, *italic*, __underline__, ~~strikethrough~~
+ * Order matters: longer/greedy markers (**  __  ~~) must be checked before
+ * single-char ones (*) to avoid false matches.
+ */
+function renderInline(text, keyBase) {
+  // Combined regex — order: ** before *, __ before bare underscores
+  const pattern = /\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\*(.+?)\*/g;
+  const nodes = [];
+  let last = 0;
+  let m;
+  let k = 0;
+
+  while ((m = pattern.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index));
+    if (m[1] !== undefined) nodes.push(<strong key={`${keyBase}-${k++}`}>{m[1]}</strong>);
+    else if (m[2] !== undefined) nodes.push(<u key={`${keyBase}-${k++}`}>{m[2]}</u>);
+    else if (m[3] !== undefined) nodes.push(<s key={`${keyBase}-${k++}`}>{m[3]}</s>);
+    else if (m[4] !== undefined) nodes.push(<em key={`${keyBase}-${k++}`}>{m[4]}</em>);
+    last = pattern.lastIndex;
+  }
+  if (last < text.length) nodes.push(text.slice(last));
+  return nodes;
+}
+
 /** Renders entry content with each line/paragraph on its own line. */
 function renderContent(content) {
   if (!content) return null;
@@ -49,7 +75,7 @@ function renderContent(content) {
             <ol key={pi} className="pl-6 mb-4 list-decimal">
               {lines.map((line, li) => (
                 <li key={li} className="mb-1.5">
-                  {line.replace(/^\d+[.)]\s/, '').trim()}
+                  {renderInline(line.replace(/^\d+[.)]\s/, '').trim(), `${pi}-${li}`)}
                 </li>
               ))}
             </ol>
@@ -61,7 +87,7 @@ function renderContent(content) {
             <ul key={pi} className="pl-6 mb-4 list-disc">
               {lines.map((line, li) => (
                 <li key={li} className="mb-1.5">
-                  {line.replace(/^[-*•]\s/, '').trim()}
+                  {renderInline(line.replace(/^[-*•]\s/, '').trim(), `${pi}-${li}`)}
                 </li>
               ))}
             </ul>
@@ -72,7 +98,7 @@ function renderContent(content) {
         return (
           <div key={pi} className="mb-3">
             {lines.map((line, li) => (
-              <p key={li} className="mb-1">{line}</p>
+              <p key={li} className="mb-1">{renderInline(line, `${pi}-${li}`)}</p>
             ))}
           </div>
         );
