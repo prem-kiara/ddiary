@@ -35,11 +35,11 @@ export default function Layout({
   const ownerNavItems = [
     { id: 'home',      path: '/',          icon: Home,             label: 'Diary'     },
     { id: 'write',     path: '/write',     icon: PenTool,          label: 'Write'     },
+    { id: 'sheets',    path: '/sheets',    icon: Table2,           label: 'Sheets'    },
     { id: 'tasks',     path: '/tasks',     icon: List,             label: 'Tasks'     },
     // Dashboard is available to everyone. Default view = my tasks; super-admins
     // can toggle to a global view from inside the page.
     { id: 'dashboard', path: '/dashboard', icon: LayoutDashboard,  label: 'Dashboard' },
-    { id: 'sheets',    path: '/sheets',    icon: Table2,           label: 'Sheets'    },
     { id: 'settings',  path: '/settings',  icon: Settings,         label: 'Settings'  },
   ];
 

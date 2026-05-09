@@ -219,24 +219,28 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
   }, [selRange, cols, rows, title, scheduleSave]);
 
   // ── Sort ───────────────────────────────────────────────────────────────────
+  // IMPORTANT: all computation (vals, allRows sorting) is done INSIDE setData's
+  // functional updater so it always operates on the freshest state (prev), not
+  // potentially stale closure data. This prevents the empty-sheet bug on the
+  // second sort click.
   const sortByColumn = useCallback((colIdx, dir) => {
-    const allRows = Array.from({ length: rows }, (_, i) => i);
-    // Snapshot display values before sorting
-    const vals = allRows.map(r => displayVal(colIdx, r, data));
-    allRows.sort((a, b) => {
-      const va = vals[a], vb = vals[b];
-      const na = parseFloat(va), nb = parseFloat(vb);
-      let cmp = (!isNaN(na) && !isNaN(nb)) ? na - nb : String(va).localeCompare(String(vb));
-      return dir === 'asc' ? cmp : -cmp;
-    });
     setData(prev => {
+      const allRows = Array.from({ length: rows }, (_, i) => i);
+      // Snapshot display values from prev (current state), not closure data
+      const vals = allRows.map(r => displayVal(colIdx, r, prev));
+      allRows.sort((a, b) => {
+        const va = vals[a], vb = vals[b];
+        const na = parseFloat(va), nb = parseFloat(vb);
+        let cmp = (!isNaN(na) && !isNaN(nb)) ? na - nb : String(va).localeCompare(String(vb));
+        return dir === 'asc' ? cmp : -cmp;
+      });
       const next = {};
-      // Copy cells outside row range first
+      // Preserve cells outside sortable row range (row >= rows)
       Object.entries(prev).forEach(([k, v]) => {
         const ref = parseRef(k);
         if (!ref || ref.row >= rows) next[k] = v;
       });
-      // Remap sorted rows
+      // Remap: move data at srcRow → destRow according to sort order
       allRows.forEach((srcRow, destRow) => {
         for (let c = 0; c < cols; c++) {
           const k = ck(c, srcRow);
@@ -247,7 +251,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
       return next;
     });
     setSortConfig({ col: colIdx, dir });
-  }, [cols, rows, data, title, scheduleSave]);
+  }, [cols, rows, title, scheduleSave]); // no 'data' dep — uses prev inside updater
 
   // ── Formula pointing helpers ───────────────────────────────────────────────
   // Get the active formula input element
