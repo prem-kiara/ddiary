@@ -256,11 +256,14 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
   // Empty rows always sort to the bottom regardless of direction.
   const sortByColumn = useCallback((colIdx, dir) => {
     setDataWithHistory(prev => {
-      const allRows = Array.from({ length: rows }, (_, i) => i);
+      // Row 0 is always the header — sort rows 1..rows-1 only
+      const HEADER = 1;
+      const allRows = Array.from({ length: rows - HEADER }, (_, i) => i + HEADER);
       const vals = allRows.map(r => displayVal(colIdx, r, prev));
 
       allRows.sort((a, b) => {
-        const va = vals[a], vb = vals[b];
+        // Map a/b (absolute row indices) to their vals-array index
+        const va = vals[a - HEADER], vb = vals[b - HEADER];
         // Empty cells always sink to the bottom
         if (va === '' && vb === '') return 0;
         if (va === '') return 1;
@@ -271,13 +274,14 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
       });
 
       const next = {};
-      // Keep cells outside the row range untouched
+      // Always preserve the header row (row 0) and cells beyond the grid
       Object.entries(prev).forEach(([k, v]) => {
         const ref = parseRef(k);
-        if (!ref || ref.row >= rows) next[k] = v;
+        if (!ref || ref.row < HEADER || ref.row >= rows) next[k] = v;
       });
-      // Remap: srcRow (original position) → destRow (sorted position)
-      allRows.forEach((srcRow, destRow) => {
+      // Remap sorted data rows: srcRow → destRow (both start at HEADER)
+      allRows.forEach((srcRow, destIdx) => {
+        const destRow = destIdx + HEADER;
         for (let c = 0; c < cols; c++) {
           const k = ck(c, srcRow);
           if (prev[k]) next[ck(c, destRow)] = { ...prev[k] };
@@ -525,16 +529,34 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
     gridRef.current?.focus();
   }, [inFormulaMode, editCell, editVal, commitEdit, upsertFormulaRef]);
 
+  // handleCellMouseEnter is only used for formula-pointing now.
+  // Regular drag selection is handled by onMouseMove on the grid container.
   const handleCellMouseEnter = useCallback((e, c, r) => {
     if (formulaDragRef.current && formulaAnchor.current) {
       upsertFormulaRef(formulaAnchor.current, { c, r });
-      return;
-    }
-    if (isDraggingRef.current && e.buttons === 1) {
-      setSelEnd({ c, r });
-      didDragRef.current = true; // mouse moved to a different cell — this is a real drag
     }
   }, [upsertFormulaRef]);
+
+  // Grid-level mousemove: update drag selection in ALL directions reliably.
+  // elementFromPoint finds the cell under the cursor regardless of drag direction.
+  const handleGridMouseMove = useCallback((e) => {
+    if (!isDraggingRef.current || e.buttons !== 1) {
+      if (isDraggingRef.current) isDraggingRef.current = false;
+      return;
+    }
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    if (!el) return;
+    const td = el.closest ? el.closest('td[data-c]') : null;
+    if (!td) return;
+    const c = parseInt(td.dataset.c, 10);
+    const r = parseInt(td.dataset.r, 10);
+    if (isNaN(c) || isNaN(r)) return;
+    setSelEnd(prev => {
+      if (prev?.c === c && prev?.r === r) return prev; // no change, skip re-render
+      didDragRef.current = true;
+      return { c, r };
+    });
+  }, []);
 
   const handleCellClick = useCallback((e, c, r) => {
     // After a drag, the mouseup → click sequence would reset selEnd. Prevent that.
@@ -668,6 +690,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
         style={{ flex: 1, overflow: 'auto', border: '1px solid var(--paper-line)', borderRadius: 8, background: '#fff', outline: 'none' }}
         onKeyDown={onGridKeyDown}
         tabIndex={0}
+        onMouseMove={handleGridMouseMove}
         onMouseUp={() => { isDraggingRef.current = false; formulaDragRef.current = false; formulaAnchor.current = null; }}
       >
         <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: cols * 100 + 50 }}>
@@ -764,6 +787,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
 
                   return (
                     <td key={c}
+                      data-c={c} data-r={r}
                       style={{
                         border: '1px solid var(--paper-line)', height: 28, padding: 0,
                         cursor: inFormulaMode && !(editCell?.c === c && editCell?.r === r) ? 'crosshair' : 'default',
