@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Save, X, Bold, Italic, Underline, Strikethrough } from 'lucide-react';
+import { Save, X, Bold, Italic, Underline, Strikethrough, List, ListOrdered } from 'lucide-react';
 
 // ── Pure helpers (no React deps) ──────────────────────────────────────────────
 
@@ -85,6 +85,24 @@ function legacyTextToHtml(text) {
     .map(line => (line ? `<p>${line}</p>` : '<p><br></p>'))
     .join('');
 }
+
+// ── Shared toolbar button style & hover helper ────────────────────────────────
+const toolbarBtnStyle = {
+  background:   'none',
+  border:       '1px solid transparent',
+  borderRadius: 6,
+  cursor:       'pointer',
+  padding:      '4px 7px',
+  color:        'var(--ink)',
+  display:      'flex',
+  alignItems:   'center',
+  justifyContent: 'center',
+  transition:   'background 0.12s, border-color 0.12s',
+};
+const applyHover = (e, on) => {
+  e.currentTarget.style.background  = on ? 'var(--paper)' : 'none';
+  e.currentTarget.style.borderColor = on ? 'var(--paper-line)' : 'transparent';
+};
 
 // ── Shared quick-key button style ─────────────────────────────────────────────
 const quickKeyStyle = {
@@ -213,6 +231,21 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     scheduleAutosave();
   }, [scheduleAutosave]);
 
+  // ── Set defaultParagraphSeparator once on mount ───────────────────────────
+  useEffect(() => {
+    // Ensure the browser always creates <p> elements (not <div>) on Enter
+    document.execCommand('defaultParagraphSeparator', false, 'p');
+  }, []);
+
+  // Helper: walk up the DOM to the direct child of editorRef (works for text nodes too)
+  const getBlock = useCallback((node) => {
+    let n = node;
+    while (n && n.parentNode !== editorRef.current) {
+      n = n.parentNode; // parentNode works for text nodes; parentElement would return null
+    }
+    return (n && n !== editorRef.current) ? n : null;
+  }, []);
+
   // ── List continuation on Enter ────────────────────────────────────────────
   const handleEditorKeyDown = useCallback((e) => {
     if (e.key !== 'Enter' || e.shiftKey) return;
@@ -220,20 +253,16 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     const sel = window.getSelection();
     if (!sel?.rangeCount) return;
 
-    // Walk up to find the direct child of editorRef
-    let block = sel.getRangeAt(0).startContainer;
-    while (block && block.parentElement !== editorRef.current) {
-      block = block.parentElement;
-    }
-    if (!block || block === editorRef.current) return;
+    const block = getBlock(sel.getRangeAt(0).startContainer);
+    if (!block) return;
 
     const list = detectListPrefix(block.textContent);
-    if (!list) return; // let browser handle normally
+    if (!list) return; // no list → let the browser handle Enter normally
 
     e.preventDefault();
 
     if (!list.body.trim()) {
-      // Empty item → clear prefix, leave cursor in blank paragraph
+      // Empty list item → strip the prefix and leave a blank paragraph
       block.innerHTML = '<br>';
       const r = document.createRange();
       r.setStart(block, 0);
@@ -248,23 +277,17 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
       ? `${list.num + 1}${list.sep}`
       : list.prefix;
 
-    // Insert new paragraph after current block
-    const newP = document.createElement('p');
-    newP.textContent = nextPrefix;
-    block.parentNode.insertBefore(newP, block.nextSibling);
+    // ── Use execCommand so the browser manages DOM + cursor correctly ─────
+    // insertParagraph splits the current paragraph at the cursor (or creates a
+    // new one at the end).  insertText then types the prefix into the new line.
+    // This is far more reliable than manually inserting <p> elements.
+    document.execCommand('insertParagraph');
+    document.execCommand('insertText', false, nextPrefix);
 
-    // Move cursor to end of new paragraph
-    const r    = document.createRange();
-    const node = newP.firstChild;
-    r.setStart(node || newP, node ? node.length : 0);
-    r.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(r);
-
-    // Renumber items that follow the newly inserted one
+    // Renumber any out-of-sequence items that follow (handles mid-list inserts)
     requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
     scheduleAutosave();
-  }, [scheduleAutosave]);
+  }, [getBlock, scheduleAutosave]);
 
   // ── Formatting (Bold / Italic / Underline / Strikethrough) ───────────────
   const handleFormat = useCallback((cmd) => {
@@ -272,6 +295,74 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     document.execCommand(cmd, false, null);
     scheduleAutosave();
   }, [scheduleAutosave]);
+
+  // ── Toggle numbered / bullet list on the current paragraph ───────────────
+  // If the line already has that list prefix → remove it.
+  // If it has the OTHER list type → replace it.
+  // If it has no prefix → add one (numbered: use next sequence number).
+  const toggleList = useCallback((type) => {
+    editorRef.current?.focus();
+    const sel = window.getSelection();
+    if (!sel?.rangeCount) return;
+
+    const block = getBlock(sel.getRangeAt(0).startContainer);
+    if (!block) return;
+
+    const existing = detectListPrefix(block.textContent);
+
+    if (existing && existing.type === type) {
+      // ── Remove prefix ─────────────────────────────────────────────────────
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+      const firstTxt = walker.nextNode();
+      if (firstTxt) {
+        const prefixStr = type === 'numbered'
+          ? `${existing.num}${existing.sep}`
+          : existing.prefix;
+        firstTxt.nodeValue = firstTxt.nodeValue.replace(prefixStr, '');
+      }
+    } else {
+      // ── Add (or replace) prefix ───────────────────────────────────────────
+      // Strip any existing prefix first
+      if (existing) {
+        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+        const firstTxt = walker.nextNode();
+        if (firstTxt) {
+          const prefixStr = existing.type === 'numbered'
+            ? `${existing.num}${existing.sep}`
+            : existing.prefix;
+          firstTxt.nodeValue = firstTxt.nodeValue.replace(prefixStr, '');
+        }
+      }
+
+      // Determine the right number for a new numbered item
+      let newPrefix = '- ';
+      if (type === 'numbered') {
+        // Look at the previous sibling to continue the sequence
+        const prev = block.previousElementSibling;
+        const prevList = prev ? detectListPrefix(prev.textContent) : null;
+        const startNum = (prevList?.type === 'numbered') ? prevList.num + 1 : 1;
+        newPrefix = `${startNum}. `;
+      }
+
+      // Prepend prefix to first text node (or set as content if empty)
+      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+      const firstTxt = walker.nextNode();
+      if (firstTxt) {
+        firstTxt.nodeValue = newPrefix + firstTxt.nodeValue;
+      } else {
+        block.textContent = newPrefix;
+        // Move cursor to end
+        const r = document.createRange();
+        r.selectNodeContents(block);
+        r.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+    }
+
+    requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
+    scheduleAutosave();
+  }, [getBlock, scheduleAutosave]);
 
   // ── Quick-keys (adapted for contentEditable) ──────────────────────────────
   const insertAtCursor = useCallback((action) => {
@@ -284,8 +375,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
       // Try list continuation first, then fall back to insertParagraph
       const sel = window.getSelection();
       if (sel?.rangeCount) {
-        let block = sel.getRangeAt(0).startContainer;
-        while (block && block.parentElement !== editorRef.current) block = block.parentElement;
+        const block = getBlock(sel.getRangeAt(0).startContainer);
         if (block && detectListPrefix(block.textContent)) {
           handleEditorKeyDown({ key: 'Enter', shiftKey: false, preventDefault: () => {} });
           return;
@@ -350,6 +440,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
           border: '1px solid var(--paper-line)',
           borderRadius: 8,
         }}>
+          {/* ── Inline formatting buttons ── */}
           {[
             { icon: <Bold size={15} />,          cmd: 'bold',          label: 'Bold'          },
             { icon: <Italic size={15} />,        cmd: 'italic',        label: 'Italic'        },
@@ -360,30 +451,36 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
               key={cmd}
               onMouseDown={e => { e.preventDefault(); handleFormat(cmd); }}
               title={label}
-              style={{
-                background: 'none',
-                border: '1px solid transparent',
-                borderRadius: 6,
-                cursor: 'pointer',
-                padding: '4px 7px',
-                color: 'var(--ink)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'background 0.12s, border-color 0.12s',
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.background    = 'var(--paper)';
-                e.currentTarget.style.borderColor   = 'var(--paper-line)';
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.background    = 'none';
-                e.currentTarget.style.borderColor   = 'transparent';
-              }}
+              style={toolbarBtnStyle}
+              onMouseEnter={e => applyHover(e, true)}
+              onMouseLeave={e => applyHover(e, false)}
             >
               {icon}
             </button>
           ))}
+
+          <div style={{ width: 1, height: 18, background: 'var(--paper-line)', margin: '0 4px' }} />
+
+          {/* ── List toggle buttons ── */}
+          <button
+            onMouseDown={e => { e.preventDefault(); toggleList('numbered'); }}
+            title="Numbered list (toggle)"
+            style={toolbarBtnStyle}
+            onMouseEnter={e => applyHover(e, true)}
+            onMouseLeave={e => applyHover(e, false)}
+          >
+            <ListOrdered size={15} />
+          </button>
+          <button
+            onMouseDown={e => { e.preventDefault(); toggleList('bullet'); }}
+            title="Bullet list (toggle)"
+            style={toolbarBtnStyle}
+            onMouseEnter={e => applyHover(e, true)}
+            onMouseLeave={e => applyHover(e, false)}
+          >
+            <List size={15} />
+          </button>
+
           <div style={{ width: 1, height: 18, background: 'var(--paper-line)', margin: '0 4px' }} />
           <span style={{ fontSize: 11, color: 'var(--ink-lighter)', fontFamily: 'var(--font-body)', userSelect: 'none' }}>
             Select text then click to format

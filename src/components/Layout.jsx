@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Home, PenTool, CheckSquare, Settings, LogOut, List, Kanban, LayoutDashboard } from 'lucide-react';
+import { Home, PenTool, CheckSquare, Settings, LogOut, List, Kanban, LayoutDashboard, Table2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import NotificationBell from './NotificationBell';
 import Avatar from './shared/Avatar';
@@ -18,6 +18,7 @@ function useActivePage() {
   if (pathname.startsWith('/settings')) return 'settings';
   if (pathname.startsWith('/collaborate')) return 'collaborate';
   if (pathname.startsWith('/dashboard')) return 'dashboard';
+  if (pathname.startsWith('/sheets'))   return 'sheets';
   return 'home';
 }
 
@@ -38,6 +39,7 @@ export default function Layout({
     // Dashboard is available to everyone. Default view = my tasks; super-admins
     // can toggle to a global view from inside the page.
     { id: 'dashboard', path: '/dashboard', icon: LayoutDashboard,  label: 'Dashboard' },
+    { id: 'sheets',    path: '/sheets',    icon: Table2,           label: 'Sheets'    },
     { id: 'settings',  path: '/settings',  icon: Settings,         label: 'Settings'  },
   ];
 

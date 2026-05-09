@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useParams, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { useEntries, useTasks, useTeamMembers } from './hooks/useFirestore';
+import { useEntries, useTasks, useTeamMembers, useSheets } from './hooks/useFirestore';
 import { useNotifications } from './hooks/useNotifications';
 import { useReminderDispatcher } from './hooks/useReminderDispatcher';
 import KanbanBoard from './components/KanbanBoard';
@@ -16,6 +16,8 @@ import DiaryView from './components/DiaryView';
 import DiaryEditor from './components/DiaryEditor';
 import SettingsPage from './components/SettingsPage';
 import Dashboard from './components/Dashboard';
+import SpreadsheetList from './components/SpreadsheetList';
+import SpreadsheetGrid from './components/SpreadsheetGrid';
 import './styles/diary.css';
 
 // ─── Route wrappers ──────────────────────────────────────────────────────────
@@ -69,6 +71,37 @@ function DiaryEditorPage({ entries, archivedEntries, onSave, onCancel, showToast
   );
 }
 
+// ─── Sheets route wrappers ───────────────────────────────────────────────────
+function SheetListPage({ sheets, loading, onNew, onDelete }) {
+  const navigate = useNavigate();
+  return (
+    <SpreadsheetList
+      sheets={sheets}
+      loading={loading}
+      onOpen={(sheet) => navigate(`/sheets/${sheet.id}`, { state: { sheet } })}
+      onNew={onNew}
+      onDelete={onDelete}
+    />
+  );
+}
+
+function SheetGridPage({ sheets, onSave }) {
+  const { id } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const sheet = location.state?.sheet || sheets.find(s => s.id === id);
+
+  if (!sheet) return <Navigate to="/sheets" replace />;
+
+  return (
+    <SpreadsheetGrid
+      sheet={sheet}
+      onSave={onSave}
+      onBack={() => navigate('/sheets')}
+    />
+  );
+}
+
 // ─── Main app shell ──────────────────────────────────────────────────────────
 function DiaryApp() {
   const navigate = useNavigate();
@@ -80,6 +113,7 @@ function DiaryApp() {
   } = useEntries();
   const { tasks, loading: tasksLoading, addTask, updateTask, toggleTask, deleteTask, clearCompleted } = useTasks();
   const { members, loading: membersLoading, addMember, addMembersBulk, updateMember, deleteMember } = useTeamMembers();
+  const { sheets, loading: sheetsLoading, addSheet, updateSheet, deleteSheet } = useSheets();
 
   const [toast, setToast] = useState(null);
   const showToast = useCallback((message, type = 'info') => setToast({ message, type }), []);
@@ -284,6 +318,30 @@ function DiaryApp() {
                 onClearCompleted={clearCompleted}
                 showToast={showToast}
                 onWorkspaceCreated={setWorkspaceId}
+              />
+            }
+          />
+
+          {/* Sheets list */}
+          <Route
+            path="/sheets"
+            element={
+              <SheetListPage
+                sheets={sheets}
+                loading={sheetsLoading}
+                onNew={addSheet}
+                onDelete={deleteSheet}
+              />
+            }
+          />
+
+          {/* Individual sheet */}
+          <Route
+            path="/sheets/:id"
+            element={
+              <SheetGridPage
+                sheets={sheets}
+                onSave={updateSheet}
               />
             }
           />

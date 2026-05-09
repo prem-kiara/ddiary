@@ -212,6 +212,51 @@ export function useEntries() {
   };
 }
 
+// ─── Sheets Hook ─────────────────────────────────────────────────────────
+export function useSheets() {
+  const { user } = useAuth();
+  const [sheets,  setSheets]  = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) { setSheets([]); setLoading(false); return; }
+    const q = query(
+      collection(db, 'users', user.uid, 'sheets'),
+      orderBy('updatedAt', 'desc'),
+    );
+    const unsub = onSnapshot(q,
+      snap  => { setSheets(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); },
+      err   => { console.error('useSheets', err); setLoading(false); },
+    );
+    return unsub;
+  }, [user]);
+
+  const addSheet = useCallback(async (title) => {
+    if (!user) return;
+    return addDoc(collection(db, 'users', user.uid, 'sheets'), {
+      title: title || 'Untitled Sheet',
+      data:  {},
+      cols:  10,
+      rows:  50,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  }, [user]);
+
+  const updateSheet = useCallback(async (id, updates) => {
+    if (!user) return;
+    return updateDoc(doc(db, 'users', user.uid, 'sheets', id), {
+      ...updates, updatedAt: serverTimestamp(),
+    });
+  }, [user]);
+
+  const deleteSheet = useCallback(async (id) => {
+    if (!user) return deleteDoc(doc(db, 'users', user.uid, 'sheets', id));
+  }, [user]);
+
+  return { sheets, loading, addSheet, updateSheet, deleteSheet };
+}
+
 // ─── Tasks Hook (owner) ───────────────────────────────────────────────────
 export function useTasks() {
   const { user } = useAuth();
