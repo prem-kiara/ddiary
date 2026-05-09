@@ -28,46 +28,52 @@ const wasEdited = (createdAt, updatedAt) => {
 };
 
 /**
- * Parses inline formatting markers and returns an array of React nodes.
- * Supported: **bold**, *italic*, __underline__, ~~strikethrough~~
- * Order matters: longer/greedy markers (**  __  ~~) must be checked before
- * single-char ones (*) to avoid false matches.
+ * Renders entry content.
+ *
+ * New entries saved by the contentEditable editor are stored as HTML and
+ * rendered directly with dangerouslySetInnerHTML (safe — this is user's own
+ * private diary content, never injected from another user).
+ *
+ * Legacy entries stored as plain text (possibly with markdown markers) are
+ * rendered by the original line-by-line parser below so old data is unaffected.
  */
-function renderInline(text, keyBase) {
-  // Combined regex — order: ** before *, __ before bare underscores
-  const pattern = /\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\*(.+?)\*/g;
-  const nodes = [];
-  let last = 0;
-  let m;
-  let k = 0;
-
-  while ((m = pattern.exec(text)) !== null) {
-    if (m.index > last) nodes.push(text.slice(last, m.index));
-    if (m[1] !== undefined) nodes.push(<strong key={`${keyBase}-${k++}`}>{m[1]}</strong>);
-    else if (m[2] !== undefined) nodes.push(<u key={`${keyBase}-${k++}`}>{m[2]}</u>);
-    else if (m[3] !== undefined) nodes.push(<s key={`${keyBase}-${k++}`}>{m[3]}</s>);
-    else if (m[4] !== undefined) nodes.push(<em key={`${keyBase}-${k++}`}>{m[4]}</em>);
-    last = pattern.lastIndex;
-  }
-  if (last < text.length) nodes.push(text.slice(last));
-  return nodes;
-}
-
-/** Renders entry content with each line/paragraph on its own line. */
 function renderContent(content) {
   if (!content) return null;
 
-  // Split into paragraphs (double newline) or lines (single newline)
-  const paragraphs = content.split(/\n\n+/);
+  // ── HTML content (new editor) ──────────────────────────────────────────────
+  if (/<[a-zA-Z]/.test(content)) {
+    return (
+      <div
+        className="diary-html-content text-[15px] leading-[1.75] text-slate-700"
+        dangerouslySetInnerHTML={{ __html: content }}
+      />
+    );
+  }
 
+  // ── Legacy plain-text rendering ────────────────────────────────────────────
+  // Parse inline markdown markers into React elements
+  function renderInline(text, keyBase) {
+    const pattern = /\*\*(.+?)\*\*|__(.+?)__|~~(.+?)~~|\*(.+?)\*/g;
+    const nodes = [];
+    let last = 0; let m; let k = 0;
+    while ((m = pattern.exec(text)) !== null) {
+      if (m.index > last) nodes.push(text.slice(last, m.index));
+      if      (m[1] !== undefined) nodes.push(<strong key={`${keyBase}-${k++}`}>{m[1]}</strong>);
+      else if (m[2] !== undefined) nodes.push(<u      key={`${keyBase}-${k++}`}>{m[2]}</u>);
+      else if (m[3] !== undefined) nodes.push(<s      key={`${keyBase}-${k++}`}>{m[3]}</s>);
+      else if (m[4] !== undefined) nodes.push(<em     key={`${keyBase}-${k++}`}>{m[4]}</em>);
+      last = pattern.lastIndex;
+    }
+    if (last < text.length) nodes.push(text.slice(last));
+    return nodes;
+  }
+
+  const paragraphs = content.split(/\n\n+/);
   return (
     <div className="text-[15px] leading-[1.75] text-slate-700">
       {paragraphs.map((para, pi) => {
         const lines = para.split('\n').filter(l => l.length > 0);
-
-        // Detect numbered list (lines starting with 1. or 1))
         const isNumbered = lines.length > 0 && lines.every(l => /^\d+[.)]\s/.test(l.trim()));
-        // Detect bullet list (lines starting with - * or •)
         const isBulleted = lines.length > 0 && lines.every(l => /^[-*•]\s/.test(l.trim()));
 
         if (isNumbered) {
@@ -81,7 +87,6 @@ function renderContent(content) {
             </ol>
           );
         }
-
         if (isBulleted) {
           return (
             <ul key={pi} className="pl-6 mb-4 list-disc">
@@ -93,8 +98,6 @@ function renderContent(content) {
             </ul>
           );
         }
-
-        // Plain paragraphs / lines — each on its own line
         return (
           <div key={pi} className="mb-3">
             {lines.map((line, li) => (

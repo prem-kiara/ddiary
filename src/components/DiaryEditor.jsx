@@ -1,326 +1,310 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Save, X, Bold, Italic, Underline, Strikethrough } from 'lucide-react';
 
-// Re-numbers consecutive numbered list items starting after `afterCursor`.
-// Called after a new numbered item is inserted so the items that follow
-// don't end up with duplicate numbers.
-function renumberSubsequentItems(text, afterCursor, insertedNum, sep) {
-  const lineEnd = text.indexOf('\n', afterCursor);
-  if (lineEnd === -1) return text; // nothing after the inserted line
-  const before = text.substring(0, lineEnd + 1);
-  const rest   = text.substring(lineEnd + 1);
-  const lines  = rest.split('\n');
-  let expected = insertedNum + 1;
-  const renumbered = lines.map(line => {
-    const m = line.match(/^(\d+)([.)]\s+)(.*)/);
-    if (m) {
-      const out = `${expected}${m[2]}${m[3]}`;
-      expected++;
-      return out;
-    }
-    return line; // non-numbered line → stop incrementing
-  });
-  return before + renumbered.join('\n');
+// ── Pure helpers (no React deps) ──────────────────────────────────────────────
+
+function detectListPrefix(text) {
+  const numbered = text.match(/^(\d+)([.)]\s+)(.*)/);
+  if (numbered) {
+    return { type: 'numbered', num: parseInt(numbered[1]), sep: numbered[2], body: numbered[3] };
+  }
+  const bullet = text.match(/^([-*•]\s+)(.*)/);
+  if (bullet) {
+    return { type: 'bullet', prefix: bullet[1], body: bullet[2] };
+  }
+  return null;
 }
 
-// Shared style for quick-key buttons
+/**
+ * Walk every direct-child block in the contentEditable and fix the sequential
+ * numbering of any numbered-list run.  Preserves the starting number of each
+ * run so intentional offsets are kept.
+ */
+function fixNumberedListsInDOM(editorEl) {
+  if (!editorEl) return;
+  const blocks = Array.from(editorEl.children);
+  let expectedNum = null;
+  let blockSep    = null;
+
+  blocks.forEach(block => {
+    const text = block.textContent;
+    const m    = text.match(/^(\d+)([.)]\s)/);
+    if (m) {
+      const num = parseInt(m[1]);
+      if (expectedNum === null) {
+        // First item in this run — anchor the expected sequence here
+        expectedNum = num + 1;
+        blockSep    = m[2];
+      } else if (num !== expectedNum) {
+        // Out-of-sequence — patch the leading text node
+        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+        const firstTxt = walker.nextNode();
+        if (firstTxt) {
+          firstTxt.nodeValue = firstTxt.nodeValue.replace(
+            /^\d+([.)]\s)/,
+            `${expectedNum}$1`,
+          );
+        }
+        expectedNum++;
+      } else {
+        expectedNum++;
+      }
+    } else {
+      // Non-list line — reset the run
+      expectedNum = null;
+      blockSep    = null;
+    }
+  });
+}
+
+/**
+ * Convert a legacy plain-text (or markdown-marker) entry to HTML so it can
+ * be loaded into the contentEditable editor.  Already-HTML content is passed
+ * through unchanged.
+ */
+function legacyTextToHtml(text) {
+  if (!text) return '';
+  if (/<[a-zA-Z]/.test(text)) return text; // already HTML
+
+  // Escape entities first
+  let s = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // Convert markdown inline markers → HTML
+  s = s
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/__(.+?)__/g,     '<u>$1</u>')
+    .replace(/~~(.+?)~~/g,     '<s>$1</s>')
+    .replace(/\*(.+?)\*/g,     '<em>$1</em>');
+
+  // Wrap each line in <p>; empty lines become <p><br></p>
+  return s
+    .split('\n')
+    .map(line => (line ? `<p>${line}</p>` : '<p><br></p>'))
+    .join('');
+}
+
+// ── Shared quick-key button style ─────────────────────────────────────────────
 const quickKeyStyle = {
-  background: 'var(--paper-dark)',
-  border: '1px solid var(--paper-line)',
-  borderRadius: 8,
-  cursor: 'pointer',
-  fontSize: 20,
-  width: 46,
-  height: 46,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  fontFamily: 'system-ui, sans-serif',
-  color: 'var(--ink)',
-  transition: 'background 0.15s ease',
-  userSelect: 'none',
+  background:    'var(--paper-dark)',
+  border:        '1px solid var(--paper-line)',
+  borderRadius:  8,
+  cursor:        'pointer',
+  fontSize:      20,
+  width:         46,
+  height:        46,
+  display:       'flex',
+  alignItems:    'center',
+  justifyContent:'center',
+  fontFamily:    'system-ui, sans-serif',
+  color:         'var(--ink)',
+  transition:    'background 0.15s ease',
+  userSelect:    'none',
   WebkitUserSelect: 'none',
 };
 
+// ── Component ─────────────────────────────────────────────────────────────────
 export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast }) {
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [showQuickKeys, setShowQuickKeys] = useState(true);
-  // 'idle' | 'saving' | 'saved' | 'restored'
-  const [draftStatus, setDraftStatus] = useState('idle');
-  const textareaRef = useRef(null);
-  // Tracks the previous textarea value so onChange can detect newly inserted newlines
-  // from handwriting/IME input that never fires a keydown event.
-  const prevTextRef = useRef('');
-  // Tracks the entry ID being edited so the autosave effect can build the draft key
-  // without adding editingEntry to its dependency array (which would reset the timer).
-  const entryIdRef = useRef(editingEntry?.id || 'new');
-  // When true, the next [title, content] effect run is from an internal load/restore
-  // and should NOT trigger a draft write.
-  const skipDraftOnceRef = useRef(true);
+  const [title,        setTitle]        = useState('');
+  const [saving,       setSaving]       = useState(false);
+  const [showQuickKeys,setShowQuickKeys]= useState(true);
+  const [draftStatus,  setDraftStatus]  = useState('idle'); // 'idle'|'saving'|'saved'|'restored'
+  const [isEmpty,      setIsEmpty]      = useState(true);
 
+  const editorRef         = useRef(null);
+  const titleRef          = useRef('');           // always mirrors `title` state
+  const entryIdRef        = useRef(editingEntry?.id || 'new');
+  const autoSaveTimerRef  = useRef(null);
+  const skipFirstSaveRef  = useRef(true);         // skip autosave on initial load
+
+  // Keep titleRef in sync with state so the autosave closure always reads fresh value
+  useEffect(() => { titleRef.current = title; }, [title]);
+
+  // ── Load entry + restore draft ──────────────────────────────────────────────
   useEffect(() => {
-    entryIdRef.current = editingEntry?.id || 'new';
-    skipDraftOnceRef.current = true; // don't autosave the initial state load
+    entryIdRef.current   = editingEntry?.id || 'new';
+    skipFirstSaveRef.current = true;
 
-    const text = editingEntry ? (editingEntry.content || '') : '';
-    const ttl  = editingEntry ? (editingEntry.title   || '') : '';
+    const rawContent = editingEntry?.content || '';
+    const ttl        = editingEntry?.title   || '';
+    const html       = legacyTextToHtml(rawContent) || '<p><br></p>';
 
-    // ── Draft restore ────────────────────────────────────────────────────────
-    // If there is a locally-saved draft that is newer than the last server save,
-    // restore it silently so nothing is lost on accidental back-navigation.
+    // Check for a newer local draft
     try {
-      const draftKey = `ddiary_draft_${entryIdRef.current}`;
-      const raw = localStorage.getItem(draftKey);
+      const key = `ddiary_draft_${entryIdRef.current}`;
+      const raw = localStorage.getItem(key);
       if (raw) {
-        const draft = JSON.parse(raw);
-        const ut = editingEntry?.updatedAt;
-        const entrySavedAt = ut
+        const draft     = JSON.parse(raw);
+        const ut        = editingEntry?.updatedAt;
+        const savedAt   = ut
           ? (ut.seconds ? ut.seconds * 1000 : new Date(ut).getTime())
           : 0;
-        if (draft.savedAt > entrySavedAt && (draft.title !== ttl || draft.content !== text)) {
+        if (draft.savedAt > savedAt) {
           setTitle(draft.title ?? ttl);
-          setContent(draft.content ?? text);
-          prevTextRef.current = draft.content ?? text;
+          titleRef.current = draft.title ?? ttl;
+          if (editorRef.current) editorRef.current.innerHTML = draft.content || html;
+          setIsEmpty(!(draft.content || '').replace(/<[^>]+>/g,'').trim());
           setDraftStatus('restored');
-          return; // skip the normal load below
+          return;
         }
       }
     } catch { /* localStorage unavailable */ }
 
     setTitle(ttl);
-    setContent(text);
-    prevTextRef.current = text;
+    titleRef.current = ttl;
+    if (editorRef.current) editorRef.current.innerHTML = html;
+    setIsEmpty(!rawContent.trim());
     setDraftStatus('idle');
   }, [editingEntry]);
 
-  // ── Autosave to localStorage ──────────────────────────────────────────────
-  // Fires 1.5 s after the last change to title or content.
-  // The skipDraftOnceRef guard prevents a write on the initial load/restore.
-  useEffect(() => {
-    if (skipDraftOnceRef.current) {
-      skipDraftOnceRef.current = false;
+  // Cleanup timer on unmount
+  useEffect(() => () => clearTimeout(autoSaveTimerRef.current), []);
+
+  // ── Autosave ──────────────────────────────────────────────────────────────
+  const scheduleAutosave = useCallback(() => {
+    if (skipFirstSaveRef.current) {
+      skipFirstSaveRef.current = false;
       return;
     }
     setDraftStatus('saving');
-    const draftKey = `ddiary_draft_${entryIdRef.current}`;
-    const timer = setTimeout(() => {
+    clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
       try {
-        localStorage.setItem(draftKey, JSON.stringify({ title, content, savedAt: Date.now() }));
+        const key  = `ddiary_draft_${entryIdRef.current}`;
+        const html = editorRef.current?.innerHTML || '';
+        localStorage.setItem(key, JSON.stringify({
+          title:   titleRef.current,
+          content: html,
+          savedAt: Date.now(),
+        }));
         setDraftStatus('saved');
-      } catch { /* storage full or unavailable */ }
+      } catch { /* storage full */ }
     }, 1500);
-    return () => clearTimeout(timer);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, content]);
+  }, []);
 
-  // Auto-resize textarea to fit content
-  useEffect(() => {
-    const ta = textareaRef.current;
-    if (ta) {
-      ta.style.height = 'auto';
-      ta.style.height = ta.scrollHeight + 'px';
-    }
-  }, [content]);
-
+  // ── Save to server ────────────────────────────────────────────────────────
   const handleSave = async () => {
-    if (!title.trim() && !content.trim()) {
+    const html = editorRef.current?.innerHTML || '';
+    const emptyHtml = !html || !html.replace(/<[^>]+>/g, '').trim();
+    if (!title.trim() && emptyHtml) {
       showToast('Please add a title or some content.', 'warning');
       return;
     }
     setSaving(true);
     try {
-      await onSave({ title: title.trim(), content: content.trim() });
-      // Clear draft — content is now safely persisted on the server
+      await onSave({ title: title.trim(), content: html });
       try { localStorage.removeItem(`ddiary_draft_${entryIdRef.current}`); } catch {}
       setDraftStatus('idle');
       showToast('Entry saved!', 'success');
-    } catch (err) {
+    } catch {
       showToast('Failed to save entry. Please try again.', 'warning');
     }
     setSaving(false);
   };
 
-  // Returns list continuation info if current line is a list item, else null
-  const detectListPrefix = (line) => {
-    const numbered = line.match(/^(\d+)([.)]\s+)(.*)/);
-    if (numbered) {
-      return { type: 'numbered', num: parseInt(numbered[1]), sep: numbered[2], body: numbered[3] };
-    }
-    const bullet = line.match(/^([-*•]\s+)(.*)/);
-    if (bullet) {
-      return { type: 'bullet', prefix: bullet[1], body: bullet[2] };
-    }
-    return null;
-  };
+  // ── Editor input ──────────────────────────────────────────────────────────
+  const handleEditorInput = useCallback(() => {
+    const text = editorRef.current?.textContent?.trim() || '';
+    setIsEmpty(!text);
+    // Renumber any out-of-sequence numbered list items
+    requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
+    scheduleAutosave();
+  }, [scheduleAutosave]);
 
-  // Core logic for continuing (or exiting) a list when Enter is pressed.
-  // Always pass the live DOM value (ta.value) so handwriting / IME input
-  // that hasn't yet synced to React state is handled correctly.
-  const handleEnterForList = useCallback((currentContent, cursorPos) => {
-    const textBefore = currentContent.substring(0, cursorPos);
-    const textAfter = currentContent.substring(cursorPos);
-    const lineStart = textBefore.lastIndexOf('\n') + 1;
-    const currentLine = textBefore.substring(lineStart);
-    const list = detectListPrefix(currentLine);
-    if (!list) return null;
+  // ── List continuation on Enter ────────────────────────────────────────────
+  const handleEditorKeyDown = useCallback((e) => {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+
+    const sel = window.getSelection();
+    if (!sel?.rangeCount) return;
+
+    // Walk up to find the direct child of editorRef
+    let block = sel.getRangeAt(0).startContainer;
+    while (block && block.parentElement !== editorRef.current) {
+      block = block.parentElement;
+    }
+    if (!block || block === editorRef.current) return;
+
+    const list = detectListPrefix(block.textContent);
+    if (!list) return; // let browser handle normally
+
+    e.preventDefault();
 
     if (!list.body.trim()) {
-      // Empty list item → exit list
-      const newText = textBefore.substring(0, lineStart) + '\n' + textAfter;
-      return { newText, newCursor: lineStart + 1 };
+      // Empty item → clear prefix, leave cursor in blank paragraph
+      block.innerHTML = '<br>';
+      const r = document.createRange();
+      r.setStart(block, 0);
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      scheduleAutosave();
+      return;
     }
 
     const nextPrefix = list.type === 'numbered'
       ? `${list.num + 1}${list.sep}`
       : list.prefix;
-    let newText = textBefore + '\n' + nextPrefix + textAfter;
-    const newCursor = cursorPos + 1 + nextPrefix.length;
-    // Renumber any items that follow so there are no duplicates
-    if (list.type === 'numbered') {
-      newText = renumberSubsequentItems(newText, newCursor, list.num + 1, list.sep);
-    }
-    return { newText, newCursor };
-  }, []);
 
-  // Helper: apply new text to both DOM + React state, and keep prevTextRef current.
-  const applyText = useCallback((ta, newText, newCursor) => {
-    ta.value = newText;
-    setContent(newText);
-    prevTextRef.current = newText;
-    setTimeout(() => { ta.selectionStart = ta.selectionEnd = newCursor; }, 0);
-  }, []);
+    // Insert new paragraph after current block
+    const newP = document.createElement('p');
+    newP.textContent = nextPrefix;
+    block.parentNode.insertBefore(newP, block.nextSibling);
 
-  // ── Keyboard Enter (physical keyboard) ────────────────────────────────────
-  // Read ta.value directly so any un-synced IME text is included.
-  const handleKeyDown = (e) => {
-    if (e.key !== 'Enter') return;
-    const ta = textareaRef.current;
-    const result = handleEnterForList(ta.value, ta.selectionStart);
-    if (!result) return;
+    // Move cursor to end of new paragraph
+    const r    = document.createRange();
+    const node = newP.firstChild;
+    r.setStart(node || newP, node ? node.length : 0);
+    r.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(r);
 
-    e.preventDefault();
-    applyText(ta, result.newText, result.newCursor);
-  };
+    // Renumber items that follow the newly inserted one
+    requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
+    scheduleAutosave();
+  }, [scheduleAutosave]);
 
-  // ── onChange: detects newlines inserted by handwriting / IME ─────────────
-  // Handwriting recognition commits text (possibly containing \n) via the
-  // input event — it never fires keydown with key==='Enter'.
-  // We compare newline counts to catch this and apply list continuation.
-  const handleChange = useCallback((e) => {
-    const newText = e.target.value;
-    const ta      = textareaRef.current;
-    const prev    = prevTextRef.current;
+  // ── Formatting (Bold / Italic / Underline / Strikethrough) ───────────────
+  const handleFormat = useCallback((cmd) => {
+    editorRef.current?.focus();
+    document.execCommand(cmd, false, null);
+    scheduleAutosave();
+  }, [scheduleAutosave]);
 
-    const prevNl = (prev.match(/\n/g) || []).length;
-    const newNl  = (newText.match(/\n/g) || []).length;
+  // ── Quick-keys (adapted for contentEditable) ──────────────────────────────
+  const insertAtCursor = useCallback((action) => {
+    editorRef.current?.focus();
 
-    if (newNl > prevNl) {
-      // One or more newlines were inserted by IME/handwriting.
-      // Find where the new text first diverges from the old to locate the newline.
-      let divergeAt = 0;
-      const minLen = Math.min(prev.length, newText.length);
-      while (divergeAt < minLen && prev[divergeAt] === newText[divergeAt]) divergeAt++;
+    if (action === 'backspace') {
+      document.execCommand('delete');
 
-      // Walk forward from divergeAt to find the inserted \n
-      const nlPos = newText.indexOf('\n', divergeAt);
-      if (nlPos !== -1) {
-        const afterNl = nlPos + 1;
-        // Inspect the line that just ended (before the \n)
-        const textBeforeNl  = newText.substring(0, nlPos);
-        const prevLineStart = textBeforeNl.lastIndexOf('\n') + 1;
-        const currentLine   = textBeforeNl.substring(prevLineStart);
-        const list          = detectListPrefix(currentLine);
-
-        if (list && list.body.trim()) {
-          // Continue the list: insert the next prefix right after the \n
-          const nextPrefix = list.type === 'numbered'
-            ? `${list.num + 1}${list.sep}`
-            : list.prefix;
-          let patched = newText.substring(0, afterNl) + nextPrefix + newText.substring(afterNl);
-          const patchCursor = afterNl + nextPrefix.length;
-          if (list.type === 'numbered') {
-            patched = renumberSubsequentItems(patched, patchCursor, list.num + 1, list.sep);
-          }
-          applyText(ta, patched, patchCursor);
-          return;
-        } else if (list && !list.body.trim()) {
-          // Empty list item → exit list: remove the prefix from this line
-          const stripped = newText.substring(0, prevLineStart) + '\n' + newText.substring(afterNl);
-          applyText(ta, stripped, prevLineStart + 1);
+    } else if (action === 'enter') {
+      // Try list continuation first, then fall back to insertParagraph
+      const sel = window.getSelection();
+      if (sel?.rangeCount) {
+        let block = sel.getRangeAt(0).startContainer;
+        while (block && block.parentElement !== editorRef.current) block = block.parentElement;
+        if (block && detectListPrefix(block.textContent)) {
+          handleEditorKeyDown({ key: 'Enter', shiftKey: false, preventDefault: () => {} });
           return;
         }
       }
+      document.execCommand('insertParagraph');
+
+    } else if (action === 'list-numbered') {
+      document.execCommand('insertText', false, '1. ');
+    } else if (action === 'list-bullet') {
+      document.execCommand('insertText', false, '- ');
+    } else {
+      // space or any character
+      document.execCommand('insertText', false, action);
     }
+    scheduleAutosave();
+  }, [handleEditorKeyDown, scheduleAutosave]);
 
-    // Normal change (no new newline, or no list match) — just update state
-    prevTextRef.current = newText;
-    setContent(newText);
-  }, [applyText]);
-
-  // Apply an action at the current cursor position.
-  // Reads ta.value directly so handwriting / IME content is always current.
-  // Uses applyText so prevTextRef stays in sync (prevents double-fire in onChange).
-  const insertAtCursor = useCallback((action) => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.focus();
-
-    const liveText = ta.value;
-    const pos      = ta.selectionStart;
-    const selEnd   = ta.selectionEnd;
-
-    if (action === 'backspace') {
-      if (pos === 0 && selEnd === 0) return;
-      const start = pos !== selEnd ? pos : pos - 1;
-      applyText(ta, liveText.substring(0, start) + liveText.substring(selEnd), start);
-      return;
-    }
-
-    if (action === 'enter') {
-      const result = handleEnterForList(liveText, pos);
-      if (result) {
-        applyText(ta, result.newText, result.newCursor);
-      } else {
-        const newText = liveText.substring(0, pos) + '\n' + liveText.substring(selEnd);
-        applyText(ta, newText, pos + 1);
-      }
-      return;
-    }
-
-    if (action === 'list-numbered' || action === 'list-bullet') {
-      const prefix     = action === 'list-numbered' ? '1. ' : '- ';
-      const lineStart  = liveText.lastIndexOf('\n', pos - 1) + 1;
-      const linePrefix = liveText.substring(lineStart, pos);
-      // If the current line is empty, insert prefix here; otherwise start a new line
-      const insert     = linePrefix.trim() === '' ? prefix : '\n' + prefix;
-      const newText    = liveText.substring(0, pos) + insert + liveText.substring(selEnd);
-      applyText(ta, newText, pos + insert.length);
-      return;
-    }
-
-    // Regular character (space, etc.)
-    applyText(ta, liveText.substring(0, pos) + action + liveText.substring(selEnd), pos + action.length);
-  }, [applyText, handleEnterForList]);
-
-  // Wraps selected text with a formatting marker (e.g. **bold**).
-  // If nothing is selected, inserts the markers and places cursor between them.
-  const wrapSelection = useCallback((marker) => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.focus();
-    const liveText = ta.value;
-    const start    = ta.selectionStart;
-    const end      = ta.selectionEnd;
-    const selected = liveText.substring(start, end);
-    const newText  = liveText.substring(0, start) + marker + selected + marker + liveText.substring(end);
-    const newCursor = selected.length > 0
-      ? start + marker.length + selected.length + marker.length
-      : start + marker.length;
-    applyText(ta, newText, newCursor);
-  }, [applyText]);
-
+  // ── JSX ───────────────────────────────────────────────────────────────────
   return (
     <div className="fade-in">
       <h2 className="section-title">
@@ -328,12 +312,13 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
       </h2>
 
       <div className="card">
-        {/* Title + autosave status */}
+
+        {/* ── Title + draft status ── */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
           <input
             className="input input-title"
             value={title}
-            onChange={e => setTitle(e.target.value)}
+            onChange={e => { setTitle(e.target.value); scheduleAutosave(); }}
             placeholder="Give your entry a title..."
             style={{ flex: 1, marginBottom: 0 }}
           />
@@ -354,7 +339,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
           )}
         </div>
 
-        {/* Formatting toolbar */}
+        {/* ── Formatting toolbar ── */}
         <div style={{
           display: 'flex',
           alignItems: 'center',
@@ -366,15 +351,15 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
           borderRadius: 8,
         }}>
           {[
-            { icon: <Bold size={15} />,        marker: '**',  title: 'Bold (Ctrl+B)'        },
-            { icon: <Italic size={15} />,      marker: '*',   title: 'Italic (Ctrl+I)'      },
-            { icon: <Underline size={15} />,   marker: '__',  title: 'Underline'             },
-            { icon: <Strikethrough size={15}/>, marker: '~~', title: 'Strikethrough'         },
-          ].map(({ icon, marker, title }) => (
+            { icon: <Bold size={15} />,          cmd: 'bold',          label: 'Bold'          },
+            { icon: <Italic size={15} />,        cmd: 'italic',        label: 'Italic'        },
+            { icon: <Underline size={15} />,     cmd: 'underline',     label: 'Underline'     },
+            { icon: <Strikethrough size={15} />, cmd: 'strikeThrough', label: 'Strikethrough' },
+          ].map(({ icon, cmd, label }) => (
             <button
-              key={marker}
-              onMouseDown={e => { e.preventDefault(); wrapSelection(marker); }}
-              title={title}
+              key={cmd}
+              onMouseDown={e => { e.preventDefault(); handleFormat(cmd); }}
+              title={label}
               style={{
                 background: 'none',
                 border: '1px solid transparent',
@@ -388,12 +373,12 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
                 transition: 'background 0.12s, border-color 0.12s',
               }}
               onMouseEnter={e => {
-                e.currentTarget.style.background = 'var(--paper)';
-                e.currentTarget.style.borderColor = 'var(--paper-line)';
+                e.currentTarget.style.background    = 'var(--paper)';
+                e.currentTarget.style.borderColor   = 'var(--paper-line)';
               }}
               onMouseLeave={e => {
-                e.currentTarget.style.background = 'none';
-                e.currentTarget.style.borderColor = 'transparent';
+                e.currentTarget.style.background    = 'none';
+                e.currentTarget.style.borderColor   = 'transparent';
               }}
             >
               {icon}
@@ -405,30 +390,37 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
           </span>
         </div>
 
-        {/* Textarea + Quick-Keys side by side (stacks on phones) */}
+        {/* ── Editor area + Quick-Keys ── */}
         <div className="editor-layout" style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-          {/* Content — takes all remaining width */}
-          <textarea
-            ref={textareaRef}
-            className="textarea"
-            value={content}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            placeholder="Write your thoughts here..."
-            style={{
-              flex: 1,
-              minWidth: 0,
-              minHeight: 330,
-              fontFamily: 'var(--font-body)',
-              fontSize: 16,
-              resize: 'none',
-              overflow: 'hidden',
-              paddingBottom: 180, // ≈ 6 empty lines
-            }}
-          />
 
-          {/* Quick-Keys panel — sits right beside the textarea on desktop,
-              floats above the bottom-tab bar on phones. */}
+          {/* contentEditable editor */}
+          <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+            {/* Placeholder (shown when editor is empty) */}
+            {isEmpty && (
+              <span style={{
+                position:      'absolute',
+                top:           12,
+                left:          14,
+                color:         'var(--ink-lighter)',
+                fontFamily:    'var(--font-body)',
+                fontSize:      16,
+                pointerEvents: 'none',
+                userSelect:    'none',
+              }}>
+                Write your thoughts here…
+              </span>
+            )}
+            <div
+              ref={editorRef}
+              contentEditable
+              suppressContentEditableWarning
+              onInput={handleEditorInput}
+              onKeyDown={handleEditorKeyDown}
+              className="diary-editor"
+            />
+          </div>
+
+          {/* Quick-Keys panel */}
           {showQuickKeys ? (
             <div className="editor-quick-keys" style={{
               flexShrink: 0,
@@ -442,9 +434,8 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
               padding: '6px 6px 8px',
               boxShadow: '0 3px 14px rgba(124, 58, 237, 0.15)',
               position: 'sticky',
-              top: 120,          // stays visible while scrolling
+              top: 120,
             }}>
-              {/* Collapse */}
               <button
                 onClick={() => setShowQuickKeys(false)}
                 title="Hide quick keys"
@@ -456,41 +447,16 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
                 }}
               >✕</button>
 
-              <button
-                onMouseDown={e => { e.preventDefault(); insertAtCursor('backspace'); }}
-                title="Backspace"
-                style={quickKeyStyle}
-              >⌫</button>
+              <button onMouseDown={e => { e.preventDefault(); insertAtCursor('backspace'); }}   title="Backspace"       style={quickKeyStyle}>⌫</button>
+              <button onMouseDown={e => { e.preventDefault(); insertAtCursor(' '); }}           title="Space"           style={{ ...quickKeyStyle, fontSize: 13, fontFamily: 'var(--font-body)', letterSpacing: 0.5 }}>spc</button>
+              <button onMouseDown={e => { e.preventDefault(); insertAtCursor('enter'); }}       title="Enter / new line" style={quickKeyStyle}>↵</button>
 
-              <button
-                onMouseDown={e => { e.preventDefault(); insertAtCursor(' '); }}
-                title="Space"
-                style={{ ...quickKeyStyle, fontSize: 13, fontFamily: 'var(--font-body)', letterSpacing: 0.5 }}
-              >spc</button>
-
-              <button
-                onMouseDown={e => { e.preventDefault(); insertAtCursor('enter'); }}
-                title="Enter / new line"
-                style={quickKeyStyle}
-              >↵</button>
-
-              {/* Divider */}
               <div style={{ width: '70%', height: 1, background: 'var(--paper-line)', margin: '2px 0' }} />
 
-              <button
-                onMouseDown={e => { e.preventDefault(); insertAtCursor('list-numbered'); }}
-                title="Start numbered list (auto-continues on Enter)"
-                style={{ ...quickKeyStyle, fontSize: 13, fontFamily: 'var(--font-body)', fontWeight: 700 }}
-              >1.</button>
-
-              <button
-                onMouseDown={e => { e.preventDefault(); insertAtCursor('list-bullet'); }}
-                title="Start bullet list (auto-continues on Enter)"
-                style={{ ...quickKeyStyle, fontSize: 18 }}
-              >•</button>
+              <button onMouseDown={e => { e.preventDefault(); insertAtCursor('list-numbered'); }} title="Start numbered list" style={{ ...quickKeyStyle, fontSize: 13, fontFamily: 'var(--font-body)', fontWeight: 700 }}>1.</button>
+              <button onMouseDown={e => { e.preventDefault(); insertAtCursor('list-bullet'); }}   title="Start bullet list"   style={{ ...quickKeyStyle, fontSize: 18 }}>•</button>
             </div>
           ) : (
-            /* Re-open — tiny button aligned to top of textarea */
             <button
               className="editor-quick-keys-reopen"
               onClick={() => setShowQuickKeys(true)}
@@ -516,7 +482,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
           )}
         </div>
 
-        {/* Action Buttons */}
+        {/* ── Action buttons ── */}
         <div className="modal-actions" style={{ marginTop: 16 }}>
           <button className="btn btn-outline" onClick={onCancel}>
             <X size={16} /> Cancel
@@ -525,6 +491,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
             <Save size={16} /> {saving ? 'Saving...' : 'Save Entry'}
           </button>
         </div>
+
       </div>
     </div>
   );

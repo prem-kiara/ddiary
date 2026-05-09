@@ -360,6 +360,41 @@ body {
   min-height: 180px;
   line-height: 1.7;
 }
+
+/* ── contentEditable diary editor ── */
+.diary-editor {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--paper-line);
+  font-family: var(--font-body);
+  font-size: 16px;
+  background: #ffffff;
+  color: var(--ink);
+  outline: none;
+  transition: var(--transition);
+  min-height: 330px;
+  line-height: 1.7;
+  box-sizing: border-box;
+  padding-bottom: 180px; /* breathing room at bottom */
+  word-break: break-word;
+}
+.diary-editor:focus {
+  border-color: var(--gold-light);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.1);
+}
+/* Collapse default paragraph margins inside the editor */
+.diary-editor p   { margin: 0 0 2px; }
+.diary-editor p:last-child { margin-bottom: 0; }
+
+/* ── HTML diary content (DiaryView) ── */
+.diary-html-content p  { margin: 0 0 6px; }
+.diary-html-content p:last-child { margin-bottom: 0; }
+.diary-html-content strong { font-weight: 700; }
+.diary-html-content em     { font-style: italic; }
+.diary-html-content u      { text-decoration: underline; }
+.diary-html-content s      { text-decoration: line-through; }
+
 .input-title {
   font-family: var(--font-body);
   font-size: 20px;
