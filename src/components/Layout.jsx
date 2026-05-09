@@ -1,5 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Home, PenTool, CheckSquare, Settings, LogOut, List, Kanban, LayoutDashboard, Table2 } from 'lucide-react';
+import { Home, CheckSquare, Settings, LogOut, List, Kanban, LayoutDashboard, Table2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import NotificationBell from './NotificationBell';
 import Avatar from './shared/Avatar';
@@ -11,8 +11,7 @@ const formatDate = (d) => new Date(d).toLocaleDateString('en-US', {
 // Map URL path prefixes to nav item IDs so the active tab highlights correctly.
 function useActivePage() {
   const { pathname } = useLocation();
-  if (pathname === '/' || pathname.startsWith('/entry')) return 'home';
-  if (pathname.startsWith('/write'))    return 'write';
+  if (pathname === '/' || pathname.startsWith('/entry') || pathname.startsWith('/write')) return 'home';
   if (pathname.startsWith('/tasks'))    return 'tasks';
   if (pathname.startsWith('/team'))     return 'team';
   if (pathname.startsWith('/settings')) return 'settings';
@@ -34,7 +33,6 @@ export default function Layout({
 
   const ownerNavItems = [
     { id: 'home',      path: '/',          icon: Home,             label: 'Diary'     },
-    { id: 'write',     path: '/write',     icon: PenTool,          label: 'Write'     },
     { id: 'sheets',    path: '/sheets',    icon: Table2,           label: 'Sheets'    },
     { id: 'tasks',     path: '/tasks',     icon: List,             label: 'Tasks'     },
     // Dashboard is available to everyone. Default view = my tasks; super-admins

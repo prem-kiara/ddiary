@@ -251,7 +251,8 @@ export function useSheets() {
   }, [user]);
 
   const deleteSheet = useCallback(async (id) => {
-    if (!user) return deleteDoc(doc(db, 'users', user.uid, 'sheets', id));
+    if (!user) return;
+    return deleteDoc(doc(db, 'users', user.uid, 'sheets', id));
   }, [user]);
 
   return { sheets, loading, addSheet, updateSheet, deleteSheet };

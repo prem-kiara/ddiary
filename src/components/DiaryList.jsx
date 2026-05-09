@@ -3,6 +3,26 @@ import { BookOpen, Plus, Trash2, RotateCcw, Archive, ChevronRight, ChevronDown, 
 import { formatDateTime, formatTime } from '../utils/dates';
 import { TagBadge } from './shared/Pills';
 
+/** Returns true when content is HTML (new editor format). */
+const isHtml = (s) => s && /<[a-zA-Z]/.test(s);
+
+/** Strip HTML tags for single-line plain-text previews (archive/trash). */
+function stripHtml(html) {
+  if (!html) return '';
+  if (!isHtml(html)) return html;
+  return html
+    .replace(/<br\s*\/?>/gi, ' ')
+    .replace(/<\/p>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // Rotating accent for the entry's left border. Stable per-entry via hash.
 const ENTRY_ACCENTS = [
   'border-l-violet-400',
@@ -107,9 +127,22 @@ export default function DiaryList({
               {/* ── Expanded content ── */}
               {isExpanded && (
                 <div className="border-t border-slate-100 bg-slate-50/60 px-4 pt-3 pb-4">
-                  <p className="text-sm leading-relaxed text-slate-700 whitespace-pre-wrap mb-3">
-                    {entry.content || <em className="text-slate-400">No content</em>}
-                  </p>
+                  {entry.content ? (
+                    isHtml(entry.content) ? (
+                      <div
+                        className="diary-html-content text-sm leading-relaxed text-slate-700 mb-3"
+                        dangerouslySetInnerHTML={{ __html: entry.content }}
+                      />
+                    ) : (
+                      <p className="text-sm leading-relaxed text-slate-700 whitespace-pre-wrap mb-3">
+                        {entry.content}
+                      </p>
+                    )
+                  ) : (
+                    <p className="text-sm leading-relaxed mb-3">
+                      <em className="text-slate-400">No content</em>
+                    </p>
+                  )}
                   <button className="btn btn-sm btn-outline" onClick={() => onView(entry)}>
                     <ChevronRight size={14} /> Open Full Entry
                   </button>
@@ -148,7 +181,9 @@ export default function DiaryList({
                     </div>
                     <div className="text-xs text-slate-500">{formatDateTime(entry.createdAt)}</div>
                     {entry.content && (
-                      <div className="text-xs text-slate-500 mt-0.5 line-clamp-1">{entry.content}</div>
+                      <div className="text-xs text-slate-500 mt-0.5 line-clamp-1">
+                        {stripHtml(entry.content)}
+                      </div>
                     )}
                   </div>
                   <button
