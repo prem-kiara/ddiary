@@ -238,10 +238,22 @@ service cloud.firestore {
         return request.auth != null &&
           resource.data.ownerId == request.auth.uid;
       }
+      // Allows an invitee to complete the accept-invite batch even though they
+      // are not yet in memberUids. The invite doc ID is deterministic:
+      //   sheetInvites/{sheetId}_{inviteeEmail}
+      // so we can verify it exists and is still pending with a single get().
+      function hasPendingInvite() {
+        return request.auth != null
+          && exists(/databases/$(database)/documents/sheetInvites/$(sheetId + '_' + request.auth.token.email))
+          && get(/databases/$(database)/documents/sheetInvites/$(sheetId + '_' + request.auth.token.email)).data.status == 'pending';
+      }
 
-      allow read:   if isSuperAdmin() || isSharedMember();
+      // Invitees need read access so they can see the sheet title / metadata
+      // in the acceptance flow, even before they're formally a member.
+      allow read:   if isSuperAdmin() || isSharedMember() || hasPendingInvite();
       allow create: if request.auth != null;
-      allow update: if isSuperAdmin() || isSharedMember();
+      // hasPendingInvite() allows the "add myself to memberUids" update during accept
+      allow update: if isSuperAdmin() || isSharedMember() || hasPendingInvite();
       allow delete: if isSuperAdmin() || isSharedOwner();
 
       match /members/{memberId} {
@@ -254,21 +266,27 @@ service cloud.firestore {
       }
 
       match /auditLog/{logId} {
-        allow read, create: if isSuperAdmin() || isSharedMember();
+        // hasPendingInvite() allows the audit log entry written during accept
+        allow read, create: if isSuperAdmin() || isSharedMember() || hasPendingInvite();
         allow update, delete: if false;
       }
     }
 
     // ─── Sheet Invites ──────────────────────────────────────────────────────────
+    // Invite doc IDs are deterministic: {sheetId}_{inviteeEmail}
+    // This lets the sharedSheets rules verify a pending invite via get().
     match /sheetInvites/{inviteId} {
+      // Inviter uses setDoc (create or overwrite) with the deterministic ID
       allow create: if request.auth != null;
-      allow read:   if request.auth != null
-                     && (resource.data.inviterUid   == request.auth.uid
-                         || resource.data.inviteeEmail == request.auth.token.email);
+      // Re-invite after decline overwrites the old doc — treated as update by Firestore
       allow update: if isSuperAdmin()
                      || (request.auth != null
                          && (resource.data.inviterUid   == request.auth.uid
                              || resource.data.inviteeEmail == request.auth.token.email));
+      // Both parties can read: inviter for the share modal, invitee for the banner
+      allow read:   if request.auth != null
+                     && (resource.data.inviterUid   == request.auth.uid
+                         || resource.data.inviteeEmail == request.auth.token.email);
       allow delete: if isSuperAdmin()
                      || (request.auth != null && resource.data.inviterUid == request.auth.uid);
     }

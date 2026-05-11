@@ -59,8 +59,14 @@ export async function inviteToSheet(sheetId, sheetTitle, inviter, inviteeEmail) 
   }
   const inviterName = inviter.displayName || inviter.email;
 
-  // 1. Write the invite to Firestore
-  const docRef = await addDoc(collection(db, 'sheetInvites'), {
+  // 1. Write the invite to Firestore using a DETERMINISTIC document ID so that
+  //    Firestore security rules can look it up via get() when the invitee
+  //    accepts. Without this, the accept batch is rejected because the invitee
+  //    isn't yet in memberUids, so isSharedMember() returns false.
+  //    Format: {sheetId}_{inviteeEmail}
+  const inviteId = `${sheetId}_${normalised}`;
+  const docRef = doc(db, 'sheetInvites', inviteId);
+  await setDoc(docRef, {
     sheetId,
     sheetTitle,
     inviterUid:   inviter.uid,
@@ -82,7 +88,7 @@ export async function inviteToSheet(sheetId, sheetTitle, inviter, inviteeEmail) 
     console.warn('Sheet invite email could not be sent (MS token may be unavailable).');
   });
 
-  return docRef;
+  return docRef; // returns the DocumentReference for the invite
 }
 
 // Accept a pending sheet invite
