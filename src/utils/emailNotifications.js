@@ -402,6 +402,47 @@ export async function notifyNewComment({ recipientEmail, recipientName, commente
   });
 }
 
+/**
+ * 8. Sheet Invite — sent to a collaborator when they are invited to a shared sheet.
+ */
+export async function notifySheetInvite({ inviteeEmail, inviteeName, inviterName, sheetTitle, appUrl }) {
+  if (!inviteeEmail) return false;
+
+  const link = appUrl || APP_URL;
+
+  const body = `
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
+      Hi${inviteeName ? ' <strong>' + escapeHtml(inviteeName) + '</strong>' : ''},
+    </p>
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
+      <strong>${escapeHtml(inviterName || 'A colleague')}</strong> has invited you to collaborate on a shared sheet:
+    </p>
+    <div style="background: #f0fdf4; border-left: 4px solid #16a34a; padding: 16px 20px; border-radius: 0 10px 10px 0; margin: 0 0 20px;">
+      <p style="font-size: 18px; font-weight: 700; color: #0f172a; margin: 0 0 4px;">
+        📊 ${escapeHtml(sheetTitle || 'Shared Sheet')}
+      </p>
+      <p style="font-size: 13px; color: #16a34a; margin: 0; font-weight: 600;">Editor access · Real-time collaboration</p>
+    </div>
+    <p style="font-size: 14px; color: #475569; margin: 0 0 20px; line-height: 1.6;">
+      Open Dhanam Workspace to accept the invite and start collaborating.
+      You'll be able to view and edit the sheet in real-time alongside your team.
+    </p>
+    <a href="${link}" style="display: inline-block; background: #16a34a; color: #fff; padding: 13px 28px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+      Open Dhanam Workspace
+    </a>
+    <p style="font-size: 12px; color: #94a3b8; margin: 20px 0 0; line-height: 1.5;">
+      You'll see an invite banner at the top of the Sheets page when you sign in.
+      You can accept or decline the invite from there.
+    </p>
+  `;
+
+  return sendEmail({
+    to: inviteeEmail,
+    subject: `${escapeHtml(inviterName || 'A colleague')} invited you to collaborate on "${sheetTitle}"`,
+    htmlBody: wrapHtml('Sheet Collaboration Invite', body),
+  });
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // DIARY ENTRY SHARING
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

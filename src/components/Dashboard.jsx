@@ -376,10 +376,10 @@ function InlineTaskRow({ workspaces, defaultWorkspaceId, onSave, onCancel, curre
 export default function Dashboard({ showToast } = {}) {
   const { user, isSuperAdmin } = useAuth();
   const navigate = useNavigate();
-  // View mode — 'mine' (default for everyone) shows tasks I'm assigned to or
-  // I created. 'global' is super-admin only and shows every task on the
-  // platform. The hook silently downgrades to 'mine' for non-super-admins.
-  const [viewMode, setViewMode] = useState('mine');
+  // View mode — super-admins default to 'global' (all tasks on the platform)
+  // so the dashboard is immediately populated on load without needing a click.
+  // Non-super-admins always run in 'mine' (the hook silently downgrades).
+  const [viewMode, setViewMode] = useState(isSuperAdmin ? 'global' : 'mine');
   const { tasks, loading, workspaces, effectiveMode } = usePlatformTasks({ mode: viewMode });
   const [addingInline, setAddingInline] = useState(false);
 

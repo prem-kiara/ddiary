@@ -5,6 +5,7 @@ import {
   writeBatch, arrayUnion, arrayRemove,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { notifySheetInvite } from '../utils/emailNotifications';
 
 // Convert a personal sheet into a shared sheet
 export async function shareSheet(sheet, owner) {
@@ -56,17 +57,32 @@ export async function inviteToSheet(sheetId, sheetTitle, inviter, inviteeEmail) 
   if (normalised === inviter.email?.toLowerCase()) {
     throw new Error("You can't invite yourself.");
   }
-  return addDoc(collection(db, 'sheetInvites'), {
+  const inviterName = inviter.displayName || inviter.email;
+
+  // 1. Write the invite to Firestore
+  const docRef = await addDoc(collection(db, 'sheetInvites'), {
     sheetId,
     sheetTitle,
     inviterUid:   inviter.uid,
-    inviterName:  inviter.displayName || inviter.email,
+    inviterName,
     inviterEmail: inviter.email,
     inviteeEmail: normalised,
     role:         'editor',
     status:       'pending',
     createdAt:    serverTimestamp(),
   });
+
+  // 2. Fire-and-forget email — sent from the inviter's M365 mailbox via Graph
+  notifySheetInvite({
+    inviteeEmail: normalised,
+    inviterName,
+    sheetTitle,
+  }).catch(() => {
+    // Email failure is non-fatal — the Firestore invite still works
+    console.warn('Sheet invite email could not be sent (MS token may be unavailable).');
+  });
+
+  return docRef;
 }
 
 // Accept a pending sheet invite
