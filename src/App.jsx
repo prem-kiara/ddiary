@@ -18,6 +18,7 @@ import SettingsPage from './components/SettingsPage';
 import Dashboard from './components/Dashboard';
 import SpreadsheetList from './components/SpreadsheetList';
 import SpreadsheetGrid from './components/SpreadsheetGrid';
+import SheetInviteBanner from './components/SheetInviteBanner';
 import './styles/diary.css';
 
 // ─── Route wrappers ──────────────────────────────────────────────────────────
@@ -72,15 +73,25 @@ function DiaryEditorPage({ entries, archivedEntries, onSave, onCancel, showToast
 }
 
 // ─── Sheets route wrappers ───────────────────────────────────────────────────
-function SheetListPage({ sheets, loading, onNew, onDelete }) {
+function SheetListPage({
+  sheets, archivedSheets, trashedSheets, loading,
+  onNew, onTrash, onRestore, onPurge, onArchive, onUnarchive,
+}) {
   const navigate = useNavigate();
   return (
     <SpreadsheetList
       sheets={sheets}
+      archivedSheets={archivedSheets}
+      trashedSheets={trashedSheets}
       loading={loading}
       onOpen={(sheet) => navigate(`/sheets/${sheet.id}`, { state: { sheet } })}
       onNew={onNew}
-      onDelete={onDelete}
+      onTrash={onTrash}
+      onRestore={onRestore}
+      onPurge={onPurge}
+      onArchive={onArchive}
+      onUnarchive={onUnarchive}
+      onOpenShared={(sheet) => navigate(`/sheets/${sheet.id}`, { state: { sheet, isShared: true } })}
     />
   );
 }
@@ -90,6 +101,7 @@ function SheetGridPage({ sheets, onSave }) {
   const location = useLocation();
   const navigate = useNavigate();
   const sheet = location.state?.sheet || sheets.find(s => s.id === id);
+  const isShared = !!(location.state?.isShared || sheet?.isShared);
 
   if (!sheet) return <Navigate to="/sheets" replace />;
 
@@ -98,6 +110,8 @@ function SheetGridPage({ sheets, onSave }) {
       sheet={sheet}
       onSave={onSave}
       onBack={() => navigate('/sheets')}
+      isShared={isShared}
+      sharedSheetId={isShared ? sheet.id : null}
     />
   );
 }
@@ -113,7 +127,12 @@ function DiaryApp() {
   } = useEntries();
   const { tasks, loading: tasksLoading, addTask, updateTask, toggleTask, deleteTask, clearCompleted } = useTasks();
   const { members, loading: membersLoading, addMember, addMembersBulk, updateMember, deleteMember } = useTeamMembers();
-  const { sheets, loading: sheetsLoading, addSheet, updateSheet, deleteSheet } = useSheets();
+  const {
+    sheets, archivedSheets, trashedSheets, loading: sheetsLoading,
+    addSheet, updateSheet,
+    trashSheet, restoreSheet, purgeSheet,
+    archiveSheet, unarchiveSheet,
+  } = useSheets();
 
   const [toast, setToast] = useState(null);
   const showToast = useCallback((message, type = 'info') => setToast({ message, type }), []);
@@ -237,6 +256,7 @@ function DiaryApp() {
     <>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       <WorkspaceInvitePrompt showToast={showToast} />
+      <SheetInviteBanner showToast={showToast} />
       <Layout pendingCount={pendingCount} isSuperAdmin={isSuperAdmin} {...commonLayoutProps}>
         <ErrorBoundary>
         <Routes>
@@ -328,9 +348,15 @@ function DiaryApp() {
             element={
               <SheetListPage
                 sheets={sheets}
+                archivedSheets={archivedSheets}
+                trashedSheets={trashedSheets}
                 loading={sheetsLoading}
                 onNew={addSheet}
-                onDelete={deleteSheet}
+                onTrash={trashSheet}
+                onRestore={restoreSheet}
+                onPurge={purgeSheet}
+                onArchive={archiveSheet}
+                onUnarchive={unarchiveSheet}
               />
             }
           />

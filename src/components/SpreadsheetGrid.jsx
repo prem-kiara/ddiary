@@ -1,5 +1,5 @@
 /**
- * SpreadsheetGrid v4
+ * SpreadsheetGrid v5
  *
  * Features:
  *  - Editable cells + formula bar with correct cursor positioning
@@ -14,14 +14,23 @@
  *  - Formula cell-pointing: click or drag cells while typing a formula to insert refs
  *  - Column text filters
  *  - Drag-to-reorder rows and columns
+ *  - Resizable columns (drag right edge of header) and rows (drag bottom edge of row number)
  *  - Auto-save (debounced)
  */
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Bold, Italic, Plus, Filter, ChevronUp, ChevronDown } from 'lucide-react';
+import { doc, onSnapshot, collection as fsCollection } from 'firebase/firestore';
+import { db } from '../firebase';
+import { useAuth } from '../contexts/AuthContext';
+import { saveSharedSheet, logSheetOpen } from '../hooks/useSharedSheets';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const LETTERS       = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i));
 const FORMULA_NAMES = ['SUM', 'AVERAGE', 'AVG', 'COUNT', 'COUNTA', 'MIN', 'MAX'];
+const DEFAULT_COL_W = 110;
+const DEFAULT_ROW_H = 28;
+const MIN_COL_W     = 40;
+const MIN_ROW_H     = 18;
 
 // ─── Formula engine ───────────────────────────────────────────────────────────
 export function ck(c, r) { return `${LETTERS[c] ?? '?'}${r + 1}`; }
@@ -93,14 +102,17 @@ function displayVal(c, r, data) {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
+export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = false, sharedSheetId = null }) {
   const { id: sheetId, title: initialTitle } = sheet;
+  const { user } = useAuth();
+  const initCols = Math.max(sheet.cols || 10, 1);
+  const initRows = Math.max(sheet.rows || 50, 1);
 
   // ── Core state ─────────────────────────────────────────────────────────────
   const [title,      setTitle]      = useState(initialTitle || 'Untitled Sheet');
   const [data,       setData]       = useState(() => sheet.data || {});
-  const [cols,       setCols]       = useState(() => Math.max(sheet.cols || 10, 1));
-  const [rows,       setRows]       = useState(() => Math.max(sheet.rows || 50, 1));
+  const [cols,       setCols]       = useState(initCols);
+  const [rows,       setRows]       = useState(initRows);
   const [sel,        setSel]        = useState({ c: 0, r: 0 });
   const [selEnd,     setSelEnd]     = useState(null);
   const [editCell,   setEditCell]   = useState(null);
@@ -108,12 +120,23 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
   const [filters,    setFilters]    = useState({});
   const [showFilter, setShowFilter] = useState(false);
   const [saveStatus, setSaveStatus] = useState('saved');
-  const [sortConfig, setSortConfig] = useState(null); // { col, dir }
+  const [sortConfig, setSortConfig] = useState(null);
   const [suggIdx,    setSuggIdx]    = useState(0);
   const [dragRow,    setDragRow]    = useState(null);
   const [dragOverRow,setDragOverRow]= useState(null);
   const [dragCol,    setDragCol]    = useState(null);
   const [dragOverCol,setDragOverCol]= useState(null);
+
+  // ── Column / row size state ─────────────────────────────────────────────────
+  const [colWidths, setColWidths] = useState(() =>
+    Array.from({ length: initCols }, (_, i) => sheet.colWidths?.[i] ?? DEFAULT_COL_W)
+  );
+  const [rowHeights, setRowHeights] = useState(() =>
+    Array.from({ length: initRows }, (_, i) => sheet.rowHeights?.[i] ?? DEFAULT_ROW_H)
+  );
+
+  const pendingAuditEventsRef = useRef([]);
+  const [membersCount, setMembersCount] = useState(0);
 
   // ── Refs ────────────────────────────────────────────────────────────────────
   const gridRef         = useRef(null);
@@ -122,30 +145,93 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
   const saveTimer       = useRef(null);
   // Drag-select
   const isDraggingRef   = useRef(false);
-  const didDragRef      = useRef(false);  // true if mouse moved to a different cell during drag
+  const didDragRef      = useRef(false);
   // Formula pointing
   const formulaDragRef  = useRef(false);
   const formulaAnchor   = useRef(null);
   const formulaInsertPos= useRef(null);
   // Undo / redo
-  const undoStack       = useRef([]);     // array of data snapshots
+  const undoStack       = useRef([]);
   const redoStack       = useRef([]);
+  // Resize
+  const resizingRef     = useRef(null); // { type:'col'|'row', idx, startPos, startSize }
+  // Mirrors of state for use in closures that can't re-close over state
+  const colWidthsRef    = useRef(colWidths);
+  const rowHeightsRef   = useRef(rowHeights);
+  // Latest save trigger (always up-to-date with current data/cols/rows/title)
+  const triggerSaveRef  = useRef(null);
+
+  // Keep refs in sync
+  useEffect(() => { colWidthsRef.current  = colWidths;  }, [colWidths]);
+  useEffect(() => { rowHeightsRef.current = rowHeights; }, [rowHeights]);
 
   // Focus cell input when entering edit mode
   useEffect(() => {
     if (editCell) setTimeout(() => inputRef.current?.focus(), 0);
   }, [editCell]);
 
-  // Global mouseup to end all drags
+  // Global mouse event handlers (selection drag + resize)
   useEffect(() => {
-    const up = () => {
-      isDraggingRef.current    = false;
-      formulaDragRef.current   = false;
-      formulaAnchor.current    = null;
+    const onMove = (e) => {
+      // ── Resize drag ──
+      if (resizingRef.current) {
+        const { type, idx, startPos, startSize } = resizingRef.current;
+        if (type === 'col') {
+          const newW = Math.max(MIN_COL_W, startSize + (e.clientX - startPos));
+          setColWidths(prev => { const next = [...prev]; next[idx] = newW; return next; });
+        } else {
+          const newH = Math.max(MIN_ROW_H, startSize + (e.clientY - startPos));
+          setRowHeights(prev => { const next = [...prev]; next[idx] = newH; return next; });
+        }
+        return;
+      }
     };
-    document.addEventListener('mouseup', up);
-    return () => document.removeEventListener('mouseup', up);
+
+    const onUp = () => {
+      if (resizingRef.current) {
+        resizingRef.current = null;
+        // Save new dimensions — triggerSaveRef always holds a fresh closure
+        triggerSaveRef.current?.();
+      }
+      isDraggingRef.current  = false;
+      formulaDragRef.current = false;
+      formulaAnchor.current  = null;
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',   onUp);
+    return () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup',   onUp);
+    };
   }, []);
+
+  // Real-time sync for shared mode
+  useEffect(() => {
+    if (!isShared || !sharedSheetId || !user) return;
+    logSheetOpen(sharedSheetId, user).catch(() => {});
+    const unsub = onSnapshot(doc(db, 'sharedSheets', sharedSheetId), snap => {
+      if (!snap.exists() || snap.metadata.hasPendingWrites) return;
+      const d = snap.data();
+      if (!editCell) setData(d.data || {});  // don't disrupt active edit
+      if (d.cols)            setCols(d.cols);
+      if (d.rows)            setRows(d.rows);
+      if (d.colWidths?.length)  setColWidths(d.colWidths);
+      if (d.rowHeights?.length) setRowHeights(d.rowHeights);
+    });
+    return unsub;
+  }, [isShared, sharedSheetId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Members count for the header badge
+  useEffect(() => {
+    if (!isShared || !sharedSheetId) return;
+    const unsub = onSnapshot(
+      fsCollection(db, 'sharedSheets', sharedSheetId, 'members'),
+      snap => setMembersCount(snap.size),
+      () => {},
+    );
+    return unsub;
+  }, [isShared, sharedSheetId]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const selectedKey  = ck(sel.c, sel.r);
@@ -163,7 +249,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
     c >= selRange.c1 && c <= selRange.c2 && r >= selRange.r1 && r <= selRange.r2,
   [selRange]);
 
-  // Formula autocomplete: match partial word after = or operator
+  // Formula autocomplete
   const formulaSuggestions = useMemo(() => {
     if (!editCell || !editVal.startsWith('=')) return [];
     const m = editVal.match(/(?:^=|[+\-*/,(])([A-Za-z]{2,})$/);
@@ -186,23 +272,41 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
   const scheduleSave = useCallback((nd, nc, nr, nt) => {
     setSaveStatus('unsaved');
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
+    saveTimer.current = setTimeout(async () => {
       setSaveStatus('saving');
-      onSave(sheetId, { title: nt, data: nd, cols: nc, rows: nr })
-        .then(() => setSaveStatus('saved')).catch(() => setSaveStatus('unsaved'));
+      const updates = {
+        title: nt, data: nd, cols: nc, rows: nr,
+        colWidths:  colWidthsRef.current,
+        rowHeights: rowHeightsRef.current,
+      };
+      try {
+        if (isShared && sharedSheetId && user) {
+          const events = [...pendingAuditEventsRef.current];
+          pendingAuditEventsRef.current = [];
+          await saveSharedSheet(sharedSheetId, updates, user, events);
+        } else {
+          await onSave(sheetId, updates);
+        }
+        setSaveStatus('saved');
+      } catch {
+        setSaveStatus('unsaved');
+      }
     }, 1500);
-  }, [sheetId, onSave]);
+  }, [sheetId, onSave, isShared, sharedSheetId, user]);
 
   useEffect(() => () => clearTimeout(saveTimer.current), []);
 
+  // Keep triggerSaveRef always fresh so the resize mouseup can call it
+  // without any stale-closure issue
+  triggerSaveRef.current = () => scheduleSave(data, cols, rows, title);
+
   // ── Undo / Redo ────────────────────────────────────────────────────────────
-  // setDataWithHistory: like setData but auto-pushes current state to undo stack
   const setDataWithHistory = useCallback((updaterOrValue) => {
     setData(prev => {
       const next = typeof updaterOrValue === 'function' ? updaterOrValue(prev) : updaterOrValue;
       if (next !== prev) {
         undoStack.current = [...undoStack.current.slice(-29), prev];
-        redoStack.current = []; // new change clears redo
+        redoStack.current = [];
       }
       return next;
     });
@@ -226,12 +330,22 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
   const updateCell = useCallback((c, r, patch) => {
     setDataWithHistory(prev => {
       const key  = ck(c, r);
+      // Accumulate audit event for shared mode
+      if (isShared && 'v' in patch) {
+        const oldVal = prev[key]?.v ?? '';
+        if (String(patch.v ?? '') !== String(oldVal)) {
+          pendingAuditEventsRef.current.push({
+            action: 'cell_edit',
+            details: { cell: key, oldValue: String(oldVal), newValue: String(patch.v ?? '') },
+          });
+        }
+      }
       const next = { ...prev, [key]: { ...(prev[key] || {}), ...patch } };
       if (!next[key].v && !next[key].b && !next[key].i) delete next[key];
       scheduleSave(next, cols, rows, title);
       return next;
     });
-  }, [cols, rows, title, scheduleSave, setDataWithHistory]);
+  }, [cols, rows, title, scheduleSave, setDataWithHistory, isShared]);
 
   const commitEdit = useCallback((c, r, val) => {
     updateCell(c, r, { v: val });
@@ -251,20 +365,14 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
   }, [selRange, cols, rows, title, scheduleSave, setDataWithHistory]);
 
   // ── Sort ───────────────────────────────────────────────────────────────────
-  // All computation is inside setDataWithHistory so it always uses the freshest
-  // state (prev) — prevents the stale-closure empty-sheet bug on repeated sorts.
-  // Empty rows always sort to the bottom regardless of direction.
   const sortByColumn = useCallback((colIdx, dir) => {
     setDataWithHistory(prev => {
-      // Row 0 is always the header — sort rows 1..rows-1 only
-      const HEADER = 1;
+      const HEADER  = 1;
       const allRows = Array.from({ length: rows - HEADER }, (_, i) => i + HEADER);
-      const vals = allRows.map(r => displayVal(colIdx, r, prev));
+      const vals    = allRows.map(r => displayVal(colIdx, r, prev));
 
       allRows.sort((a, b) => {
-        // Map a/b (absolute row indices) to their vals-array index
         const va = vals[a - HEADER], vb = vals[b - HEADER];
-        // Empty cells always sink to the bottom
         if (va === '' && vb === '') return 0;
         if (va === '') return 1;
         if (vb === '') return -1;
@@ -274,12 +382,10 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
       });
 
       const next = {};
-      // Always preserve the header row (row 0) and cells beyond the grid
       Object.entries(prev).forEach(([k, v]) => {
         const ref = parseRef(k);
         if (!ref || ref.row < HEADER || ref.row >= rows) next[k] = v;
       });
-      // Remap sorted data rows: srcRow → destRow (both start at HEADER)
       allRows.forEach((srcRow, destIdx) => {
         const destRow = destIdx + HEADER;
         for (let c = 0; c < cols; c++) {
@@ -298,23 +404,17 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
     const lines = [];
     for (let r = selRange.r1; r <= selRange.r2; r++) {
       const cells = [];
-      for (let c = selRange.c1; c <= selRange.c2; c++) {
-        cells.push(displayVal(c, r, data));
-      }
+      for (let c = selRange.c1; c <= selRange.c2; c++) cells.push(displayVal(c, r, data));
       lines.push(cells.join('\t'));
     }
     navigator.clipboard.writeText(lines.join('\n')).catch(() => {});
   }, [selRange, data]);
 
-  const handleCut = useCallback(() => {
-    handleCopy();
-    clearRange();
-  }, [handleCopy, clearRange]);
+  const handleCut = useCallback(() => { handleCopy(); clearRange(); }, [handleCopy, clearRange]);
 
   const handlePaste = useCallback(async () => {
     try {
-      const text = await navigator.clipboard.readText();
-      // Normalise line endings and strip trailing blank line
+      const text  = await navigator.clipboard.readText();
       const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
       if (lines[lines.length - 1] === '') lines.pop();
       if (!lines.length) return;
@@ -355,8 +455,21 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
   }, [selectedKey, data, selRange, cols, rows, title, scheduleSave, setDataWithHistory]);
 
   // ── Add rows / columns ─────────────────────────────────────────────────────
-  const addRow = () => { const r = rows + 10; setRows(r); scheduleSave(data, cols, r, title); };
-  const addCol = () => { if (cols >= 26) return; const c = cols + 1; setCols(c); scheduleSave(data, c, rows, title); };
+  const addRow = () => {
+    const r = rows + 10;
+    setRows(r);
+    setRowHeights(prev => [...prev, ...Array(10).fill(DEFAULT_ROW_H)]);
+    if (isShared) pendingAuditEventsRef.current.push({ action: 'structure_changed', details: { rows: r } });
+    scheduleSave(data, cols, r, title);
+  };
+  const addCol = () => {
+    if (cols >= 26) return;
+    const c = cols + 1;
+    setCols(c);
+    setColWidths(prev => [...prev, DEFAULT_COL_W]);
+    if (isShared) pendingAuditEventsRef.current.push({ action: 'structure_changed', details: { cols: c } });
+    scheduleSave(data, c, rows, title);
+  };
   const handleTitleChange = (v) => { setTitle(v); scheduleSave(data, cols, rows, v); };
 
   // ── Drag-to-reorder rows / cols ────────────────────────────────────────────
@@ -421,7 +534,6 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
     }, 0);
   }, []);
 
-  // Apply autocomplete suggestion
   const applySuggestion = useCallback((name) => {
     setEditVal(prev => { const m = prev.match(/^(.*?)([A-Za-z]*)$/); return m ? m[1] + name + '(' : prev + name + '('; });
     setSuggIdx(0);
@@ -448,21 +560,19 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
     const { key, shiftKey, ctrlKey, metaKey } = e;
     const mod = ctrlKey || metaKey;
 
-    // Suggestions navigation
     if (formulaSuggestions.length > 0) {
       if (key === 'ArrowDown') { e.preventDefault(); setSuggIdx(i => Math.min(i + 1, formulaSuggestions.length - 1)); return; }
       if (key === 'ArrowUp')   { e.preventDefault(); setSuggIdx(i => Math.max(i - 1, 0)); return; }
       if (key === 'Tab')       { e.preventDefault(); applySuggestion(formulaSuggestions[suggIdx]); return; }
     }
 
-    // Ctrl/Cmd shortcuts — work even in edit mode for copy/paste
     if (mod && key === 'z' && !shiftKey) { e.preventDefault(); undo(); return; }
     if (mod && (key === 'y' || (key === 'z' && shiftKey))) { e.preventDefault(); redo(); return; }
     if (mod && key === 'c') { e.preventDefault(); handleCopy(); return; }
     if (mod && key === 'x') { e.preventDefault(); handleCut(); return; }
     if (mod && key === 'v') { e.preventDefault(); handlePaste(); return; }
 
-    if (editCell) return; // remaining shortcuts only in navigation mode
+    if (editCell) return;
 
     if      (key === 'ArrowRight') { e.preventDefault(); moveSel(1,  0, shiftKey); }
     else if (key === 'ArrowLeft')  { e.preventDefault(); moveSel(-1, 0, shiftKey); }
@@ -508,8 +618,6 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
   // ── Cell mouse handlers ────────────────────────────────────────────────────
   const handleCellMouseDown = useCallback((e, c, r) => {
     if (e.button !== 0) return;
-
-    // Formula pointing mode: click inserts cell ref, don't change selection
     if (inFormulaMode && !(editCell.c === c && editCell.r === r)) {
       e.preventDefault();
       formulaDragRef.current  = true;
@@ -518,8 +626,6 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
       upsertFormulaRef({ c, r }, null);
       return;
     }
-
-    // Normal cell selection / drag start
     if (editCell && !(editCell.c === c && editCell.r === r)) {
       commitEdit(editCell.c, editCell.r, editVal);
     }
@@ -529,17 +635,16 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
     gridRef.current?.focus();
   }, [inFormulaMode, editCell, editVal, commitEdit, upsertFormulaRef]);
 
-  // handleCellMouseEnter is only used for formula-pointing now.
-  // Regular drag selection is handled by onMouseMove on the grid container.
   const handleCellMouseEnter = useCallback((e, c, r) => {
     if (formulaDragRef.current && formulaAnchor.current) {
       upsertFormulaRef(formulaAnchor.current, { c, r });
     }
   }, [upsertFormulaRef]);
 
-  // Grid-level mousemove: update drag selection in ALL directions reliably.
-  // elementFromPoint finds the cell under the cursor regardless of drag direction.
   const handleGridMouseMove = useCallback((e) => {
+    // Don't interfere with resize
+    if (resizingRef.current) return;
+
     if (!isDraggingRef.current || e.buttons !== 1) {
       if (isDraggingRef.current) isDraggingRef.current = false;
       return;
@@ -552,21 +657,41 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
     const r = parseInt(td.dataset.r, 10);
     if (isNaN(c) || isNaN(r)) return;
     setSelEnd(prev => {
-      if (prev?.c === c && prev?.r === r) return prev; // no change, skip re-render
+      if (prev?.c === c && prev?.r === r) return prev;
       didDragRef.current = true;
       return { c, r };
     });
   }, []);
 
   const handleCellClick = useCallback((e, c, r) => {
-    // After a drag, the mouseup → click sequence would reset selEnd. Prevent that.
     if (didDragRef.current) { didDragRef.current = false; return; }
-    // In formula mode, cell clicks are handled by mousedown
     if (inFormulaMode && editCell && !(editCell.c === c && editCell.r === r)) return;
-    // Shift+click extends selection
     if (e.shiftKey && !inFormulaMode) { setSelEnd({ c, r }); return; }
     setSel({ c, r }); setSelEnd(null);
   }, [inFormulaMode, editCell]);
+
+  // ── Resize handle mouse down ───────────────────────────────────────────────
+  const onColResizeMouseDown = useCallback((e, colIdx) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingRef.current = {
+      type: 'col',
+      idx: colIdx,
+      startPos: e.clientX,
+      startSize: colWidthsRef.current[colIdx] ?? DEFAULT_COL_W,
+    };
+  }, []);
+
+  const onRowResizeMouseDown = useCallback((e, rowIdx) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingRef.current = {
+      type: 'row',
+      idx: rowIdx,
+      startPos: e.clientY,
+      startSize: rowHeightsRef.current[rowIdx] ?? DEFAULT_ROW_H,
+    };
+  }, []);
 
   // ── Render helpers ─────────────────────────────────────────────────────────
   const isEditing = (c, r) => editCell?.c === c && editCell?.r === r;
@@ -584,6 +709,13 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
           color: saveStatus === 'saved' ? '#16a34a' : saveStatus === 'saving' ? 'var(--ink-lighter)' : '#d97706' }}>
           {saveStatus === 'saved' ? '✓ Saved' : saveStatus === 'saving' ? 'Saving…' : '● Unsaved'}
         </span>
+        {isShared && (
+          <span style={{ fontSize: 11, fontFamily: 'var(--font-body)', color: '#16a34a',
+            background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6,
+            padding: '2px 8px', display: 'flex', alignItems: 'center', gap: 4 }}>
+            ● Live · {membersCount} member{membersCount !== 1 ? 's' : ''}
+          </span>
+        )}
       </div>
 
       {/* ── Toolbar ── */}
@@ -614,7 +746,6 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
           </button>
         )}
 
-        {/* Undo / Redo */}
         <div style={divider} />
         <button onMouseDown={e => { e.preventDefault(); undo(); }}
           title="Undo (Ctrl+Z)" disabled={!undoStack.current.length}
@@ -647,7 +778,6 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
               else if (e.key === 'Escape') { setEditCell(null); setEditVal(''); formulaInsertPos.current = null; requestAnimationFrame(() => gridRef.current?.focus()); }
             }}
             onFocus={() => {
-              // Only reset editVal if not already editing this same cell (preserves cursor position on re-focus)
               if (!editCell || editCell.c !== sel.c || editCell.r !== sel.r) {
                 setEditCell(sel); setEditVal(String(selectedRaw));
               }
@@ -657,7 +787,6 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
               border: '1px solid var(--paper-line)', borderRadius: 6, outline: 'none', background: '#fff',
               boxShadow: inFormulaMode ? '0 0 0 2px #7c3aed44' : 'none' }}
           />
-          {/* Autocomplete dropdown */}
           {formulaSuggestions.length > 0 && (
             <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff',
               border: '1px solid var(--paper-line)', borderRadius: 6, boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
@@ -693,10 +822,13 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
         onMouseMove={handleGridMouseMove}
         onMouseUp={() => { isDraggingRef.current = false; formulaDragRef.current = false; formulaAnchor.current = null; }}
       >
-        <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: cols * 100 + 50 }}>
+        <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: colWidths.reduce((a, w) => a + w, 0) + 42 }}>
           <colgroup>
+            {/* Row-number column */}
             <col style={{ width: 42 }} />
-            {Array.from({ length: cols }, (_, c) => <col key={c} style={{ width: 110 }} />)}
+            {Array.from({ length: cols }, (_, c) => (
+              <col key={c} style={{ width: colWidths[c] ?? DEFAULT_COL_W }} />
+            ))}
           </colgroup>
 
           {/* ── Column headers ── */}
@@ -704,11 +836,12 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
             <tr>
               <th style={thStyle(false)}>#</th>
               {Array.from({ length: cols }, (_, c) => {
-                const sorted = sortConfig?.col === c;
+                const sorted  = sortConfig?.col === c;
+                const hlCol   = selRange.c1 <= c && c <= selRange.c2;
                 return (
                   <th key={c}
-                    style={{ ...thStyle(selRange.c1 <= c && c <= selRange.c2), cursor: 'grab', userSelect: 'none',
-                      background: dragOverCol === c ? '#ddd6fe' : (selRange.c1 <= c && c <= selRange.c2) ? '#ede9fe' : 'var(--paper-dark)' }}
+                    style={{ ...thStyle(hlCol), cursor: 'grab', userSelect: 'none', position: 'relative',
+                      background: dragOverCol === c ? '#ddd6fe' : hlCol ? '#ede9fe' : 'var(--paper-dark)' }}
                     draggable
                     onDragStart={() => setDragCol(c)}
                     onDragOver={e => { e.preventDefault(); setDragOverCol(c); }}
@@ -716,7 +849,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
                     onDrop={e => { e.preventDefault(); moveColInsert(dragCol, c); setDragCol(null); setDragOverCol(null); }}
                     onDragEnd={() => { setDragCol(null); setDragOverCol(null); }}
                     onClick={() => { setSel({ c, r: 0 }); setSelEnd({ c, r: rows - 1 }); gridRef.current?.focus(); }}
-                    title="Click to select column · Drag to reorder"
+                    title="Click to select column · Drag to reorder · Drag right edge to resize"
                   >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
                       <span>{LETTERS[c]}</span>
@@ -735,6 +868,16 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
                         </button>
                       </span>
                     </div>
+                    {/* Column resize handle — right edge of header */}
+                    <div
+                      style={{
+                        position: 'absolute', top: 0, right: 0, width: 5, height: '100%',
+                        cursor: 'col-resize', zIndex: 10,
+                        background: 'transparent',
+                      }}
+                      onMouseDown={e => onColResizeMouseDown(e, c)}
+                      title="Drag to resize column"
+                    />
                   </th>
                 );
               })}
@@ -758,12 +901,13 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
           {/* ── Body ── */}
           <tbody>
             {visibleRows.map(r => (
-              <tr key={r}>
-                {/* Row number — draggable */}
+              <tr key={r} style={{ height: rowHeights[r] ?? DEFAULT_ROW_H }}>
+                {/* Row number — draggable + resizable */}
                 <td
-                  style={{ ...tdStyle(false, false), cursor: 'grab',
+                  style={{ ...tdStyle(false, false), cursor: 'grab', position: 'relative',
                     background: dragOverRow === r ? '#ddd6fe' : (selRange.r1 <= r && r <= selRange.r2) ? '#ede9fe' : 'var(--paper-dark)',
-                    color: 'var(--ink-lighter)', fontSize: 11, textAlign: 'center', userSelect: 'none', padding: '0 4px' }}
+                    color: 'var(--ink-lighter)', fontSize: 11, textAlign: 'center', userSelect: 'none', padding: '0 4px',
+                    height: rowHeights[r] ?? DEFAULT_ROW_H }}
                   draggable
                   onDragStart={() => setDragRow(r)}
                   onDragOver={e => { e.preventDefault(); setDragOverRow(r); }}
@@ -771,9 +915,19 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
                   onDrop={e => { e.preventDefault(); moveRowInsert(dragRow, r); setDragRow(null); setDragOverRow(null); }}
                   onDragEnd={() => { setDragRow(null); setDragOverRow(null); }}
                   onClick={() => { setSel({ c: 0, r }); setSelEnd({ c: cols - 1, r }); gridRef.current?.focus(); }}
-                  title="Click to select row · Drag to reorder"
+                  title="Click to select row · Drag to reorder · Drag bottom edge to resize"
                 >
                   {r + 1}
+                  {/* Row resize handle — bottom edge of row number */}
+                  <div
+                    style={{
+                      position: 'absolute', bottom: 0, left: 0, width: '100%', height: 5,
+                      cursor: 'row-resize', zIndex: 10,
+                      background: 'transparent',
+                    }}
+                    onMouseDown={e => onRowResizeMouseDown(e, r)}
+                    title="Drag to resize row"
+                  />
                 </td>
 
                 {Array.from({ length: cols }, (_, c) => {
@@ -789,7 +943,9 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
                     <td key={c}
                       data-c={c} data-r={r}
                       style={{
-                        border: '1px solid var(--paper-line)', height: 28, padding: 0,
+                        border: '1px solid var(--paper-line)',
+                        height: rowHeights[r] ?? DEFAULT_ROW_H,
+                        padding: 0,
                         cursor: inFormulaMode && !(editCell?.c === c && editCell?.r === r) ? 'crosshair' : 'default',
                         background: editing ? '#faf5ff' : inRange ? '#ede9fe' : 'transparent',
                         outline: isAnchor && !selEnd ? '2px solid #7c3aed' : inRange && !isAnchor ? '1px solid #a78bfa' : 'none',
@@ -832,7 +988,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack }) {
 
       {/* ── Hint bar ── */}
       <p style={{ fontSize: 11, color: 'var(--ink-lighter)', marginTop: 6, fontFamily: 'var(--font-body)' }}>
-        Click+drag to select · Shift+click to extend · ▲▼ to sort (empty rows stay at bottom) · Ctrl+C/X/V copy/cut/paste · Ctrl+Z/Y undo/redo · Drag row/col headers to reorder · Type =formula for autocomplete
+        Click+drag to select · Drag right edge of column header to resize column · Drag bottom edge of row number to resize row · ▲▼ to sort · Ctrl+C/X/V · Ctrl+Z/Y · Drag headers to reorder
       </p>
     </div>
   );
