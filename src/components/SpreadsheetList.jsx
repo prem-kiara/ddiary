@@ -120,7 +120,7 @@ export default function SpreadsheetList({
             >
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
                 <Table2 size={20} style={{ color: 'var(--gold)', flexShrink: 0, marginTop: 2 }} />
-                <div style={{ flex: 1, minWidth: 0, paddingRight: 80 }}>
+                <div style={{ flex: 1, minWidth: 0, paddingRight: 100 }}>
                   <p style={{
                     margin: '0 0 4px', fontWeight: 600, fontSize: 15,
                     fontFamily: 'var(--font-heading)', color: 'var(--ink)',

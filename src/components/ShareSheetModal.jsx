@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { X, UserPlus, UserMinus, Users, Clock, Shield } from 'lucide-react';
 import { useSharedSheetLive, useSheetPendingInvites, inviteToSheet, rejectSheetInvite, removeSheetMember } from '../hooks/useSharedSheets';
 
@@ -45,6 +45,45 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
   const [inviting, setInviting] = useState(false);
   const [inviteMsg, setInviteMsg] = useState(null); // {type:'ok'|'err', text}
   const [removing, setRemoving] = useState(null); // uid being removed
+
+  // Autocomplete state
+  const [acSuggestions, setAcSuggestions] = useState([]);
+  const [acSearching, setAcSearching] = useState(false);
+  const [acOpen, setAcOpen] = useState(false);
+  const acRef = useRef();
+  const acTimer = useRef();
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handler = (e) => { if (acRef.current && !acRef.current.contains(e.target)) setAcOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleInviteEmailChange = (val) => {
+    setInviteEmail(val);
+    setInviteMsg(null);
+    setAcOpen(true);
+    if (acTimer.current) clearTimeout(acTimer.current);
+    if (!val || val.trim().length < 2) { setAcSuggestions([]); setAcSearching(false); return; }
+    setAcSearching(true);
+    acTimer.current = setTimeout(async () => {
+      try {
+        const { searchOrgPeople } = await import('../utils/graphPeopleSearch');
+        const results = await searchOrgPeople(val.trim());
+        // Filter out people already members
+        const existingEmails = new Set(members.map(m => m.email?.toLowerCase()));
+        setAcSuggestions(results.filter(r => !existingEmails.has(r.email?.toLowerCase())));
+      } catch { setAcSuggestions([]); }
+      setAcSearching(false);
+    }, 300);
+  };
+
+  const handleAcSelect = (person) => {
+    setInviteEmail(person.email || person.displayName || '');
+    setAcOpen(false);
+    setAcSuggestions([]);
+  };
 
   const { members, auditLog, loading } = useSharedSheetLive(sheetId);
   const pendingInvites = useSheetPendingInvites(sheetId);
@@ -199,18 +238,68 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
                     <UserPlus size={14} style={{ color: '#7c3aed' }} />
                     Invite by email
                   </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <input
-                      className="input"
-                      type="email"
-                      value={inviteEmail}
-                      onChange={e => { setInviteEmail(e.target.value); setInviteMsg(null); }}
-                      onKeyDown={e => e.key === 'Enter' && handleInvite()}
-                      placeholder="colleague@dhanam.finance"
-                      style={{ flex: 1, marginBottom: 0 }}
-                    />
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                    <div ref={acRef} style={{ flex: 1, position: 'relative' }}>
+                      <input
+                        className="input"
+                        type="email"
+                        value={inviteEmail}
+                        onChange={e => handleInviteEmailChange(e.target.value)}
+                        onFocus={() => inviteEmail.trim().length >= 2 && setAcOpen(true)}
+                        onKeyDown={e => e.key === 'Enter' && handleInvite()}
+                        placeholder="colleague@dhanam.finance"
+                        style={{ marginBottom: 0, width: '100%' }}
+                        autoComplete="off"
+                      />
+                      {acOpen && (acSuggestions.length > 0 || acSearching) && (
+                        <div style={{
+                          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+                          background: '#fff', border: '1px solid #cbd5e1', borderRadius: 8,
+                          boxShadow: '0 4px 16px rgba(0,0,0,0.12)', maxHeight: 220,
+                          overflowY: 'auto', marginTop: 2,
+                        }}>
+                          {acSearching && acSuggestions.length === 0 && (
+                            <div style={{ padding: '10px 14px', fontSize: 13, color: '#475569', textAlign: 'center' }}>
+                              Searching…
+                            </div>
+                          )}
+                          {acSuggestions.length > 0 && (
+                            <>
+                              <div style={{ padding: '5px 12px', fontSize: 11, fontWeight: 700,
+                                color: '#2a6cb8', background: '#e8f0fe',
+                                textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                                Organization
+                              </div>
+                              {acSuggestions.map(p => (
+                                <div
+                                  key={p.id || p.email}
+                                  onMouseDown={e => { e.preventDefault(); handleAcSelect(p); }}
+                                  style={{ padding: '9px 14px', cursor: 'pointer',
+                                    borderBottom: '1px solid #e2e8f0' }}
+                                  onMouseEnter={e => e.currentTarget.style.background = '#eff6ff'}
+                                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                >
+                                  <div style={{ fontWeight: 600, fontSize: 13, color: '#0f172a' }}>
+                                    {p.displayName}
+                                  </div>
+                                  {p.email && (
+                                    <div style={{ fontSize: 12, color: '#2a6cb8' }}>{p.email}</div>
+                                  )}
+                                  {p.jobTitle && (
+                                    <div style={{ fontSize: 11, color: '#475569', fontStyle: 'italic' }}>
+                                      {p.jobTitle}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
                     <button className="btn btn-gold btn-sm" onClick={handleInvite}
-                      disabled={inviting || !inviteEmail.trim()}>
+                      disabled={inviting || !inviteEmail.trim()}
+                      style={{ flexShrink: 0 }}>
                       {inviting ? '…' : 'Send Invite'}
                     </button>
                   </div>
