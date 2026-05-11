@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { X, UserPlus, UserMinus, Users, Clock, Shield } from 'lucide-react';
+import { X, UserPlus, UserMinus, Users, Clock, CheckCircle2 } from 'lucide-react';
 import { useSharedSheetLive, useSheetPendingInvites, inviteToSheet, rejectSheetInvite, removeSheetMember } from '../hooks/useSharedSheets';
 
 const ACTION_LABELS = {
@@ -39,31 +39,41 @@ function AuditDetail({ action, details }) {
   return null;
 }
 
+const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((e || '').trim());
+
 export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onClose }) {
   const [tab, setTab] = useState('members');
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviting, setInviting] = useState(false);
-  const [inviteMsg, setInviteMsg] = useState(null); // {type:'ok'|'err', text}
-  const [removing, setRemoving] = useState(null); // uid being removed
+  const [removing, setRemoving] = useState(null);
 
-  // Autocomplete state
+  // Multi-invite queue
+  const [inviteInput,   setInviteInput]   = useState('');
+  const [inviteQueue,   setInviteQueue]   = useState([]);   // [{ email, name }]
+  const [inviting,      setInviting]      = useState(false);
+  const [inviteResults, setInviteResults] = useState([]);   // [{ email, ok, msg }]
+
+  // Autocomplete
   const [acSuggestions, setAcSuggestions] = useState([]);
-  const [acSearching, setAcSearching] = useState(false);
-  const [acOpen, setAcOpen] = useState(false);
-  const acRef = useRef();
-  const acTimer = useRef();
+  const [acSearching,   setAcSearching]   = useState(false);
+  const [acOpen,        setAcOpen]        = useState(false);
+  const acWrapRef = useRef();
+  const acTimer   = useRef();
+  const inputRef  = useRef();
 
-  // Close dropdown when clicking outside
+  const { members, auditLog, loading } = useSharedSheetLive(sheetId);
+  const pendingInvites = useSheetPendingInvites(sheetId);
+  const isOwner = members.find(m => m.uid === currentUser?.uid)?.role === 'owner';
+
+  // Close dropdown on outside click
   useEffect(() => {
-    const handler = (e) => { if (acRef.current && !acRef.current.contains(e.target)) setAcOpen(false); };
+    const handler = (e) => {
+      if (acWrapRef.current && !acWrapRef.current.contains(e.target)) setAcOpen(false);
+    };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const handleInviteEmailChange = (val) => {
-    setInviteEmail(val);
-    setInviteMsg(null);
-    setAcOpen(true);
+  // Debounced org search
+  const searchOrg = (val) => {
     if (acTimer.current) clearTimeout(acTimer.current);
     if (!val || val.trim().length < 2) { setAcSuggestions([]); setAcSearching(false); return; }
     setAcSearching(true);
@@ -71,62 +81,99 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
       try {
         const { searchOrgPeople } = await import('../utils/graphPeopleSearch');
         const results = await searchOrgPeople(val.trim());
-        // Filter out people already members
-        const existingEmails = new Set(members.map(m => m.email?.toLowerCase()));
-        setAcSuggestions(results.filter(r => !existingEmails.has(r.email?.toLowerCase())));
+        const taken = new Set([
+          ...members.map(m => m.email?.toLowerCase()),
+          ...inviteQueue.map(q => q.email.toLowerCase()),
+        ]);
+        setAcSuggestions(results.filter(r => !taken.has(r.email?.toLowerCase())));
       } catch { setAcSuggestions([]); }
       setAcSearching(false);
     }, 300);
   };
 
-  const handleAcSelect = (person) => {
-    setInviteEmail(person.email || person.displayName || '');
-    setAcOpen(false);
-    setAcSuggestions([]);
+  const handleInputChange = (val) => {
+    setInviteInput(val);
+    setAcOpen(true);
+    setInviteResults([]);
+    searchOrg(val);
   };
 
-  const { members, auditLog, loading } = useSharedSheetLive(sheetId);
-  const pendingInvites = useSheetPendingInvites(sheetId);
+  const addToQueue = (email, name) => {
+    const e = (email || '').trim().toLowerCase();
+    if (!e) return;
+    if (inviteQueue.find(q => q.email.toLowerCase() === e)) return;
+    if (members.find(m => m.email?.toLowerCase() === e)) return;
+    setInviteQueue(q => [...q, { email: e, name: name || e }]);
+    setInviteInput('');
+    setAcSuggestions([]);
+    setAcOpen(false);
+    setInviteResults([]);
+    inputRef.current?.focus();
+  };
 
-  const isOwner = members.find(m => m.uid === currentUser?.uid)?.role === 'owner';
-
-  const handleInvite = async () => {
-    if (!inviteEmail.trim()) return;
-    setInviting(true);
-    setInviteMsg(null);
-    try {
-      await inviteToSheet(sheetId, sheetTitle, currentUser, inviteEmail.trim());
-      setInviteEmail('');
-      setInviteMsg({ type: 'ok', text: `Invite sent to ${inviteEmail.trim()}` });
-    } catch (err) {
-      setInviteMsg({ type: 'err', text: err.message || 'Failed to send invite' });
-    } finally {
-      setInviting(false);
+  const handleInputKeyDown = (e) => {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault();
+      if (inviteInput.trim() && isValidEmail(inviteInput)) addToQueue(inviteInput.trim());
     }
+    if (e.key === 'Backspace' && !inviteInput && inviteQueue.length > 0) {
+      setInviteQueue(q => q.slice(0, -1));
+    }
+    if (e.key === 'Escape') { setAcOpen(false); }
+  };
+
+  const removeFromQueue = (email) => setInviteQueue(q => q.filter(p => p.email !== email));
+
+  const handleSendAll = async (extraEmail) => {
+    const queue = extraEmail
+      ? [...inviteQueue, { email: extraEmail.trim().toLowerCase(), name: extraEmail.trim() }]
+      : inviteQueue;
+    if (queue.length === 0) return;
+    setInviting(true);
+    setInviteResults([]);
+    const results = await Promise.all(
+      queue.map(async ({ email }) => {
+        try {
+          await inviteToSheet(sheetId, sheetTitle, currentUser, email);
+          return { email, ok: true, msg: 'Invite sent' };
+        } catch (err) {
+          return { email, ok: false, msg: err.message || 'Failed' };
+        }
+      })
+    );
+    setInviteResults(results);
+    const failedEmails = new Set(results.filter(r => !r.ok).map(r => r.email));
+    setInviteQueue(queue.filter(q => failedEmails.has(q.email)));
+    setInviteInput('');
+    setInviting(false);
   };
 
   const handleRemove = async (uid) => {
     if (!window.confirm('Remove this person from the sheet?')) return;
     setRemoving(uid);
-    try {
-      await removeSheetMember(sheetId, uid, currentUser?.email);
-    } catch {}
+    try { await removeSheetMember(sheetId, uid, currentUser?.email); } catch {}
     setRemoving(null);
   };
 
+  const canSend = !inviting && (inviteQueue.length > 0 || (inviteInput.trim() && isValidEmail(inviteInput)));
+
   return (
     <div
-      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000,
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
         display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div style={{ background: '#fff', borderRadius: 16, width: '100%', maxWidth: 640,
-        maxHeight: '85vh', display: 'flex', flexDirection: 'column',
-        boxShadow: '0 24px 60px rgba(0,0,0,0.2)' }}>
+      {/* Modal shell — flex column, fixed height */}
+      <div style={{
+        background: '#fff', borderRadius: 18, width: '100%', maxWidth: 700,
+        height: '90vh', maxHeight: 860,
+        display: 'flex', flexDirection: 'column',
+        boxShadow: '0 28px 70px rgba(0,0,0,0.22)',
+      }}>
 
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 20px',
-          borderBottom: '1px solid var(--paper-line)' }}>
+        {/* ── Header ── (never scrolls) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12,
+          padding: '18px 24px', borderBottom: '1px solid var(--paper-line)', flexShrink: 0 }}>
           <Users size={18} style={{ color: '#7c3aed', flexShrink: 0 }} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--ink)' }}>Share Sheet</div>
@@ -138,13 +185,14 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
           <button onClick={onClose} className="btn-icon"><X size={16} /></button>
         </div>
 
-        {/* Tabs */}
-        <div style={{ display: 'flex', gap: 0, padding: '0 20px',
-          borderBottom: '1px solid var(--paper-line)' }}>
+        {/* ── Tabs ── (never scrolls) */}
+        <div style={{ display: 'flex', padding: '0 24px',
+          borderBottom: '1px solid var(--paper-line)', flexShrink: 0 }}>
           {['members', 'auditLog'].map(t => (
             <button key={t} onClick={() => setTab(t)}
-              style={{ padding: '10px 16px', border: 'none', background: 'none', cursor: 'pointer',
-                fontSize: 13, fontWeight: 600, color: tab === t ? '#7c3aed' : 'var(--ink-lighter)',
+              style={{ padding: '11px 16px', border: 'none', background: 'none', cursor: 'pointer',
+                fontSize: 13, fontWeight: 600,
+                color: tab === t ? '#7c3aed' : 'var(--ink-lighter)',
                 borderBottom: tab === t ? '2px solid #7c3aed' : '2px solid transparent',
                 transition: 'color 0.15s' }}>
               {t === 'members' ? `Members (${members.length})` : 'Audit Log'}
@@ -152,24 +200,192 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
           ))}
         </div>
 
-        {/* Body */}
-        <div style={{ flex: 1, overflow: 'auto', padding: '16px 20px' }}>
-          {loading ? (
+        {loading ? (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <p style={{ color: 'var(--ink-lighter)', fontSize: 13 }}>Loading…</p>
-          ) : tab === 'members' ? (
-            <div>
-              {/* Member list */}
+          </div>
+        ) : tab === 'members' ? (
+          <>
+            {/* ── Invite section — NOT inside scroll, so dropdown is never clipped ── */}
+            {isOwner && (
+              <div style={{
+                flexShrink: 0, padding: '18px 24px 0',
+                // overflow visible so absolute dropdown escapes
+              }}>
+                <div style={{ padding: 16, background: '#f8fafc',
+                  borderRadius: 12, border: '1px solid var(--paper-line)' }}>
+
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12,
+                    display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ink)' }}>
+                    <UserPlus size={14} style={{ color: '#7c3aed' }} />
+                    Invite people
+                  </div>
+
+                  {/* Tag chip input */}
+                  <div ref={acWrapRef} style={{ position: 'relative' }}>
+                    <div
+                      onClick={() => inputRef.current?.focus()}
+                      style={{
+                        display: 'flex', flexWrap: 'wrap', gap: 6, padding: '8px 10px',
+                        minHeight: 46, border: '1px solid #cbd5e1', borderRadius: 8,
+                        background: '#fff', cursor: 'text', alignItems: 'center',
+                        boxSizing: 'border-box',
+                      }}
+                    >
+                      {inviteQueue.map(p => (
+                        <span key={p.email} style={{
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                          padding: '4px 8px 4px 10px', borderRadius: 20,
+                          background: '#ede9fe', color: '#7c3aed',
+                          fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+                        }}>
+                          {p.name !== p.email ? p.name : p.email}
+                          <button
+                            onMouseDown={e => { e.preventDefault(); removeFromQueue(p.email); }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer',
+                              padding: 0, lineHeight: 1, color: '#7c3aed', opacity: 0.65,
+                              display: 'flex', alignItems: 'center' }}
+                          >
+                            <X size={11} />
+                          </button>
+                        </span>
+                      ))}
+                      <input
+                        ref={inputRef}
+                        value={inviteInput}
+                        onChange={e => handleInputChange(e.target.value)}
+                        onFocus={() => inviteInput.trim().length >= 2 && setAcOpen(true)}
+                        onKeyDown={handleInputKeyDown}
+                        placeholder={inviteQueue.length === 0
+                          ? 'Type name or email, press Enter to add…'
+                          : 'Add another…'}
+                        autoComplete="off"
+                        style={{ flex: 1, minWidth: 180, border: 'none', outline: 'none',
+                          fontSize: 13, background: 'transparent', padding: '2px 4px' }}
+                      />
+                    </div>
+
+                    {/* Dropdown — position: absolute, z-index high enough to float over modal content */}
+                    {acOpen && (acSuggestions.length > 0 || acSearching) && (
+                      <div style={{
+                        position: 'absolute', top: 'calc(100% + 3px)', left: 0, right: 0,
+                        zIndex: 9999,
+                        background: '#fff', border: '1px solid #cbd5e1', borderRadius: 10,
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.14)', maxHeight: 220, overflowY: 'auto',
+                      }}>
+                        {acSearching && acSuggestions.length === 0 && (
+                          <div style={{ padding: '12px 16px', fontSize: 13,
+                            color: '#64748b', textAlign: 'center' }}>
+                            Searching organisation…
+                          </div>
+                        )}
+                        {acSuggestions.length > 0 && (
+                          <>
+                            <div style={{ padding: '6px 14px', fontSize: 11, fontWeight: 700,
+                              color: '#2563eb', background: '#eff6ff',
+                              textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                              Organisation
+                            </div>
+                            {acSuggestions.map(p => (
+                              <div
+                                key={p.id || p.email}
+                                onMouseDown={e => { e.preventDefault(); addToQueue(p.email, p.displayName); }}
+                                style={{ padding: '10px 16px', cursor: 'pointer',
+                                  borderBottom: '1px solid #f1f5f9' }}
+                                onMouseEnter={e => e.currentTarget.style.background = '#eff6ff'}
+                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                              >
+                                <div style={{ fontWeight: 600, fontSize: 13, color: '#0f172a' }}>
+                                  {p.displayName}
+                                </div>
+                                {p.email && (
+                                  <div style={{ fontSize: 12, color: '#2563eb' }}>{p.email}</div>
+                                )}
+                                {p.jobTitle && (
+                                  <div style={{ fontSize: 11, color: '#64748b', fontStyle: 'italic' }}>
+                                    {p.jobTitle}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 6 }}>
+                    Press{' '}
+                    <kbd style={{ background: '#e2e8f0', padding: '1px 4px', borderRadius: 3,
+                      fontSize: 10, fontFamily: 'monospace' }}>Enter</kbd>
+                    {' '}or{' '}
+                    <kbd style={{ background: '#e2e8f0', padding: '1px 4px', borderRadius: 3,
+                      fontSize: 10, fontFamily: 'monospace' }}>,</kbd>
+                    {' '}to add each person, then click Send Invites.
+                  </div>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between',
+                    alignItems: 'center', marginTop: 14 }}>
+                    <span style={{ fontSize: 12, color: '#64748b' }}>
+                      {inviteQueue.length > 0
+                        ? `${inviteQueue.length} ${inviteQueue.length === 1 ? 'person' : 'people'} queued`
+                        : ''}
+                    </span>
+                    <button
+                      className="btn btn-gold"
+                      disabled={!canSend}
+                      onClick={() => {
+                        if (inviteInput.trim() && isValidEmail(inviteInput)) {
+                          handleSendAll(inviteInput.trim());
+                        } else {
+                          handleSendAll();
+                        }
+                      }}
+                      style={{ fontSize: 13, minWidth: 120 }}
+                    >
+                      {inviting
+                        ? 'Sending…'
+                        : inviteQueue.length > 1
+                          ? `Send ${inviteQueue.length} Invites`
+                          : 'Send Invite'}
+                    </button>
+                  </div>
+
+                  {/* Per-person results */}
+                  {inviteResults.length > 0 && (
+                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {inviteResults.map(r => (
+                        <div key={r.email} style={{ display: 'flex', alignItems: 'center', gap: 8,
+                          fontSize: 12, color: r.ok ? '#16a34a' : '#dc2626' }}>
+                          {r.ok ? <CheckCircle2 size={13} /> : <X size={13} />}
+                          <span style={{ fontWeight: 600 }}>{r.email}</span>
+                          <span>— {r.msg}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Scrollable: members + pending invites ── */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px 24px' }}>
+
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--ink-lighter)',
+                textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+                Current Members
+              </div>
+
               {members.length === 0 ? (
                 <p style={{ color: 'var(--ink-lighter)', fontSize: 13 }}>No members yet.</p>
               ) : members.map(m => (
                 <div key={m.uid} style={{ display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '10px 0', borderBottom: '1px solid var(--paper-line)' }}>
-                  {/* Avatar */}
-                  <div style={{ width: 36, height: 36, borderRadius: '50%',
+                  padding: '11px 0', borderBottom: '1px solid var(--paper-line)' }}>
+                  <div style={{ width: 38, height: 38, borderRadius: '50%', flexShrink: 0,
                     background: m.role === 'owner' ? '#7c3aed22' : '#06b6d422',
                     color: m.role === 'owner' ? '#7c3aed' : '#0891b2',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontWeight: 700, fontSize: 15, flexShrink: 0 }}>
+                    fontWeight: 700, fontSize: 15 }}>
                     {(m.name || m.email || '?')[0].toUpperCase()}
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -182,21 +398,15 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--ink-lighter)' }}>{m.email}</div>
                   </div>
-                  {/* Role badge */}
-                  <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+                  <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 10,
                     background: m.role === 'owner' ? '#ede9fe' : '#e0f2fe',
-                    color: m.role === 'owner' ? '#7c3aed' : '#0284c7' }}>
+                    color: m.role === 'owner' ? '#7c3aed' : '#0284c7', flexShrink: 0 }}>
                     {m.role === 'owner' ? '👑 Owner' : 'Editor'}
                   </span>
-                  {/* Remove button — owner can remove editors */}
                   {isOwner && m.uid !== currentUser?.uid && m.role !== 'owner' && (
-                    <button
-                      className="btn-icon"
-                      style={{ color: '#dc2626' }}
-                      title="Remove from sheet"
-                      disabled={removing === m.uid}
-                      onClick={() => handleRemove(m.uid)}
-                    >
+                    <button className="btn-icon" style={{ color: '#dc2626', flexShrink: 0 }}
+                      title="Remove from sheet" disabled={removing === m.uid}
+                      onClick={() => handleRemove(m.uid)}>
                       <UserMinus size={15} />
                     </button>
                   )}
@@ -205,21 +415,25 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
 
               {/* Pending invites */}
               {pendingInvites.length > 0 && (
-                <div style={{ marginTop: 16 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-lighter)',
-                    textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
-                    Pending Invites
+                <div style={{ marginTop: 22 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--ink-lighter)',
+                    textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+                    Pending Invites ({pendingInvites.length})
                   </div>
                   {pendingInvites.map(inv => (
                     <div key={inv.id} style={{ display: 'flex', alignItems: 'center', gap: 10,
-                      padding: '8px 0', borderBottom: '1px solid var(--paper-line)' }}>
+                      padding: '9px 0', borderBottom: '1px solid var(--paper-line)' }}>
                       <Clock size={14} style={{ color: '#d97706', flexShrink: 0 }} />
                       <span style={{ flex: 1, fontSize: 13, color: 'var(--ink)' }}>
                         {inv.inviteeEmail}
                       </span>
-                      <span style={{ fontSize: 11, color: '#d97706', fontWeight: 600 }}>Pending</span>
+                      <span style={{ fontSize: 11, color: '#d97706',
+                        fontWeight: 600, flexShrink: 0 }}>
+                        Pending
+                      </span>
                       {isOwner && (
-                        <button className="btn btn-sm btn-outline" style={{ fontSize: 11 }}
+                        <button className="btn btn-sm btn-outline"
+                          style={{ fontSize: 11, flexShrink: 0 }}
                           onClick={() => rejectSheetInvite(inv)}>
                           Revoke
                         </button>
@@ -228,141 +442,60 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
                   ))}
                 </div>
               )}
+            </div>
+          </>
 
-              {/* Invite input */}
-              {isOwner && (
-                <div style={{ marginTop: 20, padding: 16, background: '#f8fafc',
-                  borderRadius: 10, border: '1px solid var(--paper-line)' }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10,
-                    display: 'flex', alignItems: 'center', gap: 6, color: 'var(--ink)' }}>
-                    <UserPlus size={14} style={{ color: '#7c3aed' }} />
-                    Invite by email
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
-                    <div ref={acRef} style={{ flex: 1, position: 'relative' }}>
-                      <input
-                        className="input"
-                        type="email"
-                        value={inviteEmail}
-                        onChange={e => handleInviteEmailChange(e.target.value)}
-                        onFocus={() => inviteEmail.trim().length >= 2 && setAcOpen(true)}
-                        onKeyDown={e => e.key === 'Enter' && handleInvite()}
-                        placeholder="colleague@dhanam.finance"
-                        style={{ marginBottom: 0, width: '100%' }}
-                        autoComplete="off"
-                      />
-                      {acOpen && (acSuggestions.length > 0 || acSearching) && (
-                        <div style={{
-                          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
-                          background: '#fff', border: '1px solid #cbd5e1', borderRadius: 8,
-                          boxShadow: '0 4px 16px rgba(0,0,0,0.12)', maxHeight: 220,
-                          overflowY: 'auto', marginTop: 2,
-                        }}>
-                          {acSearching && acSuggestions.length === 0 && (
-                            <div style={{ padding: '10px 14px', fontSize: 13, color: '#475569', textAlign: 'center' }}>
-                              Searching…
-                            </div>
-                          )}
-                          {acSuggestions.length > 0 && (
-                            <>
-                              <div style={{ padding: '5px 12px', fontSize: 11, fontWeight: 700,
-                                color: '#2a6cb8', background: '#e8f0fe',
-                                textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                                Organization
-                              </div>
-                              {acSuggestions.map(p => (
-                                <div
-                                  key={p.id || p.email}
-                                  onMouseDown={e => { e.preventDefault(); handleAcSelect(p); }}
-                                  style={{ padding: '9px 14px', cursor: 'pointer',
-                                    borderBottom: '1px solid #e2e8f0' }}
-                                  onMouseEnter={e => e.currentTarget.style.background = '#eff6ff'}
-                                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                                >
-                                  <div style={{ fontWeight: 600, fontSize: 13, color: '#0f172a' }}>
-                                    {p.displayName}
-                                  </div>
-                                  {p.email && (
-                                    <div style={{ fontSize: 12, color: '#2a6cb8' }}>{p.email}</div>
-                                  )}
-                                  {p.jobTitle && (
-                                    <div style={{ fontSize: 11, color: '#475569', fontStyle: 'italic' }}>
-                                      {p.jobTitle}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    <button className="btn btn-gold btn-sm" onClick={handleInvite}
-                      disabled={inviting || !inviteEmail.trim()}
-                      style={{ flexShrink: 0 }}>
-                      {inviting ? '…' : 'Send Invite'}
-                    </button>
-                  </div>
-                  {inviteMsg && (
-                    <p style={{ marginTop: 8, fontSize: 12, margin: '8px 0 0',
-                      color: inviteMsg.type === 'ok' ? '#16a34a' : '#dc2626' }}>
-                      {inviteMsg.text}
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            /* Audit Log tab */
-            <div>
-              {auditLog.length === 0 ? (
-                <p style={{ color: 'var(--ink-lighter)', fontSize: 13 }}>No audit events yet.</p>
-              ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ background: 'var(--paper-dark)' }}>
-                      {['Timestamp', 'User', 'Action', 'Details'].map(h => (
-                        <th key={h} style={{ padding: '8px 10px', textAlign: 'left',
-                          fontWeight: 600, color: 'var(--ink-light)',
-                          borderBottom: '2px solid var(--paper-line)', whiteSpace: 'nowrap' }}>
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {auditLog.map(ev => (
-                      <tr key={ev.id} style={{ borderBottom: '1px solid var(--paper-line)' }}>
-                        <td style={{ padding: '8px 10px', color: 'var(--ink-lighter)', whiteSpace: 'nowrap' }}>
-                          {fmtTs(ev.timestamp)}
-                        </td>
-                        <td style={{ padding: '8px 10px', color: 'var(--ink)' }}>
-                          <div style={{ fontWeight: 600 }}>{ev.userName}</div>
-                          <div style={{ fontSize: 11, color: 'var(--ink-lighter)' }}>{ev.userEmail}</div>
-                        </td>
-                        <td style={{ padding: '8px 10px' }}>
-                          <span style={{ padding: '2px 7px', borderRadius: 6, fontSize: 11, fontWeight: 600,
-                            background: ev.action === 'cell_edit' ? '#f0fdf4' :
-                                        ev.action === 'sheet_opened' ? '#eff6ff' :
-                                        ev.action.includes('access') ? '#fefce8' : '#f5f3ff',
-                            color: ev.action === 'cell_edit' ? '#15803d' :
-                                   ev.action === 'sheet_opened' ? '#1d4ed8' :
-                                   ev.action.includes('access') ? '#a16207' : '#7c3aed' }}>
-                            {ACTION_LABELS[ev.action] || ev.action}
-                          </span>
-                        </td>
-                        <td style={{ padding: '8px 10px', color: 'var(--ink)', maxWidth: 200,
-                          overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          <AuditDetail action={ev.action} details={ev.details} />
-                        </td>
-                      </tr>
+        ) : (
+          /* ── Audit Log tab — fully scrollable ── */
+          <div style={{ flex: 1, overflowY: 'auto', padding: '18px 24px 24px' }}>
+            {auditLog.length === 0 ? (
+              <p style={{ color: 'var(--ink-lighter)', fontSize: 13 }}>No audit events yet.</p>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: 'var(--paper-dark)', position: 'sticky', top: 0 }}>
+                    {['Timestamp', 'User', 'Action', 'Details'].map(h => (
+                      <th key={h} style={{ padding: '9px 10px', textAlign: 'left',
+                        fontWeight: 600, color: 'var(--ink-light)',
+                        borderBottom: '2px solid var(--paper-line)', whiteSpace: 'nowrap' }}>
+                        {h}
+                      </th>
                     ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )}
-        </div>
+                  </tr>
+                </thead>
+                <tbody>
+                  {auditLog.map(ev => (
+                    <tr key={ev.id} style={{ borderBottom: '1px solid var(--paper-line)' }}>
+                      <td style={{ padding: '8px 10px', color: 'var(--ink-lighter)', whiteSpace: 'nowrap' }}>
+                        {fmtTs(ev.timestamp)}
+                      </td>
+                      <td style={{ padding: '8px 10px', color: 'var(--ink)' }}>
+                        <div style={{ fontWeight: 600 }}>{ev.userName}</div>
+                        <div style={{ fontSize: 11, color: 'var(--ink-lighter)' }}>{ev.userEmail}</div>
+                      </td>
+                      <td style={{ padding: '8px 10px' }}>
+                        <span style={{ padding: '2px 7px', borderRadius: 6,
+                          fontSize: 11, fontWeight: 600,
+                          background: ev.action === 'cell_edit'    ? '#f0fdf4' :
+                                      ev.action === 'sheet_opened' ? '#eff6ff' :
+                                      ev.action.includes('access') ? '#fefce8' : '#f5f3ff',
+                          color:      ev.action === 'cell_edit'    ? '#15803d' :
+                                      ev.action === 'sheet_opened' ? '#1d4ed8' :
+                                      ev.action.includes('access') ? '#a16207' : '#7c3aed' }}>
+                          {ACTION_LABELS[ev.action] || ev.action}
+                        </span>
+                      </td>
+                      <td style={{ padding: '8px 10px', color: 'var(--ink)', maxWidth: 200,
+                        overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        <AuditDetail action={ev.action} details={ev.details} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
