@@ -91,27 +91,48 @@ export async function inviteToSheet(sheetId, sheetTitle, inviter, inviteeEmail) 
   return docRef; // returns the DocumentReference for the invite
 }
 
-// Accept a pending sheet invite
+// Accept a pending sheet invite — two-phase commit
+//
+// WHY TWO PHASES:
+// Firestore evaluates every write in a batch against the PRE-BATCH database
+// state.  isSharedMember() (in rules) checks whether the user's member doc
+// exists.  If we create that doc and update memberUids in the SAME batch,
+// isSharedMember() is still false when the memberUids write is evaluated —
+// the doc creation hasn't landed yet from the rules engine's point of view.
+//
+// Phase 1 — writes that are allowed WITHOUT being a member yet:
+//   • member doc   (members subcollection: create if authenticated)
+//   • invite update (sheetInvites: inviteeEmail == auth.token.email)
+//
+// Phase 2 — runs AFTER phase 1 commits, so the member doc exists.
+//   isSharedMember() now returns true → memberUids update + audit log pass.
 export async function acceptSheetInvite(invite, user) {
-  const batch = writeBatch(db);
-  // Add to members
+  // ── Phase 1 ──────────────────────────────────────────────────────────────
+  const phase1 = writeBatch(db);
+
   const memberRef = doc(db, 'sharedSheets', invite.sheetId, 'members', user.uid);
-  batch.set(memberRef, {
+  phase1.set(memberRef, {
     uid:      user.uid,
     email:    user.email,
     name:     user.displayName || user.email,
     role:     invite.role || 'editor',
     joinedAt: serverTimestamp(),
   });
-  // Add uid to memberUids array
-  batch.update(doc(db, 'sharedSheets', invite.sheetId), {
+
+  phase1.update(doc(db, 'sheetInvites', invite.id), { status: 'accepted' });
+
+  await phase1.commit(); // member doc is now in Firestore
+
+  // ── Phase 2 ──────────────────────────────────────────────────────────────
+  // isSharedMember() checks exists(.../members/{uid}) — true after phase 1.
+  const phase2 = writeBatch(db);
+
+  phase2.update(doc(db, 'sharedSheets', invite.sheetId), {
     memberUids: arrayUnion(user.uid),
   });
-  // Mark invite accepted
-  batch.update(doc(db, 'sheetInvites', invite.id), { status: 'accepted' });
-  // Audit log
+
   const auditRef = doc(collection(db, 'sharedSheets', invite.sheetId, 'auditLog'));
-  batch.set(auditRef, {
+  phase2.set(auditRef, {
     action:    'access_granted',
     userId:    user.uid,
     userEmail: user.email,
@@ -119,7 +140,8 @@ export async function acceptSheetInvite(invite, user) {
     timestamp: serverTimestamp(),
     details:   { grantedTo: user.email, grantedBy: invite.inviterEmail },
   });
-  await batch.commit();
+
+  await phase2.commit();
 }
 
 // Decline / revoke an invite
