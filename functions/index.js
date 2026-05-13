@@ -6,31 +6,183 @@
  *
  * SETUP:
  * 1. Get a free SendGrid API key at https://sendgrid.com
- * 2. Set it:  firebase functions:config:set sendgrid.key="YOUR_SENDGRID_API_KEY"
- * 3. Set sender email: firebase functions:config:set sendgrid.from="your-verified@email.com"
+ * 2. Store the key as a Cloud Secret:
+ *      firebase functions:secrets:set SENDGRID_API_KEY
+ *      (paste the key when prompted — stored encrypted in Secret Manager)
+ * 3. Sender address lives in functions/.env (already set to noreply@dhanam.finance)
  * 4. Deploy: firebase deploy --only functions
  */
 
 const functions = require('firebase-functions');
+const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
+
+// ── Secrets (stored in Cloud Secret Manager, not in source) ──────────────────
+// Set once with: firebase functions:secrets:set SENDGRID_API_KEY
+const sendgridApiKey = defineSecret('SENDGRID_API_KEY');
 
 admin.initializeApp();
 
 const db = admin.firestore();
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 📊 SHEET ROW REMINDERS — Runs every hour (UTC).
+// Queries sheetRowReminders collection, fires emails for reminders whose
+// sendAtTime (IST) falls within the current hour, respecting a 23h cooldown.
+// Uses SendGrid — completely server-side, no user session required.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+const REMINDER_COOLDOWN_MS = 23 * 60 * 60 * 1000; // 23 h
+
+exports.sendSheetRowReminders = functions
+  .runWith({ secrets: ['SENDGRID_API_KEY'] })
+  .pubsub
+  .schedule('0 * * * *')   // every hour on the hour (UTC)
+  .timeZone('UTC')
+  .onRun(async () => {
+    try {
+      const sgMail = require('@sendgrid/mail');
+      sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+      const fromEmail = process.env.SENDGRID_FROM || 'noreply@dhanam.finance';
+
+      const snap = await db.collection('sheetRowReminders')
+        .where('active', '==', true)
+        .get();
+
+      if (snap.empty) { console.log('[sheetRowReminders] no active reminders'); return null; }
+
+      // Current time in IST (UTC+5:30) — all users are assumed IST
+      const nowUtc = new Date();
+      const nowIST = new Date(nowUtc.toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+      const nowTotalMins = nowIST.getHours() * 60 + nowIST.getMinutes();
+
+      const cutoff = new Date(Date.now() - REMINDER_COOLDOWN_MS);
+      let sent = 0;
+
+      for (const d of snap.docs) {
+        const rem = d.data();
+
+        // 23-hour cooldown
+        const lastSent = rem.lastSentAt?.toDate?.() ?? null;
+        if (lastSent && lastSent > cutoff) continue;
+
+        // Delivery-time window: only fire if current IST time is within 30 min of sendAtTime
+        if (rem.sendAtTime) {
+          const [hh, mm] = rem.sendAtTime.split(':').map(Number);
+          if (!isNaN(hh) && !isNaN(mm)) {
+            const targetMins = hh * 60 + mm;
+            const diff = Math.min(
+              Math.abs(nowTotalMins - targetMins),
+              1440 - Math.abs(nowTotalMins - targetMins),
+            );
+            if (diff > 30) continue; // outside delivery window
+          }
+        }
+
+        // Atomically claim this send slot (prevents double-send if function retries)
+        let shouldSend = false;
+        try {
+          await db.runTransaction(async (tx) => {
+            const fresh = await tx.get(d.ref);
+            if (!fresh.exists) return;
+            const fd = fresh.data();
+            if (!fd.active) return;
+            const freshLast = fd.lastSentAt?.toDate?.() ?? null;
+            if (freshLast && freshLast > cutoff) return;
+            tx.update(d.ref, { lastSentAt: admin.firestore.FieldValue.serverTimestamp() });
+            shouldSend = true;
+          });
+        } catch (txErr) {
+          console.warn('[sheetRowReminders] transaction failed:', txErr.message);
+          continue;
+        }
+
+        if (!shouldSend) continue;
+
+        // Build recipient list
+        const toEmails = Array.isArray(rem.notifyEmails) && rem.notifyEmails.length
+          ? rem.notifyEmails
+          : (rem.createdByEmail ? [rem.createdByEmail] : []);
+
+        if (!toEmails.length) continue;
+
+        const rowLabel   = `Row ${(rem.rowIndex ?? 0) + 1}`;
+        const sheetTitle = rem.sheetTitle || 'Untitled Sheet';
+        const dateStr    = nowIST.toLocaleDateString('en-IN', {
+          weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+        });
+
+        // Build row data table rows
+        const rowDataEntries = Object.entries(rem.rowData || {})
+          .filter(([, v]) => String(v ?? '').trim())
+          .map(([col, val]) => `
+            <tr>
+              <td style="padding:6px 12px;font-weight:600;color:#7c3aed;background:#f5f3ff;border:1px solid #e2e8f0;white-space:nowrap">${col}</td>
+              <td style="padding:6px 12px;color:#1e293b;border:1px solid #e2e8f0">${String(val)}</td>
+            </tr>`).join('');
+
+        const htmlBody = `
+          <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;background:#f8fafc;padding:32px;border-radius:12px;">
+            <div style="background:#7c3aed;padding:20px 24px;border-radius:10px 10px 0 0;margin-bottom:0">
+              <h1 style="margin:0;color:#fff;font-size:20px;font-weight:700">🔔 Daily Row Reminder</h1>
+              <p style="margin:4px 0 0;color:#ddd6fe;font-size:13px">${dateStr}</p>
+            </div>
+            <div style="background:#fff;padding:24px;border:1px solid #e2e8f0;border-top:none;border-radius:0 0 10px 10px">
+              <p style="margin:0 0 16px;color:#334155;font-size:15px">
+                Reminder for <strong>${rowLabel}</strong> in sheet <strong>${sheetTitle}</strong>:
+              </p>
+              ${rowDataEntries ? `
+              <table style="border-collapse:collapse;width:100%;margin-bottom:16px;font-size:14px">
+                ${rowDataEntries}
+              </table>` : ''}
+              ${rem.assigneeName ? `<p style="margin:0 0 8px;font-size:14px;color:#475569">
+                <strong>Assigned to:</strong> ${rem.assigneeName}
+              </p>` : ''}
+              ${rem.remarks ? `<div style="background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:12px 14px;margin-top:12px;font-size:14px;color:#713f12">
+                <strong>Remarks:</strong> ${rem.remarks}
+              </div>` : ''}
+              <p style="margin:20px 0 0;font-size:12px;color:#94a3b8;text-align:center">
+                This is an automated daily reminder from Dhanam Diary.
+                To stop, open the sheet and click the 🔔 bell icon for this row.
+              </p>
+            </div>
+          </div>`;
+
+        try {
+          await sgMail.send({
+            to:      toEmails,
+            from:    fromEmail,
+            subject: `🔔 Reminder: ${sheetTitle} — ${rowLabel}${rem.assigneeName ? ` (${rem.assigneeName})` : ''}`,
+            html:    htmlBody,
+          });
+          sent++;
+          console.log(`[sheetRowReminders] sent reminder ${d.id} to ${toEmails.join(', ')}`);
+        } catch (emailErr) {
+          console.error('[sheetRowReminders] email failed for', d.id, emailErr.message);
+        }
+      }
+
+      console.log(`[sheetRowReminders] done — ${sent} email(s) sent`);
+      return null;
+    } catch (err) {
+      console.error('[sheetRowReminders] fatal error:', err);
+      return null;
+    }
+  });
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 📧 HOURLY CHECK — Respects each user's saved timezone + reminder time.
 // Runs every hour; skips users whose local hour doesn't match their setting.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-exports.sendDailyReminders = functions.pubsub
+exports.sendDailyReminders = functions
+  .runWith({ secrets: ['SENDGRID_API_KEY'] })
+  .pubsub
   .schedule('0 * * * *') // Every hour on the hour (UTC)
   .timeZone('UTC')
   .onRun(async (context) => {
     try {
       const sgMail = require('@sendgrid/mail');
-      const config = functions.config();
-      sgMail.setApiKey(config.sendgrid.key);
-      const fromEmail = config.sendgrid.from;
+      sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+      const fromEmail = process.env.SENDGRID_FROM || 'noreply@dhanam.finance';
 
       const nowUtc = new Date();
 
@@ -101,7 +253,7 @@ exports.sendDailyReminders = functions.pubsub
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const RATE_LIMIT_MS = 60 * 60 * 1000; // 1 hour
 
-exports.sendReminderNow = functions.https.onCall(async (data, context) => {
+exports.sendReminderNow = functions.runWith({ secrets: ['SENDGRID_API_KEY'] }).https.onCall(async (data, context) => {
   if (!context.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   }
@@ -147,12 +299,11 @@ exports.sendReminderNow = functions.https.onCall(async (data, context) => {
 
   try {
     const sgMail = require('@sendgrid/mail');
-    const config = functions.config();
-    sgMail.setApiKey(config.sendgrid.key);
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
     await sgMail.send({
       to: email,
-      from: config.sendgrid.from,
+      from: process.env.SENDGRID_FROM || 'noreply@dhanam.finance',
       subject: `📖 Diary Reminder: ${tasks.length} pending task${tasks.length > 1 ? 's' : ''}`,
       text: buildReminderText(overdue, upcoming),
       html: buildReminderEmail(userData?.displayName || 'there', overdue, upcoming),
@@ -171,15 +322,14 @@ exports.sendReminderNow = functions.https.onCall(async (data, context) => {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 📝 NEW USER WELCOME EMAIL
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-exports.onNewUser = functions.auth.user().onCreate(async (user) => {
+exports.onNewUser = functions.runWith({ secrets: ['SENDGRID_API_KEY'] }).auth.user().onCreate(async (user) => {
   try {
     const sgMail = require('@sendgrid/mail');
-    const config = functions.config();
-    sgMail.setApiKey(config.sendgrid.key);
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
     await sgMail.send({
       to: user.email,
-      from: config.sendgrid.from,
+      from: process.env.SENDGRID_FROM || 'noreply@dhanam.finance',
       subject: '📖 Welcome to Your Digital Diary!',
       html: `
         <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; background: #fef9ef; padding: 32px; border-radius: 12px;">
@@ -224,8 +374,7 @@ exports.runDataMigration = functions.https.onCall(async (data, context) => {
     throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
   }
 
-  const config = functions.config();
-  const allowedUid = config.migration?.admin_uid;
+  const allowedUid = process.env.MIGRATION_ADMIN_UID || null;
   if (allowedUid && context.auth.uid !== allowedUid) {
     throw new functions.https.HttpsError('permission-denied', 'Not authorised to run migrations');
   }

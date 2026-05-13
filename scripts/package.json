@@ -1,0 +1,11 @@
+{
+  "name": "ddiary-scripts",
+  "version": "1.0.0",
+  "description": "Server-side scripts for Dhanam Diary — run via GitHub Actions",
+  "main": "sendSheetRowReminders.js",
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "firebase-admin": "^12.0.0",
+    "@sendgrid/mail": "^8.1.0"
+  }
+}

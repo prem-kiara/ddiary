@@ -23,7 +23,7 @@ import { doc, onSnapshot, collection as fsCollection } from 'firebase/firestore'
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { saveSharedSheet, logSheetOpen } from '../hooks/useSharedSheets';
-import { checkAndFireReminders, useSheetRowReminders } from '../utils/sheetReminders';
+import { useSheetRowReminders } from '../utils/sheetReminders';
 import RowReminderModal from './RowReminderModal';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -249,13 +249,6 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
     );
     return unsub;
   }, [isShared, sharedSheetId]); // eslint-disable-line
-
-  // Fire due row reminders when this sheet is opened
-  useEffect(() => {
-    if (!user) return;
-    const sid = sharedSheetId || sheetId;
-    checkAndFireReminders(sid, user).catch(() => {});
-  }, [sheetId, sharedSheetId]); // eslint-disable-line
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const selectedKey  = ck(sel.c, sel.r);
