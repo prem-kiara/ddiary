@@ -36,6 +36,8 @@ export default function SpreadsheetList({
 
   const [newTitle,     setNewTitle]     = useState('');
   const [creating,     setCreating]     = useState(false);
+  const [myOpen,       setMyOpen]       = useState(true);
+  const [sharedOpen,   setSharedOpen]   = useState(true);
   const [archiveOpen,  setArchiveOpen]  = useState(false);
   const [trashOpen,    setTrashOpen]    = useState(false);
   const [sharingSheet, setSharingSheet] = useState(null); // { id, title }
@@ -100,100 +102,133 @@ export default function SpreadsheetList({
         </div>
       </div>
 
-      {/* ── Active sheets ── */}
-      {loading ? (
-        <div className="empty-state fade-in"><p>Loading sheets…</p></div>
-      ) : sheets.length === 0 ? (
-        <div className="card empty-state">
-          <Table2 size={36} className="text-violet-400" />
-          <p>No sheets yet.</p>
-          <p className="text-sm mt-1 text-slate-500">Create your first sheet above.</p>
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14 }}>
-          {sheets.map(sheet => (
-            <div
-              key={sheet.id}
-              className="card"
-              style={{ cursor: 'pointer', padding: '16px 18px', position: 'relative' }}
-              onClick={() => onOpen(sheet)}
-            >
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                <Table2 size={20} style={{ color: 'var(--gold)', flexShrink: 0, marginTop: 2 }} />
-                <div style={{ flex: 1, minWidth: 0, paddingRight: 100 }}>
-                  <p style={{
-                    margin: '0 0 4px', fontWeight: 600, fontSize: 15,
-                    fontFamily: 'var(--font-heading)', color: 'var(--ink)',
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                  }}>
-                    {sheet.title || 'Untitled Sheet'}
-                  </p>
-                  <p style={{ margin: 0, fontSize: 12, color: 'var(--ink-lighter)', fontFamily: 'var(--font-body)' }}>
-                    Updated {formatDate(sheet.updatedAt)}
-                  </p>
-                  {sheet.isShared && (
-                    <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 8,
-                      background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0',
-                      display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 4 }}>
-                      <Users size={9} /> Shared
-                    </span>
-                  )}
+      {/* ── My Sheets section (collapsible) ── */}
+      <div style={{ marginBottom: 8 }}>
+        <button
+          onClick={() => setMyOpen(o => !o)}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+            background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0 10px',
+            textAlign: 'left' }}
+        >
+          <Table2 size={14} style={{ color: 'var(--gold)', flexShrink: 0 }} />
+          <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: 'var(--ink-light)',
+            textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            My Sheets ({sheets.length})
+          </span>
+          <span style={{ color: 'var(--ink-lighter)' }}>
+            {myOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          </span>
+        </button>
+
+        {myOpen && (loading ? (
+          <div className="empty-state fade-in"><p>Loading sheets…</p></div>
+        ) : sheets.length === 0 ? (
+          <div className="card empty-state">
+            <Table2 size={36} className="text-violet-400" />
+            <p>No sheets yet.</p>
+            <p className="text-sm mt-1 text-slate-500">Create your first sheet above.</p>
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14 }}>
+            {sheets.map(sheet => (
+              <div
+                key={sheet.id}
+                className="card"
+                style={{ cursor: 'pointer', padding: '16px 18px', position: 'relative' }}
+                onClick={() => onOpen(sheet)}
+              >
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <Table2 size={20} style={{ color: 'var(--gold)', flexShrink: 0, marginTop: 2 }} />
+                  <div style={{ flex: 1, minWidth: 0, paddingRight: 100 }}>
+                    <p style={{
+                      margin: '0 0 4px', fontWeight: 600, fontSize: 15,
+                      fontFamily: 'var(--font-heading)', color: 'var(--ink)',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }}>
+                      {sheet.title || 'Untitled Sheet'}
+                    </p>
+                    <p style={{ margin: 0, fontSize: 12, color: 'var(--ink-lighter)', fontFamily: 'var(--font-body)' }}>
+                      Updated {formatDate(sheet.updatedAt)}
+                    </p>
+                    {sheet.isShared && (
+                      <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 8,
+                        background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0',
+                        display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 4 }}>
+                        <Users size={9} /> Shared
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Share + Archive + Trash buttons */}
+                <div style={{ position: 'absolute', top: 10, right: 10, display: 'flex', gap: 4 }}>
+                  <button
+                    className="btn-icon"
+                    title={sheet.isShared ? 'Manage sharing' : 'Share this sheet'}
+                    disabled={sharingBusy === sheet.id}
+                    onClick={e => handleShare(e, sheet)}
+                    style={{ color: sheet.isShared ? '#16a34a' : undefined }}
+                  >
+                    {sharingBusy === sheet.id
+                      ? <span style={{ fontSize: 11 }}>…</span>
+                      : <Share2 size={14} />
+                    }
+                  </button>
+                  <button
+                    className="btn-icon"
+                    title="Archive this sheet"
+                    onClick={e => {
+                      e.stopPropagation();
+                      if (window.confirm('Archive this sheet? You can restore it from the Archived section below.')) {
+                        onArchive(sheet.id);
+                      }
+                    }}
+                  >
+                    <Archive size={14} />
+                  </button>
+                  <button
+                    className="btn-icon"
+                    title="Move to trash"
+                    onClick={e => {
+                      e.stopPropagation();
+                      if (window.confirm(`Move "${sheet.title || 'Untitled Sheet'}" to trash?`)) {
+                        onTrash(sheet.id);
+                      }
+                    }}
+                  >
+                    <Trash2 size={14} style={{ color: '#dc2626' }} />
+                  </button>
                 </div>
               </div>
-
-              {/* Share + Archive + Trash buttons */}
-              <div style={{ position: 'absolute', top: 10, right: 10, display: 'flex', gap: 4 }}>
-                <button
-                  className="btn-icon"
-                  title={sheet.isShared ? 'Manage sharing' : 'Share this sheet'}
-                  disabled={sharingBusy === sheet.id}
-                  onClick={e => handleShare(e, sheet)}
-                  style={{ color: sheet.isShared ? '#16a34a' : undefined }}
-                >
-                  {sharingBusy === sheet.id
-                    ? <span style={{ fontSize: 11 }}>…</span>
-                    : <Share2 size={14} />
-                  }
-                </button>
-                <button
-                  className="btn-icon"
-                  title="Archive this sheet"
-                  onClick={e => {
-                    e.stopPropagation();
-                    if (window.confirm('Archive this sheet? You can restore it from the Archived section below.')) {
-                      onArchive(sheet.id);
-                    }
-                  }}
-                >
-                  <Archive size={14} />
-                </button>
-                <button
-                  className="btn-icon"
-                  title="Move to trash"
-                  onClick={e => {
-                    e.stopPropagation();
-                    if (window.confirm(`Move "${sheet.title || 'Untitled Sheet'}" to trash?`)) {
-                      onTrash(sheet.id);
-                    }
-                  }}
-                >
-                  <Trash2 size={14} style={{ color: '#dc2626' }} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* ── Shared with me ── */}
-      {sharedWithMe.length > 0 && (
-        <div className="mt-8">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <Users size={15} style={{ color: '#0891b2' }} />
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-light)' }}>
-              Shared with me ({sharedWithMe.length})
-            </span>
+            ))}
           </div>
+        ))}
+      </div>
+
+      {/* ── Shared with me section (collapsible) ── */}
+      <div style={{ marginTop: 24 }}>
+        <button
+          onClick={() => setSharedOpen(o => !o)}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+            background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0 10px',
+            textAlign: 'left' }}
+        >
+          <Users size={14} style={{ color: '#0891b2', flexShrink: 0 }} />
+          <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: 'var(--ink-light)',
+            textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Shared with me ({sharedWithMe.length})
+          </span>
+          <span style={{ color: 'var(--ink-lighter)' }}>
+            {sharedOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          </span>
+        </button>
+
+        {sharedOpen && (sharedWithMe.length === 0 ? (
+          <div style={{ padding: '12px 0', color: 'var(--ink-lighter)', fontSize: 13,
+            fontStyle: 'italic' }}>
+            No sheets shared with you yet.
+          </div>
+        ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14 }}>
             {sharedWithMe.map(s => (
               <div
@@ -224,8 +259,8 @@ export default function SpreadsheetList({
               </div>
             ))}
           </div>
-        </div>
-      )}
+        ))}
+      </div>
 
       {/* ── Archived Sheets ── */}
       {archivedSheets.length > 0 && (

@@ -149,6 +149,16 @@ export async function rejectSheetInvite(invite) {
   await updateDoc(doc(db, 'sheetInvites', invite.id), { status: 'rejected' });
 }
 
+// Sync a member's UID into the memberUids array — fixes stuck members where
+// Phase 1 (member doc creation) succeeded but Phase 2 (memberUids update) was
+// blocked by old Firestore rules. Owner can call this from the Share modal to
+// grant access without requiring a re-invite.
+export async function syncMemberAccess(sheetId, memberUid) {
+  await updateDoc(doc(db, 'sharedSheets', sheetId), {
+    memberUids: arrayUnion(memberUid),
+  });
+}
+
 // Remove a member from a shared sheet
 export async function removeSheetMember(sheetId, memberUid, removedByEmail) {
   const memberSnap = await getDoc(doc(db, 'sharedSheets', sheetId, 'members', memberUid)).catch(() => null);

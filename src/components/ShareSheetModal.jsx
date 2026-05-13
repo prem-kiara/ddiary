@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { X, UserPlus, UserMinus, Users, Clock, CheckCircle2 } from 'lucide-react';
-import { useSharedSheetLive, useSheetPendingInvites, inviteToSheet, rejectSheetInvite, removeSheetMember } from '../hooks/useSharedSheets';
+import { useSharedSheetLive, useSheetPendingInvites, inviteToSheet, rejectSheetInvite, removeSheetMember, syncMemberAccess } from '../hooks/useSharedSheets';
 
 const ACTION_LABELS = {
   cell_edit:         'Cell Edit',
@@ -44,6 +44,7 @@ const isValidEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((e || '').trim());
 export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onClose }) {
   const [tab, setTab] = useState('members');
   const [removing, setRemoving] = useState(null);
+  const [syncing,  setSyncing]  = useState(null); // uid being synced
 
   // Multi-invite queue
   const [inviteInput,   setInviteInput]   = useState('');
@@ -59,7 +60,7 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
   const acTimer   = useRef();
   const inputRef  = useRef();
 
-  const { members, auditLog, loading } = useSharedSheetLive(sheetId);
+  const { sheet, members, auditLog, loading } = useSharedSheetLive(sheetId);
   const pendingInvites = useSheetPendingInvites(sheetId);
   const isOwner = members.find(m => m.uid === currentUser?.uid)?.role === 'owner';
 
@@ -153,6 +154,12 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
     setRemoving(uid);
     try { await removeSheetMember(sheetId, uid, currentUser?.email); } catch {}
     setRemoving(null);
+  };
+
+  const handleSync = async (uid) => {
+    setSyncing(uid);
+    try { await syncMemberAccess(sheetId, uid); } catch {}
+    setSyncing(null);
   };
 
   const canSend = !inviting && (inviteQueue.length > 0 || (inviteInput.trim() && isValidEmail(inviteInput)));
@@ -378,7 +385,11 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
 
               {members.length === 0 ? (
                 <p style={{ color: 'var(--ink-lighter)', fontSize: 13 }}>No members yet.</p>
-              ) : members.map(m => (
+              ) : members.map(m => {
+                // Stuck = member doc exists but UID not yet in memberUids array
+                // (happens when Phase 2 of acceptSheetInvite was blocked by old rules)
+                const isStuck = sheet?.memberUids && !sheet.memberUids.includes(m.uid);
+                return (
                 <div key={m.uid} style={{ display: 'flex', alignItems: 'center', gap: 12,
                   padding: '11px 0', borderBottom: '1px solid var(--paper-line)' }}>
                   <div style={{ width: 38, height: 38, borderRadius: '50%', flexShrink: 0,
@@ -390,10 +401,17 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
                   </div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)',
-                      display: 'flex', alignItems: 'center', gap: 6 }}>
+                      display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       {m.name || m.email}
                       {m.uid === currentUser?.uid && (
                         <span style={{ fontSize: 11, color: 'var(--ink-lighter)' }}>(You)</span>
+                      )}
+                      {isStuck && (
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: '1px 6px',
+                          borderRadius: 6, background: '#fef3c7', color: '#d97706',
+                          border: '1px solid #fde68a' }}>
+                          ⚠ No access yet
+                        </span>
                       )}
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--ink-lighter)' }}>{m.email}</div>
@@ -403,6 +421,19 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
                     color: m.role === 'owner' ? '#7c3aed' : '#0284c7', flexShrink: 0 }}>
                     {m.role === 'owner' ? '👑 Owner' : 'Editor'}
                   </span>
+                  {isOwner && isStuck && (
+                    <button
+                      className="btn btn-sm"
+                      style={{ fontSize: 11, flexShrink: 0, background: '#16a34a', color: '#fff',
+                        border: 'none', borderRadius: 6, padding: '4px 10px', cursor: 'pointer',
+                        opacity: syncing === m.uid ? 0.7 : 1 }}
+                      title="Grant access — syncs this member so they can see the sheet"
+                      disabled={syncing === m.uid}
+                      onClick={() => handleSync(m.uid)}
+                    >
+                      {syncing === m.uid ? '…' : 'Fix Access'}
+                    </button>
+                  )}
                   {isOwner && m.uid !== currentUser?.uid && m.role !== 'owner' && (
                     <button className="btn-icon" style={{ color: '#dc2626', flexShrink: 0 }}
                       title="Remove from sheet" disabled={removing === m.uid}
@@ -411,7 +442,8 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
                     </button>
                   )}
                 </div>
-              ))}
+                );
+              })}
 
               {/* Pending invites */}
               {pendingInvites.length > 0 && (
