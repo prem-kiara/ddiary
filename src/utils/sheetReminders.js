@@ -26,6 +26,7 @@ export async function createRowReminder({
   assigneeEmail, assigneeName,
   remarks,
   notifyEmails,
+  sendAtTime,       // "HH:MM" local time, e.g. "09:00" — null = fire any time sheet opens
   createdBy, createdByEmail,
 }) {
   return addDoc(collection(db, COLLECTION), {
@@ -39,6 +40,7 @@ export async function createRowReminder({
     assigneeName:   assigneeName   || '',
     remarks:        remarks        || '',
     notifyEmails:   notifyEmails   || [],
+    sendAtTime:     sendAtTime     || null,
     active:         true,
     frequency:      'daily',
     createdBy,
@@ -85,7 +87,24 @@ export async function checkAndFireReminders(sheetId, user) {
     for (const d of snap.docs) {
       const rem = d.data();
       const lastSent = rem.lastSentAt?.toDate?.() ?? null;
-      if (lastSent && lastSent > cutoff) continue; // still fresh
+      if (lastSent && lastSent > cutoff) continue; // still within 23h cooldown
+
+      // If a delivery time is set, only fire within a 30-min window around that time.
+      // This turns the on-open trigger into an approximate scheduled delivery.
+      if (rem.sendAtTime) {
+        const [hh, mm] = rem.sendAtTime.split(':').map(Number);
+        if (!isNaN(hh) && !isNaN(mm)) {
+          const now         = new Date();
+          const nowMins     = now.getHours() * 60 + now.getMinutes();
+          const targetMins  = hh * 60 + mm;
+          // Circular distance (handles midnight wrap)
+          const diff = Math.min(
+            Math.abs(nowMins - targetMins),
+            1440 - Math.abs(nowMins - targetMins),
+          );
+          if (diff > 30) continue; // outside delivery window
+        }
+      }
 
       // Atomically claim this send slot
       let shouldSend = false;

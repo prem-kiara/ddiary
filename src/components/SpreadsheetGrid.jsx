@@ -884,17 +884,22 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
           <colgroup>
             {/* Row-number column */}
             <col style={{ width: 52 }} />
+            {/* Comments column — immediately after row number */}
+            <col style={{ width: 40 }} />
             {Array.from({ length: cols }, (_, c) => (
               <col key={c} style={{ width: colWidths[c] ?? DEFAULT_COL_W }} />
             ))}
-            {/* Comments column */}
-            <col style={{ width: 40 }} />
           </colgroup>
 
           {/* ── Column headers ── */}
           <thead>
             <tr>
               <th style={{ ...thStyle(false), width: 52 }}>#</th>
+              {/* Comments column header — second position */}
+              <th style={{ ...thStyle(false), width: 40, cursor: 'default' }}
+                title="Row comments — click 💬 to view/add">
+                <MessageSquare size={12} style={{ color: '#0891b2' }} />
+              </th>
               {Array.from({ length: cols }, (_, c) => {
                 const sorted  = sortConfig?.col === c;
                 const hlCol   = selRange.c1 <= c && c <= selRange.c2;
@@ -941,15 +946,12 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
                   </th>
                 );
               })}
-              {/* Comments column header */}
-              <th style={{ ...thStyle(false), width: 40, cursor: 'default' }}
-                title="Row comments — click 💬 cell to view/add">
-                <MessageSquare size={12} style={{ color: '#0891b2' }} />
-              </th>
             </tr>
 
             {showFilter && (
               <tr>
+                <td style={thStyle()} />
+                {/* Empty placeholder for comments column */}
                 <td style={thStyle()} />
                 {Array.from({ length: cols }, (_, c) => (
                   <td key={c} style={{ ...thStyle(), padding: '2px 4px' }}>
@@ -959,7 +961,6 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
                         border: '1px solid var(--paper-line)', borderRadius: 4, outline: 'none', background: '#fffbe6' }} />
                   </td>
                 ))}
-                <td style={thStyle()} />
               </tr>
             )}
           </thead>
@@ -1014,6 +1015,30 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
                   />
                 </td>
 
+                {/* ── Comments cell — second column, left of data ── */}
+                {(() => {
+                  const cmts = rowComments[r] || [];
+                  const hasComments = cmts.length > 0;
+                  const isOpen = commentRow === r;
+                  return (
+                    <td
+                      style={{ border: '1px solid var(--paper-line)', width: 40, padding: 0,
+                        background: isOpen ? '#e0f2fe' : hasComments ? '#f0f9ff' : 'transparent',
+                        textAlign: 'center', verticalAlign: 'middle', cursor: 'pointer',
+                        position: 'relative' }}
+                      onClick={e => { e.stopPropagation(); setCommentRow(r === commentRow ? null : r); }}
+                      title={hasComments ? `${cmts.length} comment${cmts.length > 1 ? 's' : ''} — click to view` : 'Add comment'}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, padding: '0 2px' }}>
+                        <MessageSquare size={12} style={{ color: hasComments ? '#0891b2' : '#cbd5e1', flexShrink: 0 }} />
+                        {hasComments && (
+                          <span style={{ fontSize: 9, fontWeight: 700, color: '#0891b2' }}>{cmts.length}</span>
+                        )}
+                      </div>
+                    </td>
+                  );
+                })()}
+
                 {Array.from({ length: cols }, (_, c) => {
                   const fmt      = data[ck(c, r)] || {};
                   const editing  = isEditing(c, r);
@@ -1067,29 +1092,6 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
                     </td>
                   );
                 })}
-                {/* ── Comments cell ── */}
-                {(() => {
-                  const cmts = rowComments[r] || [];
-                  const hasComments = cmts.length > 0;
-                  const isOpen = commentRow === r;
-                  return (
-                    <td
-                      style={{ border: '1px solid var(--paper-line)', width: 40, padding: 0,
-                        background: isOpen ? '#e0f2fe' : hasComments ? '#f0f9ff' : 'transparent',
-                        textAlign: 'center', verticalAlign: 'middle', cursor: 'pointer',
-                        position: 'relative' }}
-                      onClick={e => { e.stopPropagation(); setCommentRow(r === commentRow ? null : r); }}
-                      title={hasComments ? `${cmts.length} comment${cmts.length > 1 ? 's' : ''} — click to view` : 'Add comment'}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, padding: '0 2px' }}>
-                        <MessageSquare size={12} style={{ color: hasComments ? '#0891b2' : '#cbd5e1', flexShrink: 0 }} />
-                        {hasComments && (
-                          <span style={{ fontSize: 9, fontWeight: 700, color: '#0891b2' }}>{cmts.length}</span>
-                        )}
-                      </div>
-                    </td>
-                  );
-                })()}
               </tr>
             ))}
           </tbody>
@@ -1180,31 +1182,39 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
       </p>
 
       {/* ── Row Reminder Modal ── */}
-      {reminderRow !== null && (
-        <RowReminderModal
-          rowIndex={reminderRow}
-          rowData={(() => {
-            const rd = {};
-            LETTERS.slice(0, cols).forEach(letter => {
-              const colIdx = LETTERS.indexOf(letter);
-              const key = `${letter}${reminderRow + 1}`;
-              // Use display value (evaluated)
-              const dv = displayVal(colIdx, reminderRow, data);
-              if (dv !== '') rd[letter] = dv;
-            });
-            return rd;
-          })()}
-          cols={cols}
-          sheetId={sheetId}
-          sharedSheetId={sharedSheetId}
-          sheetTitle={title}
-          memberEmails={sheetMemberEmails.length > 0 ? sheetMemberEmails : (user?.email ? [user.email] : [])}
-          currentUser={user}
-          existingReminder={activeReminderByRow[reminderRow] || null}
-          onClose={() => setReminderRow(null)}
-          showToast={null}
-        />
-      )}
+      {reminderRow !== null && (() => {
+        // Build row data (display values) for the target row
+        const rd = {};
+        LETTERS.slice(0, cols).forEach(letter => {
+          const colIdx = LETTERS.indexOf(letter);
+          const dv = displayVal(colIdx, reminderRow, data);
+          if (dv !== '') rd[letter] = dv;
+        });
+        // Build header data from row 0 so the modal can detect the Assignee column
+        const hd = {};
+        LETTERS.slice(0, cols).forEach(letter => {
+          const colIdx = LETTERS.indexOf(letter);
+          const hv = displayVal(colIdx, 0, data);
+          if (hv !== '') hd[letter] = hv;
+        });
+        return (
+          <RowReminderModal
+            rowIndex={reminderRow}
+            rowData={rd}
+            cols={cols}
+            sheetId={sheetId}
+            sharedSheetId={sharedSheetId}
+            sheetTitle={title}
+            memberEmails={sheetMemberEmails.length > 0 ? sheetMemberEmails : (user?.email ? [user.email] : [])}
+            currentUser={user}
+            existingReminder={activeReminderByRow[reminderRow] || null}
+            onClose={() => setReminderRow(null)}
+            showToast={null}
+            rowCommentsData={rowComments[reminderRow] || []}
+            headerData={hd}
+          />
+        );
+      })()}
     </div>
   );
 }
