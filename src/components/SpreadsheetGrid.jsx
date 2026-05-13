@@ -18,11 +18,13 @@
  *  - Auto-save (debounced)
  */
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Bold, Italic, Plus, Filter, ChevronUp, ChevronDown } from 'lucide-react';
+import { Bold, Italic, Plus, Filter, ChevronUp, ChevronDown, Bell, MessageSquare, Send, X } from 'lucide-react';
 import { doc, onSnapshot, collection as fsCollection } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { saveSharedSheet, logSheetOpen } from '../hooks/useSharedSheets';
+import { checkAndFireReminders, useSheetRowReminders } from '../utils/sheetReminders';
+import RowReminderModal from './RowReminderModal';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const LETTERS       = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i));
@@ -127,6 +129,15 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
   const [dragCol,    setDragCol]    = useState(null);
   const [dragOverCol,setDragOverCol]= useState(null);
 
+  // ── Comments + Reminders state ─────────────────────────────────────────────
+  const [rowComments,  setRowComments]  = useState(() => sheet.rowComments || {});
+  const [commentRow,   setCommentRow]   = useState(null);   // null = panel closed
+  const [newComment,   setNewComment]   = useState('');
+  const [savingCmt,    setSavingCmt]    = useState(false);
+  const [reminderRow,  setReminderRow]  = useState(null);   // null = modal closed
+  const [hoveredRow,   setHoveredRow]   = useState(null);
+  const [sheetMemberEmails, setSheetMemberEmails] = useState([]);
+
   // ── Column / row size state ─────────────────────────────────────────────────
   const [colWidths, setColWidths] = useState(() =>
     Array.from({ length: initCols }, (_, i) => sheet.colWidths?.[i] ?? DEFAULT_COL_W)
@@ -158,12 +169,14 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
   // Mirrors of state for use in closures that can't re-close over state
   const colWidthsRef    = useRef(colWidths);
   const rowHeightsRef   = useRef(rowHeights);
+  const rowCommentsRef  = useRef(sheet.rowComments || {});
   // Latest save trigger (always up-to-date with current data/cols/rows/title)
   const triggerSaveRef  = useRef(null);
 
   // Keep refs in sync
   useEffect(() => { colWidthsRef.current  = colWidths;  }, [colWidths]);
   useEffect(() => { rowHeightsRef.current = rowHeights; }, [rowHeights]);
+  useEffect(() => { rowCommentsRef.current = rowComments; }, [rowComments]);
 
   // Focus cell input when entering edit mode
   useEffect(() => {
@@ -218,20 +231,31 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
       if (d.rows)            setRows(d.rows);
       if (d.colWidths?.length)  setColWidths(d.colWidths);
       if (d.rowHeights?.length) setRowHeights(d.rowHeights);
+      if (d.rowComments && !commentRow) setRowComments(d.rowComments);
     });
     return unsub;
   }, [isShared, sharedSheetId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Members count for the header badge
+  // Members count for the header badge + email list for reminder dispatch
   useEffect(() => {
     if (!isShared || !sharedSheetId) return;
     const unsub = onSnapshot(
       fsCollection(db, 'sharedSheets', sharedSheetId, 'members'),
-      snap => setMembersCount(snap.size),
+      snap => {
+        setMembersCount(snap.size);
+        setSheetMemberEmails(snap.docs.map(d => d.data().email).filter(Boolean));
+      },
       () => {},
     );
     return unsub;
-  }, [isShared, sharedSheetId]);
+  }, [isShared, sharedSheetId]); // eslint-disable-line
+
+  // Fire due row reminders when this sheet is opened
+  useEffect(() => {
+    if (!user) return;
+    const sid = sharedSheetId || sheetId;
+    checkAndFireReminders(sid, user).catch(() => {});
+  }, [sheetId, sharedSheetId]); // eslint-disable-line
 
   // ── Derived ────────────────────────────────────────────────────────────────
   const selectedKey  = ck(sel.c, sel.r);
@@ -276,8 +300,9 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
       setSaveStatus('saving');
       const updates = {
         title: nt, data: nd, cols: nc, rows: nr,
-        colWidths:  colWidthsRef.current,
-        rowHeights: rowHeightsRef.current,
+        colWidths:   colWidthsRef.current,
+        rowHeights:  rowHeightsRef.current,
+        rowComments: rowCommentsRef.current,
       };
       try {
         if (isShared && sharedSheetId && user) {
@@ -299,6 +324,26 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
   // Keep triggerSaveRef always fresh so the resize mouseup can call it
   // without any stale-closure issue
   triggerSaveRef.current = () => scheduleSave(data, cols, rows, title);
+
+  // ── Row comments ──────────────────────────────────────────────────────────
+  const saveRowComment = useCallback(() => {
+    if (!newComment.trim() || !user) return;
+    setSavingCmt(true);
+    const comment = {
+      text:        newComment.trim(),
+      authorEmail: user.email,
+      authorName:  user.displayName || user.email,
+      ts:          new Date().toISOString(),
+    };
+    setRowComments(prev => {
+      const next = { ...prev, [commentRow]: [...(prev[commentRow] || []), comment] };
+      rowCommentsRef.current = next;
+      scheduleSave(data, cols, rows, title);
+      return next;
+    });
+    setNewComment('');
+    setSavingCmt(false);
+  }, [newComment, user, commentRow, data, cols, rows, title, scheduleSave]);
 
   // ── Undo / Redo ────────────────────────────────────────────────────────────
   const setDataWithHistory = useCallback((updaterOrValue) => {
@@ -603,7 +648,17 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
     if (key === 'Escape') {
       setEditCell(null); setEditVal(''); formulaInsertPos.current = null;
       requestAnimationFrame(() => gridRef.current?.focus());
-    } else if (key === 'Enter') {
+    } else if (key === 'Enter' && e.altKey) {
+      // Option+Enter (Mac) / Alt+Enter (Win) — insert newline within cell
+      e.preventDefault();
+      const inp = inputRef.current;
+      const start = inp?.selectionStart ?? editVal.length;
+      const end   = inp?.selectionEnd   ?? editVal.length;
+      const next  = editVal.slice(0, start) + '\n' + editVal.slice(end);
+      setEditVal(next);
+      formulaInsertPos.current = null;
+      setTimeout(() => { inp?.setSelectionRange(start + 1, start + 1); }, 0);
+    } else if (key === 'Enter' && !e.altKey) {
       e.preventDefault();
       commitEdit(editCell.c, editCell.r, editVal);
       setSel({ c: editCell.c, r: clampR(editCell.r + 1) });
@@ -692,6 +747,9 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
       startSize: rowHeightsRef.current[rowIdx] ?? DEFAULT_ROW_H,
     };
   }, []);
+
+  // ── Row reminders (real-time active list) ─────────────────────────────────
+  const { byRow: activeReminderByRow } = useSheetRowReminders(sharedSheetId || sheetId);
 
   // ── Render helpers ─────────────────────────────────────────────────────────
   const isEditing = (c, r) => editCell?.c === c && editCell?.r === r;
@@ -825,16 +883,18 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
         <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: colWidths.reduce((a, w) => a + w, 0) + 42 }}>
           <colgroup>
             {/* Row-number column */}
-            <col style={{ width: 42 }} />
+            <col style={{ width: 52 }} />
             {Array.from({ length: cols }, (_, c) => (
               <col key={c} style={{ width: colWidths[c] ?? DEFAULT_COL_W }} />
             ))}
+            {/* Comments column */}
+            <col style={{ width: 40 }} />
           </colgroup>
 
           {/* ── Column headers ── */}
           <thead>
             <tr>
-              <th style={thStyle(false)}>#</th>
+              <th style={{ ...thStyle(false), width: 52 }}>#</th>
               {Array.from({ length: cols }, (_, c) => {
                 const sorted  = sortConfig?.col === c;
                 const hlCol   = selRange.c1 <= c && c <= selRange.c2;
@@ -881,6 +941,11 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
                   </th>
                 );
               })}
+              {/* Comments column header */}
+              <th style={{ ...thStyle(false), width: 40, cursor: 'default' }}
+                title="Row comments — click 💬 cell to view/add">
+                <MessageSquare size={12} style={{ color: '#0891b2' }} />
+              </th>
             </tr>
 
             {showFilter && (
@@ -894,6 +959,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
                         border: '1px solid var(--paper-line)', borderRadius: 4, outline: 'none', background: '#fffbe6' }} />
                   </td>
                 ))}
+                <td style={thStyle()} />
               </tr>
             )}
           </thead>
@@ -901,13 +967,17 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
           {/* ── Body ── */}
           <tbody>
             {visibleRows.map(r => (
-              <tr key={r} style={{ height: rowHeights[r] ?? DEFAULT_ROW_H }}>
-                {/* Row number — draggable + resizable */}
+              <tr key={r}
+                style={{ height: rowHeights[r] ?? DEFAULT_ROW_H }}
+                onMouseEnter={() => setHoveredRow(r)}
+                onMouseLeave={() => setHoveredRow(null)}
+              >
+                {/* Row number — draggable + resizable + bell icon */}
                 <td
                   style={{ ...tdStyle(false, false), cursor: 'grab', position: 'relative',
                     background: dragOverRow === r ? '#ddd6fe' : (selRange.r1 <= r && r <= selRange.r2) ? '#ede9fe' : 'var(--paper-dark)',
-                    color: 'var(--ink-lighter)', fontSize: 11, textAlign: 'center', userSelect: 'none', padding: '0 4px',
-                    height: rowHeights[r] ?? DEFAULT_ROW_H }}
+                    color: 'var(--ink-lighter)', fontSize: 11, textAlign: 'center', userSelect: 'none',
+                    padding: '0 2px', height: rowHeights[r] ?? DEFAULT_ROW_H, width: 52 }}
                   draggable
                   onDragStart={() => setDragRow(r)}
                   onDragOver={e => { e.preventDefault(); setDragOverRow(r); }}
@@ -917,14 +987,28 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
                   onClick={() => { setSel({ c: 0, r }); setSelEnd({ c: cols - 1, r }); gridRef.current?.focus(); }}
                   title="Click to select row · Drag to reorder · Drag bottom edge to resize"
                 >
-                  {r + 1}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2, height: '100%' }}>
+                    <span>{r + 1}</span>
+                    {/* Bell icon — shown on hover or when reminder is active */}
+                    {(hoveredRow === r || activeReminderByRow[r]) && (
+                      <button
+                        onMouseDown={e => { e.stopPropagation(); e.preventDefault(); }}
+                        onClick={e => { e.stopPropagation(); setReminderRow(r); }}
+                        title={activeReminderByRow[r] ? 'Reminder active — click to stop' : 'Set daily reminder for this row'}
+                        style={{ padding: 1, border: 'none', background: 'none', cursor: 'pointer',
+                          color: activeReminderByRow[r] ? '#f59e0b' : 'var(--ink-lighter)',
+                          display: 'flex', alignItems: 'center', lineHeight: 1 }}
+                      >
+                        {activeReminderByRow[r]
+                          ? <Bell size={10} fill="#f59e0b" stroke="#f59e0b" />
+                          : <Bell size={10} />}
+                      </button>
+                    )}
+                  </div>
                   {/* Row resize handle — bottom edge of row number */}
                   <div
-                    style={{
-                      position: 'absolute', bottom: 0, left: 0, width: '100%', height: 5,
-                      cursor: 'row-resize', zIndex: 10,
-                      background: 'transparent',
-                    }}
+                    style={{ position: 'absolute', bottom: 0, left: 0, width: '100%', height: 5,
+                      cursor: 'row-resize', zIndex: 10, background: 'transparent' }}
                     onMouseDown={e => onRowResizeMouseDown(e, r)}
                     title="Drag to resize row"
                   />
@@ -961,38 +1045,170 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
                       }}
                     >
                       {editing ? (
-                        <input ref={inputRef} value={editVal}
+                        <textarea ref={inputRef} value={editVal}
                           onChange={e => { setEditVal(e.target.value); formulaInsertPos.current = null; }}
                           onKeyDown={onCellKeyDown}
                           onBlur={() => { if (!formulaDragRef.current) commitEdit(c, r, editVal); }}
                           style={{ width: '100%', height: '100%', border: 'none', outline: 'none',
-                            padding: '0 4px', fontFamily: 'var(--font-body)', fontSize: 13, background: 'transparent',
-                            fontWeight: fmt.b ? 700 : 400, fontStyle: fmt.i ? 'italic' : 'normal' }} />
+                            padding: '2px 4px', fontFamily: 'var(--font-body)', fontSize: 13, background: 'transparent',
+                            fontWeight: fmt.b ? 700 : 400, fontStyle: fmt.i ? 'italic' : 'normal',
+                            resize: 'none', overflow: 'hidden', boxSizing: 'border-box', lineHeight: '1.4' }} />
                       ) : (
-                        <span style={{ display: 'block', overflow: 'hidden', whiteSpace: 'nowrap',
-                          textOverflow: 'ellipsis', padding: '0 4px',
+                        <span style={{ display: 'block', overflow: 'hidden',
+                          whiteSpace: dv.includes?.('\n') ? 'pre-wrap' : 'nowrap',
+                          textOverflow: dv.includes?.('\n') ? 'clip' : 'ellipsis',
+                          padding: '0 4px',
                           fontWeight: fmt.b ? 700 : 400, fontStyle: fmt.i ? 'italic' : 'normal',
                           textAlign: isErr ? 'center' : isNum ? 'right' : 'left',
-                          color: isErr ? '#dc2626' : 'inherit', fontSize: 13 }}>
+                          color: isErr ? '#dc2626' : 'inherit', fontSize: 13, lineHeight: '1.4' }}>
                           {dv}
                         </span>
                       )}
                     </td>
                   );
                 })}
+                {/* ── Comments cell ── */}
+                {(() => {
+                  const cmts = rowComments[r] || [];
+                  const hasComments = cmts.length > 0;
+                  const isOpen = commentRow === r;
+                  return (
+                    <td
+                      style={{ border: '1px solid var(--paper-line)', width: 40, padding: 0,
+                        background: isOpen ? '#e0f2fe' : hasComments ? '#f0f9ff' : 'transparent',
+                        textAlign: 'center', verticalAlign: 'middle', cursor: 'pointer',
+                        position: 'relative' }}
+                      onClick={e => { e.stopPropagation(); setCommentRow(r === commentRow ? null : r); }}
+                      title={hasComments ? `${cmts.length} comment${cmts.length > 1 ? 's' : ''} — click to view` : 'Add comment'}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 1, padding: '0 2px' }}>
+                        <MessageSquare size={12} style={{ color: hasComments ? '#0891b2' : '#cbd5e1', flexShrink: 0 }} />
+                        {hasComments && (
+                          <span style={{ fontSize: 9, fontWeight: 700, color: '#0891b2' }}>{cmts.length}</span>
+                        )}
+                      </div>
+                    </td>
+                  );
+                })()}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
+      {/* ── Comments side panel ── */}
+      {commentRow !== null && (
+        <div style={{
+          position: 'fixed', right: 0, top: 0, bottom: 0, width: 320, zIndex: 400,
+          background: '#fff', borderLeft: '1px solid var(--paper-line)',
+          boxShadow: '-4px 0 20px rgba(0,0,0,0.1)',
+          display: 'flex', flexDirection: 'column',
+        }}>
+          {/* Panel header */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px',
+            borderBottom: '1px solid var(--paper-line)', flexShrink: 0 }}>
+            <MessageSquare size={15} style={{ color: '#0891b2' }} />
+            <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--ink)', flex: 1 }}>
+              Row {commentRow + 1} Comments
+            </span>
+            <button className="btn-icon" onClick={() => setCommentRow(null)}><X size={15} /></button>
+          </div>
+
+          {/* Comments list */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
+            {(rowComments[commentRow] || []).length === 0 ? (
+              <p style={{ color: 'var(--ink-lighter)', fontSize: 13, fontStyle: 'italic' }}>
+                No comments yet. Add the first one below.
+              </p>
+            ) : (
+              [...(rowComments[commentRow] || [])].reverse().map((cmt, i) => (
+                <div key={i} style={{ marginBottom: 14, paddingBottom: 14,
+                  borderBottom: '1px solid var(--paper-line)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    <div style={{ width: 28, height: 28, borderRadius: '50%', background: '#e0f2fe',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontWeight: 700, fontSize: 12, color: '#0891b2', flexShrink: 0 }}>
+                      {(cmt.authorName || cmt.authorEmail || '?')[0].toUpperCase()}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>
+                        {cmt.authorName || cmt.authorEmail}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--ink-lighter)' }}>
+                        {cmt.ts ? new Date(cmt.ts).toLocaleString() : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <p style={{ margin: '0 0 0 36px', fontSize: 13, color: 'var(--ink)',
+                    lineHeight: 1.5, whiteSpace: 'pre-wrap' }}>
+                    {cmt.text}
+                  </p>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Add comment */}
+          <div style={{ flexShrink: 0, padding: '12px 16px', borderTop: '1px solid var(--paper-line)' }}>
+            <textarea
+              value={newComment}
+              onChange={e => setNewComment(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveRowComment(); }
+              }}
+              placeholder="Add a comment… (Enter to send, Shift+Enter for new line)"
+              rows={3}
+              style={{ width: '100%', boxSizing: 'border-box', resize: 'none', padding: '8px 10px',
+                fontSize: 13, fontFamily: 'var(--font-body)', border: '1px solid var(--paper-line)',
+                borderRadius: 8, outline: 'none', marginBottom: 8 }}
+            />
+            <button
+              className="btn btn-gold btn-sm"
+              style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+              onClick={saveRowComment}
+              disabled={savingCmt || !newComment.trim()}
+            >
+              <Send size={13} /> {savingCmt ? 'Saving…' : 'Add Comment'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Hint bar ── */}
       <p style={{ fontSize: 11, color: 'var(--ink-lighter)', marginTop: 6, fontFamily: 'var(--font-body)' }}>
-        Click+drag to select · Drag right edge of column header to resize column · Drag bottom edge of row number to resize row · ▲▼ to sort · Ctrl+C/X/V · Ctrl+Z/Y · Drag headers to reorder
+        Click+drag to select · Opt+Enter for new line in cell · 💬 to comment on a row · 🔔 to set daily reminder · Ctrl+C/X/V · Ctrl+Z/Y
       </p>
+
+      {/* ── Row Reminder Modal ── */}
+      {reminderRow !== null && (
+        <RowReminderModal
+          rowIndex={reminderRow}
+          rowData={(() => {
+            const rd = {};
+            LETTERS.slice(0, cols).forEach(letter => {
+              const colIdx = LETTERS.indexOf(letter);
+              const key = `${letter}${reminderRow + 1}`;
+              // Use display value (evaluated)
+              const dv = displayVal(colIdx, reminderRow, data);
+              if (dv !== '') rd[letter] = dv;
+            });
+            return rd;
+          })()}
+          cols={cols}
+          sheetId={sheetId}
+          sharedSheetId={sharedSheetId}
+          sheetTitle={title}
+          memberEmails={sheetMemberEmails.length > 0 ? sheetMemberEmails : (user?.email ? [user.email] : [])}
+          currentUser={user}
+          existingReminder={activeReminderByRow[reminderRow] || null}
+          onClose={() => setReminderRow(null)}
+          showToast={null}
+        />
+      )}
     </div>
   );
 }
+
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
 const divider = { width: 1, height: 18, background: 'var(--paper-line)', margin: '0 4px' };

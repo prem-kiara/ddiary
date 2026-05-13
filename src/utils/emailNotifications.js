@@ -443,6 +443,54 @@ export async function notifySheetInvite({ inviteeEmail, inviteeName, inviterName
   });
 }
 
+/**
+ * 9. Sheet Row Reminder — daily email showing one row's data + remarks.
+ *    Sent to all sheet members until the reminder is stopped.
+ */
+export async function sendRowReminderEmail({
+  toEmails, sheetTitle, rowIndex, rowData, columnHeaders, remarks, assigneeName,
+}) {
+  if (!toEmails?.length) return false;
+  const rowNum = (rowIndex ?? 0) + 1;
+
+  const dataRows = Object.entries(rowData || {})
+    .filter(([, v]) => v !== '' && v !== null && v !== undefined)
+    .map(([k, v]) => {
+      const header = columnHeaders?.[k] || k;
+      return `<tr>
+        <td style="padding:7px 14px;border-bottom:1px solid #f1f5f9;font-weight:600;color:#475569;white-space:nowrap;font-size:13px">${escapeHtml(String(header))}</td>
+        <td style="padding:7px 14px;border-bottom:1px solid #f1f5f9;color:#0f172a;font-size:13px">${escapeHtml(String(v))}</td>
+      </tr>`;
+    }).join('');
+
+  const body = `
+    <p style="font-size:15px;color:#0f172a;margin:0 0 8px">
+      Daily reminder for <strong>Row ${rowNum}</strong> in
+      <strong style="color:#7c3aed">${escapeHtml(sheetTitle || 'Shared Sheet')}</strong>.
+    </p>
+    ${assigneeName ? `<p style="font-size:13px;color:#475569;margin:0 0 14px">Assigned to: <strong style="color:#0f172a">${escapeHtml(assigneeName)}</strong></p>` : ''}
+    <table style="width:100%;border-collapse:collapse;background:#f8fafc;border-radius:10px;overflow:hidden;margin:14px 0">
+      ${dataRows || '<tr><td style="padding:12px 14px;color:#94a3b8;font-size:13px">No data in this row</td></tr>'}
+    </table>
+    ${remarks ? `<div style="background:#fffbeb;border-left:4px solid #f59e0b;padding:12px 16px;border-radius:0 8px 8px 0;margin:14px 0">
+      <p style="font-size:12px;font-weight:700;color:#92400e;margin:0 0 5px;text-transform:uppercase;letter-spacing:.04em">Remarks</p>
+      <p style="font-size:14px;color:#0f172a;margin:0;white-space:pre-wrap">${escapeHtml(remarks)}</p>
+    </div>` : ''}
+    <a href="${APP_URL}" style="display:inline-block;background:#7c3aed;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;margin-top:8px">
+      Open Dhanam Workspace
+    </a>
+    <p style="font-size:11px;color:#94a3b8;margin:18px 0 0;line-height:1.5">
+      To stop this daily reminder, open the sheet and click the 🔔 bell icon on Row ${rowNum}.
+    </p>
+  `;
+
+  return sendEmail({
+    to: toEmails.join(','),
+    subject: `🔔 Daily Reminder: Row ${rowNum} — ${sheetTitle}`,
+    htmlBody: wrapHtml('Daily Row Reminder', body),
+  });
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // DIARY ENTRY SHARING
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
