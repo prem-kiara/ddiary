@@ -178,9 +178,15 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
   useEffect(() => { rowHeightsRef.current = rowHeights; }, [rowHeights]);
   useEffect(() => { rowCommentsRef.current = rowComments; }, [rowComments]);
 
-  // Focus cell input when entering edit mode
+  // Focus cell input when entering edit mode — place cursor at end, not position 0
   useEffect(() => {
-    if (editCell) setTimeout(() => inputRef.current?.focus(), 0);
+    if (editCell) setTimeout(() => {
+      const inp = inputRef.current;
+      if (!inp) return;
+      inp.focus();
+      const len = inp.value.length;
+      inp.setSelectionRange(len, len);
+    }, 0);
   }, [editCell]);
 
   // Global mouse event handlers (selection drag + resize)
