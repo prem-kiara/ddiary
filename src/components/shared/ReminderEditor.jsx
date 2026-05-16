@@ -165,7 +165,7 @@ export default function ReminderEditor({
           )}
 
           {/* Time of day */}
-          <div className="form-grid-2" style={{ alignItems: 'end' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, alignItems: 'end' }}>
             <div>
               <label style={labelStyle}><Clock size={11} style={{ verticalAlign: 'middle', marginRight: 4 }} />Time of day</label>
               <input
@@ -182,7 +182,7 @@ export default function ReminderEditor({
           </div>
 
           {/* Start + End dates */}
-          <div className="form-grid-2">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label style={labelStyle}>
                 <Calendar size={11} style={{ verticalAlign: 'middle', marginRight: 4 }} />Start date

@@ -1510,7 +1510,7 @@ export function AddTaskModal({
                 <input value={newWsName} onChange={e => setNewWsName(e.target.value)}
                   placeholder="Workspace name…" style={{ ...inputStyle, fontSize: 13, marginTop: 2 }} autoFocus={workspaces.length === 0} />
                 {/* Optional seed category + sub-category for the new workspace */}
-                <div className="form-grid-2" style={{ marginTop: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
                   <input value={newWsCatName} onChange={e => setNewWsCatName(e.target.value)}
                     placeholder="Category (optional)"
                     style={{ ...inputStyle, fontSize: 13 }} />
@@ -1535,7 +1535,7 @@ export function AddTaskModal({
             if (wsMode !== 'existing') return null;
             const activeSubs = activeCats.find(c => c.id === categoryId)?.subcategories || [];
             return (
-            <div className="form-grid-2">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div>
                 <label style={labelStyle}>Category</label>
                 <select
@@ -1568,7 +1568,7 @@ export function AddTaskModal({
           })()}
 
           {/* Status + Priority */}
-          <div className="form-grid-2">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div>
               <label style={labelStyle}>Status</label>
               <select value={status} onChange={e => setStatus(e.target.value)} style={inputStyle}>
@@ -1586,7 +1586,7 @@ export function AddTaskModal({
           </div>
 
           {/* Assign to + Due Date */}
-          <div className="form-grid-2">
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
             <div style={{ position: 'relative' }}>
               <label style={labelStyle}>Assign to</label>
               {/* Pill display / trigger */}

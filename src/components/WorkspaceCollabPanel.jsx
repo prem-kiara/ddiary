@@ -94,7 +94,6 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
   // ── Reassign search ─────────────────────────────────────────────────────────
   const handleReassignSearch = (val) => {
     setReassignQuery(val);
-    setReassignPerson(null);
     setReassignError('');
     if (val.trim().length >= 2) {
       searchOrgPeopleDebounced(val.trim()).then(r => setReassignSuggestions(r || []));

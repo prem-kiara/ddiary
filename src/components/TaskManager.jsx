@@ -308,7 +308,7 @@ export function MoveToBoard({
 
         {/* Category + Sub-category (only if the workspace has categories) */}
         {categories.length > 0 && (
-          <div className="form-grid-2" style={{ marginBottom: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
             <div>
               <label className="label">Category</label>
               <select value={moveCategoryId} onChange={e => setMoveCategoryId(e.target.value)} style={selStyle}>
@@ -336,7 +336,7 @@ export function MoveToBoard({
         )}
 
         {/* Status + Assignee */}
-        <div className="form-grid-2" style={{ marginBottom: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
           <div>
             <label className="label">Status</label>
             <select value={moveStatus} onChange={e => setMoveStatus(e.target.value)} style={selStyle}>
@@ -446,7 +446,7 @@ export function MoveToBoard({
         </div>
 
         {/* Priority + Due date */}
-        <div className="form-grid-2" style={{ marginBottom: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
           <div>
             <label className="label">Priority</label>
             <select value={movePriority} onChange={e => setMovePriority(e.target.value)} style={selStyle}>
@@ -842,7 +842,7 @@ function TaskCard({
                 onChange={e => setEditText(e.target.value)}
                 style={{ minHeight: 'unset', height: 'auto', resize: 'none', marginBottom: 10, fontFamily: 'var(--font-body)', fontSize: 14, backgroundImage: 'none', lineHeight: 1.6 }}
               />
-              <div className="form-grid-2" style={{ marginBottom: 10 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
                 <div>
                   <label className="label">Due Date</label>
                   <input type="date" value={editDue} onChange={e => setEditDue(e.target.value)} style={inputStyle} />
