@@ -461,23 +461,38 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     scheduleAutosave();
 
     const currentCount = editorRef.current?.childElementCount ?? 0;
-    // Re-run numbering when:
-    //   (a) a whole block was added or removed (block count changed), OR
-    //   (b) the input was a deletion keystroke (Backspace / Delete / Cut /
-    //       drag-delete) — this covers the case where the user deletes body
-    //       text from a numbered block without removing the block itself, which
-    //       should trigger renumbering of subsequent blocks.
-    // We deliberately skip regular character insertions because rewriting the
-    // text node mid-keystroke races with the browser's Selection and moves the
-    // cursor to offset 0 on numbered lines.
-    const inputType  = e?.nativeEvent?.inputType ?? '';
-    const isDeletion = inputType.startsWith('delete') || inputType === 'deleteByCut';
+    const inputType    = e?.nativeEvent?.inputType ?? '';
+    const isDeletion   = inputType.startsWith('delete') || inputType === 'deleteByCut';
 
-    if (currentCount !== prevBlockCountRef.current || isDeletion) {
-      prevBlockCountRef.current = currentCount;
+    // Re-run numbering when a whole block was added or removed (block count
+    // changed — covers Enter, Backspace-merge, select+delete, etc.)
+    let shouldRenumber = currentCount !== prevBlockCountRef.current;
+
+    // Also renumber on a deletion keystroke BUT ONLY when the focused block has
+    // just become prefix-only (all body content erased).  Running on every
+    // single backspace character races with the browser's Selection and jumps
+    // the cursor to offset 0 even with the nodeValue guard in
+    // fixNumberedListsInDOM — so we restrict to the transition moment only.
+    if (!shouldRenumber && isDeletion) {
+      const sel = window.getSelection();
+      if (sel?.rangeCount) {
+        let node = sel.getRangeAt(0).startContainer;
+        // Walk up to the direct child of the editor (the block element)
+        while (node && node.parentNode !== editorRef.current) node = node.parentNode;
+        if (node && node !== editorRef.current) {
+          const blockText = node.textContent || '';
+          const prefixMatch = blockText.match(/^[\d]+(?:\.[\d]+)*\. ?/);
+          if (prefixMatch) {
+            const body = blockText.slice(prefixMatch[0].length).trim();
+            if (!body) shouldRenumber = true; // block just became prefix-only
+          }
+        }
+      }
+    }
+
+    prevBlockCountRef.current = currentCount;
+    if (shouldRenumber) {
       requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
-    } else {
-      prevBlockCountRef.current = currentCount;
     }
   }, [scheduleAutosave]);
 
