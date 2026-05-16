@@ -623,23 +623,34 @@ export async function addWorkspaceTask(workspaceId, task, actor) {
   // Reminder: caller should pass a fully-normalized object with nextSendAt
   // pre-computed. We only validate type here — null means "no reminder".
   const reminder = task.reminder && typeof task.reminder === 'object' ? task.reminder : null;
+  // Flat co-assignee list (for dashboard 'mine' query via array-contains)
+  const coAssignees = Array.isArray(task.coAssignees) ? task.coAssignees : [];
+  const coAssigneeEmails = coAssignees.map(p => (p.email || '').toLowerCase()).filter(Boolean);
+  // allAssigneeEmails = primary + co-assignees — used for efficient "is this my task?" queries
+  const allAssigneeEmails = [...new Set([
+    ...(assigneeEmail ? [assigneeEmail] : []),
+    ...coAssigneeEmails,
+  ])];
   const ref = await addDoc(collection(db, 'workspaces', workspaceId, 'tasks'), {
-    text:           task.text?.trim() || '',
-    notes:          task.notes?.trim() || null,
-    status:         task.status   || 'open',
-    priority:       task.priority || 'medium',
-    dueDate:        task.dueDate  || null,
-    assigneeUid:    task.assigneeUid   || null,
+    text:              task.text?.trim() || '',
+    notes:             task.notes?.trim() || null,
+    status:            task.status   || 'open',
+    priority:          task.priority || 'medium',
+    dueDate:           task.dueDate  || null,
+    assigneeUid:       task.assigneeUid   || null,
     assigneeEmail,
-    assigneeName:   task.assigneeName  || null,
-    categoryId:     task.categoryId     || null,
-    subcategoryId:  task.subcategoryId  || null,
-    createdBy:      actor.uid,
-    createdByEmail: actor.email,
-    createdByName:  actor.displayName || actor.email,
+    assigneeName:      task.assigneeName  || null,
+    coAssignees:       coAssignees.length ? coAssignees : null,
+    coAssigneeEmails:  coAssigneeEmails.length ? coAssigneeEmails : null,
+    allAssigneeEmails: allAssigneeEmails.length ? allAssigneeEmails : null,
+    categoryId:        task.categoryId     || null,
+    subcategoryId:     task.subcategoryId  || null,
+    createdBy:         actor.uid,
+    createdByEmail:    actor.email,
+    createdByName:     actor.displayName || actor.email,
     reminder,
-    createdAt:      serverTimestamp(),
-    updatedAt:      serverTimestamp(),
+    createdAt:         serverTimestamp(),
+    updatedAt:         serverTimestamp(),
   });
   // Activity log is best-effort — if rules reject it (e.g. stale rules, race on
   // just-written member doc), the task create itself must still count as success.

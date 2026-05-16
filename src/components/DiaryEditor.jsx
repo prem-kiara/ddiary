@@ -96,6 +96,14 @@ function fixNumberedListsInDOM(editorEl) {
     const isNumbered = /^[\d]+(?:\.[\d]+)*\. ?/.test(text);
 
     if (isNumbered) {
+      const body = text.replace(/^[\d]+(?:\.[\d]+)*\. ?/, '').trim();
+
+      // Prefix-only block (no body content) — only count it if it was freshly
+      // created by Enter (data-empty-new="true").  Blocks that became
+      // prefix-only because the user deleted their body content should be
+      // skipped so subsequent numbered blocks renumber correctly.
+      if (!body && !block.dataset.emptyNew) return;
+
       // If the block carries a restart marker, reset this level and all
       // deeper levels so numbering begins at 1 again from this point.
       if (block.dataset.restart === 'true') {
@@ -121,6 +129,10 @@ function fixNumberedListsInDOM(editorEl) {
           firstTxt.nodeValue = updated;
         }
       }
+
+      // Once the block has real body content, the "new empty" marker is no
+      // longer needed — clear it so future empty-block logic works correctly.
+      if (body && block.dataset.emptyNew) delete block.dataset.emptyNew;
     } else {
       // Non-empty, non-numbered block: reset this level and deeper counters
       counters[level] = 0;
@@ -443,15 +455,29 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
   // HOWEVER: when the block count changes (a whole block was added/removed via
   // native browser delete, select+Backspace, etc.) we renumber via rAF — the
   // cursor is already placed by that point so the race doesn't apply.
-  const handleEditorInput = useCallback(() => {
+  const handleEditorInput = useCallback((e) => {
     const text = editorRef.current?.textContent?.trim() || '';
     setIsEmpty(!text);
     scheduleAutosave();
 
     const currentCount = editorRef.current?.childElementCount ?? 0;
-    if (currentCount !== prevBlockCountRef.current) {
+    // Re-run numbering when:
+    //   (a) a whole block was added or removed (block count changed), OR
+    //   (b) the input was a deletion keystroke (Backspace / Delete / Cut /
+    //       drag-delete) — this covers the case where the user deletes body
+    //       text from a numbered block without removing the block itself, which
+    //       should trigger renumbering of subsequent blocks.
+    // We deliberately skip regular character insertions because rewriting the
+    // text node mid-keystroke races with the browser's Selection and moves the
+    // cursor to offset 0 on numbered lines.
+    const inputType  = e?.nativeEvent?.inputType ?? '';
+    const isDeletion = inputType.startsWith('delete') || inputType === 'deleteByCut';
+
+    if (currentCount !== prevBlockCountRef.current || isDeletion) {
       prevBlockCountRef.current = currentCount;
       requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
+    } else {
+      prevBlockCountRef.current = currentCount;
     }
   }, [scheduleAutosave]);
 
@@ -1129,6 +1155,9 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
         // Set a placeholder prefix directly (any valid numbered prefix works —
         // fixNumberedListsInDOM will renumber everything correctly in one pass).
         newBlock.textContent = list.type === 'numbered' ? '1. ' : list.prefix;
+        // Mark as freshly-created empty block so fixNumberedListsInDOM counts
+        // it (prefix-only) but skips body-deleted prefix-only blocks.
+        if (list.type === 'numbered') newBlock.dataset.emptyNew = 'true';
         // Renumber synchronously so numbering is correct before the next render
         fixNumberedListsInDOM(editorRef.current);
         // Place cursor deep inside the last text node for reliable Backspace

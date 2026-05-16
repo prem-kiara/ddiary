@@ -85,25 +85,46 @@ export function usePlatformTasks({ mode = 'mine' } = {}) {
       return unsub;
     }
 
-    // 'mine' — two parallel collection-group queries merged into one map.
+    // 'mine' — three parallel collection-group queries merged into one map.
     // Each query maintains its own snapshot map so removals propagate
     // correctly when (e.g.) a task is reassigned away from me.
-    const emailMap   = new Map();
-    const createdMap = new Map();
-
-    const flush = () => {
-      const merged = new Map(emailMap);
-      for (const [path, t] of createdMap) merged.set(path, t);
-      setRawTasks([...merged.values()]);
-      setTasksLoading(false);
-    };
+    //   1. tasks where I am the primary assignee (assigneeEmail)
+    //   2. tasks I created (createdBy)
+    //   3. tasks where I am a co-assignee (allAssigneeEmails array-contains)
+    const emailMap      = new Map();
+    const createdMap    = new Map();
+    const coAssigneeMap = new Map();
 
     const myEmailLower = (user.email || '').toLowerCase();
 
-    let unsubEmail = null;
-    let unsubCreated = null;
+    // Track which queries have delivered their first snapshot so we don't
+    // call setTasksLoading(false) until ALL expected listeners have fired.
+    // If the user has no email the email/co-assignee queries are never started,
+    // so pre-mark them as "done" immediately.
+    let emailFired      = !myEmailLower;
+    let createdFired    = false;
+    let coAssigneeFired = !myEmailLower;
+
+    const flush = () => {
+      const merged = new Map(emailMap);
+      for (const [path, t] of createdMap)    merged.set(path, t);
+      for (const [path, t] of coAssigneeMap) merged.set(path, t);
+      setRawTasks([...merged.values()]);
+      // Only stop showing the loading state once every query we started has
+      // returned its first snapshot.  The first listener to fire would
+      // otherwise mark loading complete while the other two maps are still
+      // empty, causing the partial-results flash (7 tasks instead of 32).
+      if (emailFired && createdFired && coAssigneeFired) {
+        setTasksLoading(false);
+      }
+    };
+
+    let unsubEmail      = null;
+    let unsubCreated    = null;
+    let unsubCoAssignee = null;
 
     if (myEmailLower) {
+      // Query 1: primary assignee
       const emailQ = query(
         collectionGroup(db, 'tasks'),
         where('assigneeEmail', '==', myEmailLower)
@@ -113,12 +134,38 @@ export function usePlatformTasks({ mode = 'mine' } = {}) {
         (snap) => {
           emailMap.clear();
           snap.docs.forEach(d => emailMap.set(d.ref.path, _rowFromDoc(d)));
+          emailFired = true;
           flush();
         },
-        (err) => logError(err, { location: 'usePlatformTasks', action: 'mine.assigneeEmail' })
+        (err) => {
+          emailFired = true; // don't block loading forever on permission error
+          logError(err, { location: 'usePlatformTasks', action: 'mine.assigneeEmail' });
+          flush();
+        }
+      );
+
+      // Query 3: co-assignee (tasks that have my email in allAssigneeEmails array)
+      const coQ = query(
+        collectionGroup(db, 'tasks'),
+        where('allAssigneeEmails', 'array-contains', myEmailLower)
+      );
+      unsubCoAssignee = onSnapshot(
+        coQ,
+        (snap) => {
+          coAssigneeMap.clear();
+          snap.docs.forEach(d => coAssigneeMap.set(d.ref.path, _rowFromDoc(d)));
+          coAssigneeFired = true;
+          flush();
+        },
+        (err) => {
+          coAssigneeFired = true;
+          logError(err, { location: 'usePlatformTasks', action: 'mine.coAssignee' });
+          flush();
+        }
       );
     }
 
+    // Query 2: tasks I created
     const createdQ = query(
       collectionGroup(db, 'tasks'),
       where('createdBy', '==', user.uid)
@@ -128,14 +175,20 @@ export function usePlatformTasks({ mode = 'mine' } = {}) {
       (snap) => {
         createdMap.clear();
         snap.docs.forEach(d => createdMap.set(d.ref.path, _rowFromDoc(d)));
+        createdFired = true;
         flush();
       },
-      (err) => logError(err, { location: 'usePlatformTasks', action: 'mine.createdBy' })
+      (err) => {
+        createdFired = true;
+        logError(err, { location: 'usePlatformTasks', action: 'mine.createdBy' });
+        flush();
+      }
     );
 
     return () => {
-      try { unsubEmail?.(); } catch {}
-      try { unsubCreated?.(); } catch {}
+      try { unsubEmail?.(); }      catch {}
+      try { unsubCreated?.(); }    catch {}
+      try { unsubCoAssignee?.(); } catch {}
     };
   }, [user?.uid, user?.email, effectiveMode]);
 
