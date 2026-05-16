@@ -167,7 +167,9 @@ export default function ReminderEditor({
           {/* Time of day */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, alignItems: 'end' }}>
             <div>
-              <label style={labelStyle}><Clock size={11} style={{ verticalAlign: 'middle', marginRight: 4 }} />Time of day</label>
+              <label style={labelStyle}>
+                <Clock size={11} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />Time of day
+              </label>
               <input
                 type="time"
                 value={reminder.time}
@@ -175,18 +177,16 @@ export default function ReminderEditor({
                 style={inputStyle}
               />
               <p style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <Globe size={10} /> {reminder.timezone}
+                <Globe size={10} style={{ display: 'inline', flexShrink: 0 }} /> {reminder.timezone}
               </p>
             </div>
             <div /> {/* spacer to keep grid balanced */}
           </div>
 
           {/* Start + End dates */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, alignItems: 'start' }}>
             <div>
-              <label style={labelStyle}>
-                <Calendar size={11} style={{ verticalAlign: 'middle', marginRight: 4 }} />Start date
-              </label>
+              <label style={labelStyle}>Start date</label>
               <input
                 type="date"
                 value={reminder.startDate}
