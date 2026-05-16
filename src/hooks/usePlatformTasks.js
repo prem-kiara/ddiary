@@ -85,12 +85,22 @@ export function usePlatformTasks({ mode = 'mine' } = {}) {
       return unsub;
     }
 
-    // 'mine' — three parallel collection-group queries merged into one map.
+    // 'mine' — four parallel collection-group queries merged into one map.
     // Each query maintains its own snapshot map so removals propagate
     // correctly when (e.g.) a task is reassigned away from me.
-    //   1. tasks where I am the primary assignee (assigneeEmail)
-    //   2. tasks I created (createdBy)
-    //   3. tasks where I am a co-assignee (allAssigneeEmails array-contains)
+    //
+    //   1. tasks where I am the primary assignee — matched by UID
+    //      (most reliable: UID is always set when a task is assigned)
+    //   2. tasks where I am the primary assignee — matched by email
+    //      (legacy/belt-and-suspenders: some tasks were saved with email only)
+    //   3. tasks I created (createdBy == myUid)
+    //   4. tasks where I am a co-assignee (allAssigneeEmails array-contains)
+    //
+    // Using both uid AND email for the assignee query is the key fix: tasks
+    // assigned to the user by others are often stored with only assigneeUid
+    // (no assigneeEmail), causing the email-only query to miss them entirely
+    // and the dashboard to show a partial count (e.g. 7 instead of 32).
+    const uidMap        = new Map();
     const emailMap      = new Map();
     const createdMap    = new Map();
     const coAssigneeMap = new Map();
@@ -99,32 +109,57 @@ export function usePlatformTasks({ mode = 'mine' } = {}) {
 
     // Track which queries have delivered their first snapshot so we don't
     // call setTasksLoading(false) until ALL expected listeners have fired.
-    // If the user has no email the email/co-assignee queries are never started,
-    // so pre-mark them as "done" immediately.
+    // Pre-mark email / co-assignee as done if the user has no email so we
+    // never block the loading state on queries we didn't start.
+    let uidFired        = false;
     let emailFired      = !myEmailLower;
     let createdFired    = false;
     let coAssigneeFired = !myEmailLower;
 
     const flush = () => {
-      const merged = new Map(emailMap);
+      // Merge all four maps; later maps win on path collisions (same task
+      // returned by multiple queries) — order doesn't matter since the
+      // document data is identical for the same path.
+      const merged = new Map(uidMap);
+      for (const [path, t] of emailMap)      merged.set(path, t);
       for (const [path, t] of createdMap)    merged.set(path, t);
       for (const [path, t] of coAssigneeMap) merged.set(path, t);
       setRawTasks([...merged.values()]);
       // Only stop showing the loading state once every query we started has
       // returned its first snapshot.  The first listener to fire would
-      // otherwise mark loading complete while the other two maps are still
-      // empty, causing the partial-results flash (7 tasks instead of 32).
-      if (emailFired && createdFired && coAssigneeFired) {
+      // otherwise mark loading complete while the other maps are still empty.
+      if (uidFired && emailFired && createdFired && coAssigneeFired) {
         setTasksLoading(false);
       }
     };
 
+    let unsubUid        = null;
     let unsubEmail      = null;
     let unsubCreated    = null;
     let unsubCoAssignee = null;
 
+    // Query 1: assigned to me by UID (primary — UID is always present)
+    const uidQ = query(
+      collectionGroup(db, 'tasks'),
+      where('assigneeUid', '==', user.uid)
+    );
+    unsubUid = onSnapshot(
+      uidQ,
+      (snap) => {
+        uidMap.clear();
+        snap.docs.forEach(d => uidMap.set(d.ref.path, _rowFromDoc(d)));
+        uidFired = true;
+        flush();
+      },
+      (err) => {
+        uidFired = true;
+        logError(err, { location: 'usePlatformTasks', action: 'mine.assigneeUid' });
+        flush();
+      }
+    );
+
     if (myEmailLower) {
-      // Query 1: primary assignee
+      // Query 2: assigned to me by email (belt-and-suspenders for older tasks)
       const emailQ = query(
         collectionGroup(db, 'tasks'),
         where('assigneeEmail', '==', myEmailLower)
@@ -138,13 +173,13 @@ export function usePlatformTasks({ mode = 'mine' } = {}) {
           flush();
         },
         (err) => {
-          emailFired = true; // don't block loading forever on permission error
+          emailFired = true;
           logError(err, { location: 'usePlatformTasks', action: 'mine.assigneeEmail' });
           flush();
         }
       );
 
-      // Query 3: co-assignee (tasks that have my email in allAssigneeEmails array)
+      // Query 4: co-assignee (tasks that have my email in allAssigneeEmails array)
       const coQ = query(
         collectionGroup(db, 'tasks'),
         where('allAssigneeEmails', 'array-contains', myEmailLower)
@@ -165,7 +200,7 @@ export function usePlatformTasks({ mode = 'mine' } = {}) {
       );
     }
 
-    // Query 2: tasks I created
+    // Query 3: tasks I created
     const createdQ = query(
       collectionGroup(db, 'tasks'),
       where('createdBy', '==', user.uid)
@@ -186,9 +221,10 @@ export function usePlatformTasks({ mode = 'mine' } = {}) {
     );
 
     return () => {
-      try { unsubEmail?.(); }      catch {}
-      try { unsubCreated?.(); }    catch {}
-      try { unsubCoAssignee?.(); } catch {}
+      try { unsubUid?.(); }         catch {}
+      try { unsubEmail?.(); }       catch {}
+      try { unsubCreated?.(); }     catch {}
+      try { unsubCoAssignee?.(); }  catch {}
     };
   }, [user?.uid, user?.email, effectiveMode]);
 
