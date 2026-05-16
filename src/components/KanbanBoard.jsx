@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Plus, X, ChevronDown, ChevronRight, User, Calendar, Send,
   Circle, Clock, Eye, CheckCircle, Trash2, Copy, Check as CheckIcon,
-  Users, Edit2, Briefcase, UserPlus, AlertTriangle, MessageSquare,
+  Users, Edit2, Pencil, Briefcase, UserPlus, AlertTriangle, MessageSquare,
   Folder, FolderPlus, Bell, GripVertical,
 } from 'lucide-react';
 import {
@@ -296,6 +296,28 @@ function TaskDetailModal({ task, workspace, workspaceId, members, onDelete, curr
   const assignee  = members.find(m => m.uid === task.assigneeUid);
   // The workspace creator OR an admin (which includes super-admins) can re-categorise tasks.
   const isCreator = !!(workspace && user && workspace.createdBy === user.uid) || isAdmin;
+  const canEdit   = task.createdBy === currentUid || isAdmin;
+
+  // ── Inline title editing ──────────────────────────────────────────────────
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [editTitleText, setEditTitleText] = useState(task.text || '');
+  const [savingTitle, setSavingTitle] = useState(false);
+
+  const startEditTitle = () => { setEditTitleText(task.text || ''); setEditingTitle(true); };
+  const cancelEditTitle = () => setEditingTitle(false);
+  const saveTitle = async () => {
+    const trimmed = editTitleText.trim();
+    if (!trimmed || trimmed === task.text) { cancelEditTitle(); return; }
+    setSavingTitle(true);
+    try {
+      await updateWorkspaceTask(workspaceId, task.id, { text: trimmed }, user, task);
+      showToast?.('Task updated.', 'success');
+      setEditingTitle(false);
+    } catch (e) {
+      showToast?.('Failed to save. Please try again.', 'warning');
+    }
+    setSavingTitle(false);
+  };
 
   return (
     <div className="sheet-modal-overlay" onClick={onClose}>
@@ -308,22 +330,83 @@ function TaskDetailModal({ task, workspace, workspaceId, members, onDelete, curr
         <div style={{ padding: '16px 18px 12px', borderBottom: '1px solid #ede0c8', display: 'flex', gap: 10, alignItems: 'flex-start', flexShrink: 0 }}>
           <div style={{ width: 4, borderRadius: 2, background: priority, alignSelf: 'stretch', flexShrink: 0, minHeight: 20 }} />
           <div style={{ flex: 1, minWidth: 0 }}>
-            {/* Title — capped at ~200px tall with its own scroll so long
-                pasted content doesn't push the rest of the modal off-screen. */}
-            <div
-              style={{
-                fontSize:    15,
-                fontWeight:  700,
-                color:       '#0f172a',
-                lineHeight:  1.4,
-                wordBreak:   'break-word',
-                maxHeight:   200,
-                overflowY:   'auto',
-                paddingRight: 6,
-              }}
-            >
-              {task.text}
-            </div>
+            {/* Title — editable inline for creator/admin */}
+            {editingTitle ? (
+              <div>
+                <textarea
+                  autoFocus
+                  value={editTitleText}
+                  onChange={e => setEditTitleText(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) saveTitle();
+                    if (e.key === 'Escape') cancelEditTitle();
+                  }}
+                  rows={3}
+                  style={{
+                    width: '100%', fontSize: 15, fontWeight: 700, color: '#0f172a',
+                    lineHeight: 1.4, padding: '6px 10px', borderRadius: 8,
+                    border: '2px solid #7c3aed', outline: 'none', resize: 'vertical',
+                    fontFamily: 'var(--font-body)', background: '#faf5ff', boxSizing: 'border-box',
+                  }}
+                />
+                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                  <button
+                    onClick={saveTitle}
+                    disabled={savingTitle || !editTitleText.trim()}
+                    style={{
+                      padding: '4px 14px', borderRadius: 6, fontSize: 12, fontWeight: 700,
+                      background: '#7c3aed', color: '#fff', border: 'none', cursor: 'pointer',
+                      opacity: (savingTitle || !editTitleText.trim()) ? 0.5 : 1,
+                    }}
+                  >
+                    {savingTitle ? 'Saving…' : 'Save'}
+                  </button>
+                  <button
+                    onClick={cancelEditTitle}
+                    style={{
+                      padding: '4px 12px', borderRadius: 6, fontSize: 12, fontWeight: 600,
+                      background: 'none', color: '#475569', border: '1px solid #cbd5e1', cursor: 'pointer',
+                    }}
+                  >
+                    Cancel
+                  </button>
+                  <span style={{ fontSize: 11, color: '#94a3b8', alignSelf: 'center' }}>⌘↵ to save · Esc to cancel</span>
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                <div
+                  style={{
+                    fontSize:    15,
+                    fontWeight:  700,
+                    color:       '#0f172a',
+                    lineHeight:  1.4,
+                    wordBreak:   'break-word',
+                    maxHeight:   200,
+                    overflowY:   'auto',
+                    paddingRight: 6,
+                    flex: 1,
+                  }}
+                >
+                  {task.text}
+                </div>
+                {canEdit && (
+                  <button
+                    onClick={startEditTitle}
+                    title="Edit task title"
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px',
+                      color: '#94a3b8', borderRadius: 4, flexShrink: 0, marginTop: 1,
+                      display: 'inline-flex', alignItems: 'center',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.color = '#7c3aed'; e.currentTarget.style.background = '#f5f3ff'; }}
+                    onMouseLeave={e => { e.currentTarget.style.color = '#94a3b8'; e.currentTarget.style.background = 'none'; }}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                )}
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginTop: 8 }}>
               {/* Status badge */}
               <span style={{ background: statusCfg.bg, color: statusCfg.color, border: `1px solid ${statusCfg.color}44`, fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 20 }}>
