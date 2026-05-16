@@ -58,7 +58,7 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
   const [showReassign,        setShowReassign]        = useState(false);
   const [reassignQuery,       setReassignQuery]       = useState('');
   const [reassignSuggestions, setReassignSuggestions] = useState([]);
-  const [reassignPerson,      setReassignPerson]      = useState(null);
+  const [reassignPersons,     setReassignPersons]     = useState([]);  // multi
   const [reassignComment,     setReassignComment]     = useState('');
   const [reassigning,         setReassigning]         = useState(false);
   const [reassignError,       setReassignError]       = useState('');
@@ -104,17 +104,24 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
   };
 
   const selectReassignPerson = (person) => {
-    setReassignPerson({ email: person.email, name: person.displayName || person.email, uid: person.id || null });
-    setReassignQuery(person.displayName || person.email);
+    const p = { email: person.email?.toLowerCase(), name: person.displayName || person.email, uid: person.id || null };
+    setReassignPersons(prev => prev.find(x => x.email === p.email) ? prev : [...prev, p]);
+    setReassignQuery('');
     setReassignSuggestions([]);
   };
 
+  const removeReassignPerson = (email) =>
+    setReassignPersons(prev => prev.filter(p => p.email !== email));
+
   // ── Send reassign (also saves any staged status change) ─────────────────────
   const handleReassign = async () => {
-    if (!reassignPerson?.email) { setReassignError('Please select a person from the list.'); return; }
+    if (!reassignPersons.length) { setReassignError('Please select at least one person.'); return; }
     setReassigning(true);
     setReassignError('');
     try {
+      const primary    = reassignPersons[0];
+      const coAssignees = reassignPersons.slice(1).map(p => ({ uid: p.uid || null, email: p.email, name: p.name }));
+
       // 1. Post comment if provided
       if (reassignComment.trim()) {
         await addWorkspaceComment(workspaceId, task.id, {
@@ -127,31 +134,34 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
 
       // 2. Reassign (+ include any staged status change in the same write)
       const updates = {
-        assigneeEmail: reassignPerson.email.toLowerCase(),
-        assigneeUid:   reassignPerson.uid   || null,
-        assigneeName:  reassignPerson.name  || reassignPerson.email,
+        assigneeEmail: primary.email,
+        assigneeUid:   primary.uid   || null,
+        assigneeName:  primary.name  || primary.email,
+        coAssignees:   coAssignees.length ? coAssignees : null,
       };
       if (hasStatusChange) updates.status = pendingStatus;
 
       await updateWorkspaceTask(workspaceId, task.id, updates, user, task);
       setPendingStatus(null);
 
-      // 3. Email new assignee (non-fatal)
-      notifyTaskReassigned({
-        assigneeEmail:    reassignPerson.email,
-        assigneeName:     reassignPerson.name,
-        taskText:         task.text,
-        dueDate:          task.dueDate,
-        priority:         task.priority,
-        reassignedByName: user.displayName || user.email,
-        latestComment:    reassignComment.trim() || null,
-        workspaceUrl:     window.location.origin,
-      }).catch(() => {});
+      // 3. Email all assignees (non-fatal)
+      reassignPersons.forEach(p => {
+        notifyTaskReassigned({
+          assigneeEmail:    p.email,
+          assigneeName:     p.name,
+          taskText:         task.text,
+          dueDate:          task.dueDate,
+          priority:         task.priority,
+          reassignedByName: user.displayName || user.email,
+          latestComment:    reassignComment.trim() || null,
+          workspaceUrl:     window.location.origin,
+        }).catch(() => {});
+      });
 
       // 4. Reset
       setShowReassign(false);
       setReassignQuery('');
-      setReassignPerson(null);
+      setReassignPersons([]);
       setReassignComment('');
     } catch (e) {
       logError(e, { location: 'WorkspaceCollabPanel:handleReassign' }, user.uid);
@@ -266,12 +276,33 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
                   <UserCheck size={13} /> Reassign Task
                 </span>
                 <button
-                  onClick={() => { setShowReassign(false); setReassignQuery(''); setReassignPerson(null); setReassignComment(''); setReassignError(''); }}
+                  onClick={() => { setShowReassign(false); setReassignQuery(''); setReassignPersons([]); setReassignComment(''); setReassignError(''); }}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#475569', display: 'flex', padding: 2 }}
                 >
                   <X size={14} />
                 </button>
               </div>
+
+              {/* Selected people pills */}
+              {reassignPersons.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
+                  {reassignPersons.map((p, i) => (
+                    <span key={p.email} style={{
+                      background: '#ede9fe', color: '#6d28d9', borderRadius: 12,
+                      padding: '3px 10px 3px 12px', fontSize: 12, fontWeight: 600,
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                    }}>
+                      {i === 0 && <span style={{ fontSize: 10, opacity: 0.7, marginRight: 2 }}>primary</span>}
+                      {p.name}
+                      <button
+                        type="button"
+                        onMouseDown={e => { e.preventDefault(); removeReassignPerson(p.email); }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7c3aed', padding: 0, fontSize: 15, lineHeight: 1 }}
+                      >×</button>
+                    </span>
+                  ))}
+                </div>
+              )}
 
               {/* Person search */}
               <div style={{ position: 'relative', marginBottom: 8 }}>
@@ -281,11 +312,11 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
                   onChange={e => handleReassignSearch(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Escape') setReassignSuggestions([]); }}
                   onBlur={() => setTimeout(() => setReassignSuggestions([]), 150)}
-                  placeholder="Search name or email…"
+                  placeholder={reassignPersons.length ? 'Add another person…' : 'Search name or email…'}
                   autoComplete="off"
                   style={{
                     width: '100%', padding: '8px 12px',
-                    border: `1px solid ${reassignPerson ? '#15803d44' : '#e2e8f0'}`,
+                    border: `1px solid ${reassignPersons.length ? '#15803d44' : '#e2e8f0'}`,
                     borderRadius: 8, fontSize: 13, fontFamily: 'var(--font-body)',
                     background: '#ffffff', color: '#0f172a', outline: 'none', boxSizing: 'border-box',
                   }}
@@ -296,24 +327,27 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
                     background: '#fff', border: '1px solid #cbd5e1', borderRadius: 8,
                     boxShadow: '0 4px 16px rgba(0,0,0,0.12)', marginTop: 2, overflow: 'hidden',
                   }}>
-                    {reassignSuggestions.map(p => (
-                      <div
-                        key={p.id || p.email}
-                        onMouseDown={() => selectReassignPerson(p)}
-                        style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #f1f5f9' }}
-                        onMouseEnter={e => e.currentTarget.style.background = '#f1f5f9'}
-                        onMouseLeave={e => e.currentTarget.style.background = '#fff'}
-                      >
-                        <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{p.displayName}</div>
-                        <div style={{ fontSize: 11, color: '#475569' }}>{p.email}</div>
-                        {p.jobTitle && <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.jobTitle}</div>}
-                      </div>
-                    ))}
+                    {reassignSuggestions.map(p => {
+                      const already = reassignPersons.find(x => x.email === p.email?.toLowerCase());
+                      return (
+                        <div
+                          key={p.id || p.email}
+                          onMouseDown={() => !already && selectReassignPerson(p)}
+                          style={{ padding: '8px 12px', cursor: already ? 'default' : 'pointer', borderBottom: '1px solid #f1f5f9', opacity: already ? 0.5 : 1 }}
+                          onMouseEnter={e => { if (!already) e.currentTarget.style.background = '#f1f5f9'; }}
+                          onMouseLeave={e => e.currentTarget.style.background = '#fff'}
+                        >
+                          <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>{p.displayName} {already && <span style={{ color: '#7c3aed', fontSize: 11 }}>✓ added</span>}</div>
+                          <div style={{ fontSize: 11, color: '#475569' }}>{p.email}</div>
+                          {p.jobTitle && <div style={{ fontSize: 11, color: '#94a3b8' }}>{p.jobTitle}</div>}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
-                {reassignPerson && (
+                {reassignPersons.length > 0 && (
                   <div style={{ fontSize: 11, color: '#15803d', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <CheckIcon size={11} /> Assigning to <strong>{reassignPerson.name}</strong> ({reassignPerson.email})
+                    <CheckIcon size={11} /> {reassignPersons.length === 1 ? `Assigning to ${reassignPersons[0].name}` : `Assigning to ${reassignPersons.length} people`}
                   </div>
                 )}
               </div>
@@ -339,13 +373,13 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <button
                   onClick={handleReassign}
-                  disabled={reassigning || !reassignPerson}
+                  disabled={reassigning || reassignPersons.length === 0}
                   style={{
                     display: 'inline-flex', alignItems: 'center', gap: 6,
                     padding: '7px 18px', borderRadius: 8, fontSize: 13, fontWeight: 700,
-                    cursor: reassigning || !reassignPerson ? 'not-allowed' : 'pointer',
+                    cursor: reassigning || !reassignPersons.length ? 'not-allowed' : 'pointer',
                     border: 'none', background: '#d97706', color: '#fff',
-                    opacity: reassigning || !reassignPerson ? 0.6 : 1,
+                    opacity: reassigning || !reassignPersons.length ? 0.6 : 1,
                     transition: 'opacity 0.2s',
                   }}
                 >

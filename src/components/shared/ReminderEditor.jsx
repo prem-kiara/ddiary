@@ -165,17 +165,20 @@ export default function ReminderEditor({
           )}
 
           {/* Time of day */}
-          <div>
-            <label style={labelStyle}><Clock size={11} style={{ verticalAlign: 'middle', marginRight: 4 }} />Time of day</label>
-            <input
-              type="time"
-              value={reminder.time}
-              onChange={e => emit({ time: e.target.value })}
-              style={{ ...inputStyle, maxWidth: 220 }}
-            />
-            <p style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Globe size={10} /> {reminder.timezone}
-            </p>
+          <div className="form-grid-2" style={{ alignItems: 'end' }}>
+            <div>
+              <label style={labelStyle}><Clock size={11} style={{ verticalAlign: 'middle', marginRight: 4 }} />Time of day</label>
+              <input
+                type="time"
+                value={reminder.time}
+                onChange={e => emit({ time: e.target.value })}
+                style={inputStyle}
+              />
+              <p style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Globe size={10} /> {reminder.timezone}
+              </p>
+            </div>
+            <div /> {/* spacer to keep grid balanced */}
           </div>
 
           {/* Start + End dates */}

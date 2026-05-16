@@ -1,8 +1,12 @@
 import { useState } from 'react';
-import { ChevronLeft, Edit3, Trash2, Archive, RotateCcw, Share2 } from 'lucide-react';
+import { ChevronLeft, Edit3, Trash2, Archive, RotateCcw, Share2, Download, Users } from 'lucide-react';
 import { TagBadge } from './shared/Pills';
 import { parseDate } from '../utils/dates';
 import ShareEntryModal from './ShareEntryModal';
+import ShareDiaryModal from './ShareDiaryModal';
+import { downloadEntryAsPDF } from '../utils/exportUtils';
+import { shareDiary } from '../hooks/useSharedDiaries';
+import { useAuth } from '../contexts/AuthContext';
 
 // Long-form date — "Monday, April 3, 2026" — used in the entry header.
 const formatDate = (d) => {
@@ -111,7 +115,26 @@ function renderContent(content) {
 }
 
 export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, onUnarchive, showToast }) {
-  const [shareOpen, setShareOpen] = useState(false);
+  const { user } = useAuth();
+  const [shareOpen,       setShareOpen]       = useState(false);
+  const [collaborateOpen, setCollaborateOpen] = useState(false);
+  const [sharingDiary,    setSharingDiary]    = useState(false);
+  const [downloading,     setDownloading]     = useState(false);
+
+  const handleCollaborate = async () => {
+    if (entry.isShared) {
+      setCollaborateOpen(true);
+      return;
+    }
+    setSharingDiary(true);
+    try {
+      await shareDiary(entry, user);
+      setCollaborateOpen(true);
+    } catch {
+      showToast?.('Could not enable collaboration. Please try again.', 'warning');
+    }
+    setSharingDiary(false);
+  };
 
   return (
     <div className="fade-in">
@@ -120,6 +143,14 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
           entry={entry}
           onClose={() => setShareOpen(false)}
           showToast={showToast || (() => {})}
+        />
+      )}
+      {collaborateOpen && (
+        <ShareDiaryModal
+          diaryId={entry.id}
+          diaryTitle={entry.title || 'Untitled Entry'}
+          currentUser={user}
+          onClose={() => setCollaborateOpen(false)}
         />
       )}
 
@@ -155,6 +186,29 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
               title="Email this entry to one or more people"
             >
               <Share2 size={14} /> Share
+            </button>
+            <button
+              className="btn btn-sm btn-outline"
+              onClick={handleCollaborate}
+              disabled={sharingDiary}
+              title={entry.isShared ? 'Manage collaborators' : 'Invite people to co-edit this entry'}
+              style={entry.isShared ? { color: '#7c3aed', borderColor: '#7c3aed' } : {}}
+            >
+              <Users size={14} />
+              {sharingDiary ? 'Sharing…' : entry.isShared ? 'Collaborators' : 'Collaborate'}
+            </button>
+            <button
+              className="btn btn-sm btn-outline"
+              disabled={downloading}
+              onClick={() => {
+                setDownloading(true);
+                downloadEntryAsPDF(entry)
+                  .catch(err => { console.error('PDF download failed:', err); showToast?.('PDF download failed.', 'warning'); })
+                  .finally(() => setDownloading(false));
+              }}
+              title="Download this entry as a PDF"
+            >
+              <Download size={14} /> {downloading ? 'Saving…' : 'PDF'}
             </button>
             {entry.archived ? (
               <button className="btn btn-sm btn-outline" onClick={() => onUnarchive(entry.id)}>

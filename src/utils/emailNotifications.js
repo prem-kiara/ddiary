@@ -124,10 +124,16 @@ function formatDue(dueDate) {
 /**
  * 1. Task Assigned — sent to the assignee when a task is assigned to them.
  */
-export async function notifyTaskAssigned({ assigneeEmail, assigneeName, taskText, dueDate, priority, ownerName, ownerUid }) {
+export async function notifyTaskAssigned({ assigneeEmail, assigneeName, taskText, notes, dueDate, priority, ownerName, ownerUid }) {
   if (!assigneeEmail) return false;
 
+  const title    = (taskText || '').trim() || 'Untitled Task';
   const joinLink = `${APP_URL}?join=${encodeURIComponent(ownerUid || '')}`;
+
+  const notesHtml = notes?.trim()
+    ? `<p style="font-size: 14px; color: #334155; margin: 10px 0 0; white-space: pre-wrap; line-height: 1.6;">${escapeHtml(notes.trim())}</p>`
+    : '';
+
   const body = `
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       Hi${assigneeName ? ' <strong>' + escapeHtml(assigneeName) + '</strong>' : ''},
@@ -135,9 +141,10 @@ export async function notifyTaskAssigned({ assigneeEmail, assigneeName, taskText
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
       <strong>${escapeHtml(ownerName)}</strong> has assigned you a new task:
     </p>
-    <div style="background: #f5f3ff; border-left: 4px solid #6d28d9; padding: 16px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
-      <p style="font-size: 16px; font-weight: 600; color: #0f172a; margin: 0 0 8px;">${escapeHtml(taskText)}</p>
-      <p style="font-size: 13px; color: #475569; margin: 0;">
+    <div style="background: #f5f3ff; border-left: 4px solid #6d28d9; padding: 16px 18px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
+      <p style="font-size: 16px; font-weight: 700; color: #0f172a; margin: 0 0 8px;">${escapeHtml(title)}</p>
+      ${notesHtml}
+      <p style="font-size: 13px; color: #475569; margin: ${notes?.trim() ? '12px' : '0'} 0 0;">
         ${priorityBadge(priority)} &nbsp; Due: ${formatDue(dueDate)}
       </p>
     </div>
@@ -151,7 +158,7 @@ export async function notifyTaskAssigned({ assigneeEmail, assigneeName, taskText
 
   return sendEmail({
     to: assigneeEmail,
-    subject: `New task assigned: ${taskText.slice(0, 60)}`,
+    subject: `New task assigned: ${title.slice(0, 60)}`,
     htmlBody: wrapHtml('New Task Assigned', body),
   });
 }
@@ -404,11 +411,14 @@ export async function notifyNewComment({ recipientEmail, recipientName, commente
 
 /**
  * 8. Sheet Invite — sent to a collaborator when they are invited to a shared sheet.
+ *    inviteId is embedded in the link so the recipient lands directly on the
+ *    Sheets page with their invite highlighted and ready to accept.
  */
-export async function notifySheetInvite({ inviteeEmail, inviteeName, inviterName, sheetTitle, appUrl }) {
+export async function notifySheetInvite({ inviteeEmail, inviteeName, inviterName, sheetTitle, inviteId }) {
   if (!inviteeEmail) return false;
 
-  const link = appUrl || APP_URL;
+  // Deep link → /sheets?invite=INVITE_ID  (handled by SheetInviteBanner)
+  const acceptLink = `${APP_URL}/sheets${inviteId ? `?invite=${encodeURIComponent(inviteId)}` : ''}`;
 
   const body = `
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
@@ -423,23 +433,66 @@ export async function notifySheetInvite({ inviteeEmail, inviteeName, inviterName
       </p>
       <p style="font-size: 13px; color: #16a34a; margin: 0; font-weight: 600;">Editor access · Real-time collaboration</p>
     </div>
-    <p style="font-size: 14px; color: #475569; margin: 0 0 20px; line-height: 1.6;">
-      Open Dhanam Workspace to accept the invite and start collaborating.
-      You'll be able to view and edit the sheet in real-time alongside your team.
+    <p style="font-size: 14px; color: #475569; margin: 0 0 24px; line-height: 1.6;">
+      Click the button below to open Dhanam Workspace and accept your invite.
+      You can view and edit the sheet in real-time alongside your team.
     </p>
-    <a href="${link}" style="display: inline-block; background: #16a34a; color: #fff; padding: 13px 28px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
-      Open Dhanam Workspace
+    <a href="${acceptLink}" style="display: inline-block; background: #16a34a; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 15px; letter-spacing: 0.01em;">
+      ✅ Accept Invite &amp; Open Sheet
     </a>
     <p style="font-size: 12px; color: #94a3b8; margin: 20px 0 0; line-height: 1.5;">
-      You'll see an invite banner at the top of the Sheets page when you sign in.
-      You can accept or decline the invite from there.
+      Sign in with your Dhanam Microsoft account when prompted.
+      The invite banner will appear at the top — click Accept to get started.
+      If you didn't expect this invite, you can safely ignore this email.
     </p>
   `;
 
   return sendEmail({
     to: inviteeEmail,
-    subject: `${escapeHtml(inviterName || 'A colleague')} invited you to collaborate on "${sheetTitle}"`,
+    subject: `${inviterName || 'A colleague'} invited you to "${sheetTitle}" on Dhanam Workspace`,
     htmlBody: wrapHtml('Sheet Collaboration Invite', body),
+  });
+}
+
+/**
+ * 10. Diary Invite — sent to a collaborator invited to co-edit a diary entry.
+ *     inviteId is embedded in the link so the recipient lands on the diary home
+ *     with their invite banner highlighted.
+ */
+export async function notifyDiaryInvite({ inviteeEmail, inviteeName, inviterName, diaryTitle, inviteId }) {
+  if (!inviteeEmail) return false;
+
+  const acceptLink = `${APP_URL}/?diary-invite=${inviteId ? encodeURIComponent(inviteId) : ''}`;
+
+  const body = `
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
+      Hi${inviteeName ? ' <strong>' + escapeHtml(inviteeName) + '</strong>' : ''},
+    </p>
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
+      <strong>${escapeHtml(inviterName || 'A colleague')}</strong> has invited you to co-edit a diary entry:
+    </p>
+    <div style="background: #f5f3ff; border-left: 4px solid #7c3aed; padding: 16px 20px; border-radius: 0 10px 10px 0; margin: 0 0 20px;">
+      <p style="font-size: 18px; font-weight: 700; color: #0f172a; margin: 0 0 4px;">
+        📓 ${escapeHtml(diaryTitle || 'Shared Entry')}
+      </p>
+      <p style="font-size: 13px; color: #7c3aed; margin: 0; font-weight: 600;">Editor access · Real-time collaboration</p>
+    </div>
+    <p style="font-size: 14px; color: #475569; margin: 0 0 24px; line-height: 1.6;">
+      Click the button below to open Dhanam Workspace and accept your invite.
+    </p>
+    <a href="${acceptLink}" style="display: inline-block; background: #7c3aed; color: #fff; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 15px; letter-spacing: 0.01em;">
+      ✅ Accept Invite &amp; Open Entry
+    </a>
+    <p style="font-size: 12px; color: #94a3b8; margin: 20px 0 0; line-height: 1.5;">
+      Sign in with your Dhanam Microsoft account when prompted.
+      If you didn't expect this invite, you can safely ignore this email.
+    </p>
+  `;
+
+  return sendEmail({
+    to: inviteeEmail,
+    subject: `${inviterName || 'A colleague'} invited you to co-edit "${diaryTitle}" on Dhanam Workspace`,
+    htmlBody: wrapHtml('Diary Collaboration Invite', body),
   });
 }
 
@@ -544,9 +597,23 @@ async function upgradeDrawingLink(orgUrl) {
   }
 }
 
-/** Render plain-text content (with auto-detected lists) into safe HTML. */
+/** Render diary entry content into safe HTML for email.
+ *  New entries are saved as HTML by the rich-text editor — use them directly.
+ *  Legacy entries stored as plain text are converted line-by-line.
+ */
 function entryContentToHtml(content) {
   if (!content) return '';
+
+  // Detect HTML content from the contentEditable editor (starts with a tag).
+  // Use it directly — it's already well-formed email-safe HTML.
+  if (/<[a-zA-Z]/.test(String(content))) {
+    // Wrap in a div that resets email-client margins so the content renders
+    // cleanly.  The editor's data-indent / data-restart attributes are harmless
+    // (email clients ignore unknown attributes).
+    return `<div style="font-size:15px; color:#1e293b; line-height:1.7;">${content}</div>`;
+  }
+
+  // ── Legacy plain-text path ────────────────────────────────────────────────
   const paragraphs = String(content).split(/\n\n+/);
 
   return paragraphs.map((para) => {
@@ -629,7 +696,7 @@ export async function shareDiaryEntry({ entry, recipients, senderName, personalN
       ${tagBlock}
     </div>
     ${dateStr ? `<p style="font-size: 13px; color: #64748b; margin: 0 0 16px;">${escapeHtml(dateStr)}</p>` : ''}
-    <div style="font-size: 15px; color: #1e293b; line-height: 1.7; margin: 14px 0 0;">
+    <div style="margin: 14px 0 0;">
       ${entryContentToHtml(entry.content)}
     </div>
     ${drawingsBlock}

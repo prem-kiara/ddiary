@@ -635,17 +635,30 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
             </span>
           )}
 
-          {/* Assignee avatar */}
-          {assigneeName ? (
-            <Avatar id={assigneeId} name={assigneeName} email={task.assigneeEmail} size="sm" title={`Assignee: ${assigneeName}`} />
-          ) : (
-            <span
-              className="w-7 h-7 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center flex-shrink-0"
-              title="Unassigned"
-            >
-              <User size={13} />
-            </span>
-          )}
+          {/* Assignee avatar(s) */}
+          <span style={{ display: 'flex', alignItems: 'center' }}>
+            {assigneeName ? (
+              <Avatar id={assigneeId} name={assigneeName} email={task.assigneeEmail} size="sm" title={`Assignee: ${assigneeName}`} />
+            ) : (
+              <span
+                className="w-7 h-7 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center flex-shrink-0"
+                title="Unassigned"
+              >
+                <User size={13} />
+              </span>
+            )}
+            {(task.coAssignees || []).map((ca, i) => (
+              <span key={ca.email || i} style={{ marginLeft: -6, zIndex: i + 1 }}>
+                <Avatar
+                  id={ca.uid || ca.email || String(i)}
+                  name={ca.name || ca.email}
+                  email={ca.email}
+                  size="sm"
+                  title={`Co-assignee: ${ca.name || ca.email}`}
+                />
+              </span>
+            ))}
+          </span>
         </span>
       </div>
 
@@ -1304,9 +1317,11 @@ export function AddTaskModal({
   const [notes,         setNotes]         = useState('');
   const [status,        setStatus]        = useState('open');
   const [priority,      setPriority]      = useState('high');
-  const [dueDate,       setDueDate]       = useState('');
-  const [assigneeEmail, setAssigneeEmail] = useState('');
-  const [saving,        setSaving]        = useState(false);
+  const [dueDate,         setDueDate]         = useState('');
+  const [assigneeEmails,  setAssigneeEmails]  = useState([]);   // multi-assignee
+  const [assigneePicker,  setAssigneePicker]  = useState(false);
+  const [assigneeSearch,  setAssigneeSearch]  = useState('');
+  const [saving,          setSaving]          = useState(false);
   const [categoryId,    setCategoryId]    = useState(initialCategoryId || '');
   const [subcategoryId, setSubcategoryId] = useState(initialSubcategoryId || '');
   const [reminder,      setReminder]      = useState(null);   // null = off
@@ -1322,6 +1337,14 @@ export function AddTaskModal({
   // Optional seed category/sub-category for a brand-new workspace (wsMode==='new')
   const [newWsCatName,  setNewWsCatName]  = useState('');
   const [newWsSubName,  setNewWsSubName]  = useState('');
+
+  // Close assignee picker on outside click
+  useEffect(() => {
+    if (!assigneePicker) return;
+    const close = () => { setAssigneePicker(false); setAssigneeSearch(''); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [assigneePicker]);
 
   // ── Fetch M365 org users ────────────────────────────────────────────────
   const [orgUsers, setOrgUsers] = useState([]);
@@ -1362,7 +1385,9 @@ export function AddTaskModal({
     if (wsMode === 'new' && !newWsName.trim()) return;
     setSaving(true);
     try {
-      const person = assigneeOptions.find(p => p.email?.toLowerCase() === assigneeEmail.toLowerCase());
+      const allPersons = assigneeEmails.map(e => assigneeOptions.find(p => p.email?.toLowerCase() === e.toLowerCase())).filter(Boolean);
+      const person = allPersons[0] || null;
+      const coAssignees = allPersons.slice(1).map(p => ({ uid: p.uid || null, email: p.email?.toLowerCase() || null, name: p.name || null }));
       // Hard timeout so the button can never freeze forever. If Firestore is
       // slow or the write is stuck behind an offline queue, we surface it.
       const ADD_TIMEOUT_MS = 25000;
@@ -1394,6 +1419,7 @@ export function AddTaskModal({
             assigneeUid:   person?.uid   || null,
             assigneeEmail: person?.email?.toLowerCase() || null,
             assigneeName:  person?.name  || null,
+            coAssignees:   coAssignees.length ? coAssignees : null,
             categoryId:    categoryId    || null,
             subcategoryId: subcategoryId || null,
             reminder:      reminderPayload,
@@ -1561,14 +1587,99 @@ export function AddTaskModal({
 
           {/* Assign to + Due Date */}
           <div className="form-grid-2">
-            <div>
+            <div style={{ position: 'relative' }}>
               <label style={labelStyle}>Assign to</label>
-              <select value={assigneeEmail} onChange={e => setAssigneeEmail(e.target.value)} style={inputStyle}>
-                <option value="">Unassigned</option>
-                {assigneeOptions.map(p => (
-                  <option key={p.email} value={p.email}>{p.name}</option>
-                ))}
-              </select>
+              {/* Pill display / trigger */}
+              <div
+                onClick={() => setAssigneePicker(o => !o)}
+                style={{
+                  ...inputStyle, cursor: 'pointer', display: 'flex', flexWrap: 'wrap',
+                  gap: 4, alignItems: 'center', minHeight: 44, padding: '6px 10px',
+                }}
+              >
+                {assigneeEmails.length === 0
+                  ? <span style={{ color: '#94a3b8', fontSize: 13, flex: 1 }}>Unassigned</span>
+                  : assigneeEmails.map(email => {
+                      const p = assigneeOptions.find(x => x.email?.toLowerCase() === email.toLowerCase());
+                      return (
+                        <span key={email} style={{
+                          background: '#ede9fe', color: '#6d28d9', borderRadius: 12,
+                          padding: '2px 8px 2px 10px', fontSize: 12, fontWeight: 600,
+                          display: 'inline-flex', alignItems: 'center', gap: 4,
+                        }}>
+                          {p?.name || email}
+                          <button
+                            type="button"
+                            onMouseDown={e => { e.stopPropagation(); setAssigneeEmails(prev => prev.filter(x => x !== email)); }}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#7c3aed', padding: 0, fontSize: 14, lineHeight: 1 }}
+                          >×</button>
+                        </span>
+                      );
+                    })
+                }
+                <ChevronDown size={12} style={{ marginLeft: 'auto', color: '#94a3b8', flexShrink: 0 }} />
+              </div>
+              {/* Dropdown checklist */}
+              {assigneePicker && (
+                <div
+                  onMouseDown={e => e.stopPropagation()}
+                  style={{
+                    position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0,
+                    zIndex: 200, background: '#fff', border: '1px solid #cbd5e1',
+                    borderRadius: 8, boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                  }}
+                >
+                  <div style={{ padding: '8px 10px', borderBottom: '1px solid #f1f5f9' }}>
+                    <input
+                      autoFocus
+                      type="text"
+                      value={assigneeSearch}
+                      onChange={e => setAssigneeSearch(e.target.value)}
+                      placeholder="Search people…"
+                      style={{
+                        width: '100%', padding: '6px 10px', fontSize: 13,
+                        border: '1px solid #e2e8f0', borderRadius: 6, outline: 'none',
+                        fontFamily: 'var(--font-body)', boxSizing: 'border-box',
+                      }}
+                    />
+                  </div>
+                  <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+                    {assigneeOptions.length === 0 && (
+                      <div style={{ padding: '10px 14px', fontSize: 13, color: '#94a3b8' }}>No members yet</div>
+                    )}
+                    {assigneeOptions
+                      .filter(p => !assigneeSearch || p.name?.toLowerCase().includes(assigneeSearch.toLowerCase()) || p.email?.toLowerCase().includes(assigneeSearch.toLowerCase()))
+                      .map(p => {
+                        const selected = assigneeEmails.includes(p.email?.toLowerCase());
+                        return (
+                          <label key={p.email} style={{
+                            display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px',
+                            cursor: 'pointer', background: selected ? '#f5f3ff' : 'transparent',
+                            transition: 'background 0.1s',
+                          }}
+                            onMouseEnter={e => e.currentTarget.style.background = selected ? '#ede9fe' : '#f8fafc'}
+                            onMouseLeave={e => e.currentTarget.style.background = selected ? '#f5f3ff' : 'transparent'}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={ev => setAssigneeEmails(prev =>
+                                ev.target.checked
+                                  ? [...prev, p.email?.toLowerCase()]
+                                  : prev.filter(x => x !== p.email?.toLowerCase())
+                              )}
+                              style={{ accentColor: '#7c3aed', width: 15, height: 15 }}
+                            />
+                            <span style={{ fontSize: 13, color: '#0f172a', fontWeight: selected ? 600 : 400 }}>
+                              {p.name}
+                            </span>
+                            {selected && <span style={{ marginLeft: 'auto', color: '#7c3aed', fontSize: 12 }}>✓</span>}
+                          </label>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
             </div>
             <div>
               <label style={labelStyle}>Due Date</label>
@@ -1797,17 +1908,22 @@ function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspac
         uid: user.uid, email: user.email, displayName: user.displayName || user.email,
       });
 
-      if (taskData.assigneeEmail) {
-        notifyTaskAssigned({
-          assigneeEmail: taskData.assigneeEmail,
-          assigneeName:  taskData.assigneeName,
+      // Notify all assignees (primary + co-assignees)
+      const allAssignees = [
+        taskData.assigneeEmail ? { email: taskData.assigneeEmail, name: taskData.assigneeName } : null,
+        ...(taskData.coAssignees || []),
+      ].filter(Boolean);
+      allAssignees.forEach(ca => {
+        if (ca.email) notifyTaskAssigned({
+          assigneeEmail: ca.email,
+          assigneeName:  ca.name,
           taskText:      taskData.text,
           dueDate:       taskData.dueDate,
           priority:      taskData.priority,
           ownerName:     user.displayName || user.email,
           ownerUid:      user.uid,
         }).catch(() => {});
-      }
+      });
     } catch (e) {
       logError(e, { location: 'KanbanBoard:WorkspaceBoardContent', action: 'addWorkspaceTask' }, user.uid);
       throw e;

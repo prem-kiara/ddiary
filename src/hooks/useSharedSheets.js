@@ -83,6 +83,7 @@ export async function inviteToSheet(sheetId, sheetTitle, inviter, inviteeEmail) 
     inviteeEmail: normalised,
     inviterName,
     sheetTitle,
+    inviteId,   // embeds a deep link → /sheets?invite=INVITE_ID in the email CTA
   }).catch(() => {
     // Email failure is non-fatal — the Firestore invite still works
     console.warn('Sheet invite email could not be sent (MS token may be unavailable).');

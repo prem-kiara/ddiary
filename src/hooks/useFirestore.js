@@ -252,6 +252,10 @@ export function useSheets() {
 
   const updateSheet = useCallback(async (id, updates) => {
     if (!user) return;
+    // Optimistic update: reflect changes in the local list immediately so the
+    // My Sheets card title is correct as soon as the user navigates back,
+    // without waiting for the Firestore onSnapshot round-trip.
+    setAllSheets(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
     return updateDoc(doc(db, 'users', user.uid, 'sheets', id), {
       ...updates, updatedAt: serverTimestamp(),
     });
@@ -373,6 +377,7 @@ export function useTasks() {
           assigneeEmail,
           assigneeName,
           taskText: task.text?.trim() || '',
+          notes:    task.notes?.trim() || null,
           dueDate: task.dueDate || null,
           priority: task.priority || 'medium',
           ownerName: user.displayName || user.email,

@@ -1,7 +1,11 @@
 import { useState } from 'react';
-import { BookOpen, Plus, Trash2, RotateCcw, Archive, ChevronRight, ChevronDown, FileText } from 'lucide-react';
+import { BookOpen, Plus, Trash2, RotateCcw, Archive, ChevronRight, ChevronDown, FileText, Download, Users, Share2 } from 'lucide-react';
 import { formatDateTime, formatTime } from '../utils/dates';
 import { TagBadge } from './shared/Pills';
+import { downloadEntryAsPDF } from '../utils/exportUtils';
+import { useMySharedDiaries } from '../hooks/useSharedDiaries';
+import { useAuth } from '../contexts/AuthContext';
+import ShareEntryModal from './ShareEntryModal';
 
 /** Returns true when content is HTML (new editor format). */
 const isHtml = (s) => s && /<[a-zA-Z]/.test(s);
@@ -45,11 +49,18 @@ export default function DiaryList({
   entries, trashedEntries = [], archivedEntries = [],
   loading, onView, onNew, onRestore, onPurge, onArchive, onUnarchive,
 }) {
-  const [trashOpen, setTrashOpen] = useState(false);
-  const [archiveOpen, setArchiveOpen] = useState(false);
-  const [expandedId, setExpandedId] = useState(null);
+  const { user } = useAuth();
+  const { sharedDiaries } = useMySharedDiaries(user?.uid);
 
-  const toggleExpand = (id) => setExpandedId(prev => (prev === id ? null : id));
+  // Entries shared with me = shared diaries where I'm NOT the owner
+  const sharedWithMe = sharedDiaries.filter(d => d.ownerId !== user?.uid);
+
+  const [entriesOpen,   setEntriesOpen]   = useState(true);
+  const [trashOpen,     setTrashOpen]     = useState(false);
+  const [archiveOpen,   setArchiveOpen]   = useState(false);
+  const [sharedOpen,    setSharedOpen]    = useState(true);
+  const [downloadingId, setDownloadingId] = useState(null);
+  const [sharingEntry,  setSharingEntry]  = useState(null);
 
   if (loading) {
     return <div className="empty-state fade-in"><p>Loading your entries...</p></div>;
@@ -57,10 +68,31 @@ export default function DiaryList({
 
   return (
     <div className="fade-in">
+      {sharingEntry && (
+        <ShareEntryModal
+          entry={sharingEntry}
+          onClose={() => setSharingEntry(null)}
+          showToast={() => {}}
+        />
+      )}
       <div className="page-head">
         <div style={{ flex: 1, minWidth: 0 }}>
-          <h2 className="section-title mb-0">Your Entries</h2>
-          <p className="text-sm text-slate-500 mt-0.5">Your thoughts, meetings, and ideas in one place.</p>
+          <button
+            onClick={() => setEntriesOpen(o => !o)}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none',
+              border: 'none', cursor: 'pointer', padding: 0, textAlign: 'left' }}
+          >
+            <h2 className="section-title mb-0" style={{ margin: 0 }}>Your Entries</h2>
+            <span style={{ color: 'var(--ink-lighter)', display: 'flex', alignItems: 'center' }}>
+              {entriesOpen ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--ink-lighter)', fontFamily: 'var(--font-body)', marginLeft: 2 }}>
+              {entries.length}
+            </span>
+          </button>
+          {entriesOpen && (
+            <p className="text-sm text-slate-500 mt-0.5">Your thoughts, meetings, and ideas in one place.</p>
+          )}
         </div>
         <div className="page-actions">
           <button className="btn btn-gold" onClick={onNew}>
@@ -69,7 +101,7 @@ export default function DiaryList({
         </div>
       </div>
 
-      {entries.length === 0 ? (
+      {entriesOpen && (entries.length === 0 ? (
         <div className="card empty-state">
           <BookOpen size={40} className="text-violet-400" />
           <p>Your diary is empty.</p>
@@ -77,7 +109,6 @@ export default function DiaryList({
         </div>
       ) : (
         entries.map(entry => {
-          const isExpanded = expandedId === entry.id;
           const accent = pickAccent(entry.id);
           return (
             <div
@@ -85,10 +116,9 @@ export default function DiaryList({
               className={`card overflow-hidden border-l-4 ${accent}`}
               style={{ padding: 0, cursor: 'default' }}
             >
-              {/* ── Header row (always visible) ── */}
               <div
                 className="flex items-center gap-3 px-4 py-3.5 cursor-pointer"
-                onClick={() => toggleExpand(entry.id)}
+                onClick={() => onView(entry)}
               >
                 <div className="w-9 h-9 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center flex-shrink-0">
                   <FileText size={17} />
@@ -104,6 +134,31 @@ export default function DiaryList({
                 </div>
                 <button
                   className="btn-icon flex-shrink-0"
+                  title="Download as PDF"
+                  disabled={downloadingId === entry.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDownloadingId(entry.id);
+                    downloadEntryAsPDF(entry)
+                      .catch(err => console.error('PDF download failed:', err))
+                      .finally(() => setDownloadingId(null));
+                  }}
+                  style={{ color: '#7c3aed', opacity: downloadingId === entry.id ? 0.5 : 1 }}
+                >
+                  {downloadingId === entry.id
+                    ? <span style={{ fontSize: 10 }}>…</span>
+                    : <Download size={15} />
+                  }
+                </button>
+                <button
+                  className="btn-icon flex-shrink-0"
+                  title="Share this entry via email"
+                  onClick={(e) => { e.stopPropagation(); setSharingEntry(entry); }}
+                >
+                  <Share2 size={15} />
+                </button>
+                <button
+                  className="btn-icon flex-shrink-0"
                   title="Archive this entry"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -114,44 +169,70 @@ export default function DiaryList({
                 >
                   <Archive size={16} />
                 </button>
-                <button
-                  className="btn-icon flex-shrink-0"
-                  title={isExpanded ? 'Collapse' : 'Expand'}
-                  onClick={(e) => { e.stopPropagation(); toggleExpand(entry.id); }}
-                  style={{ color: 'var(--gold)' }}
-                >
-                  {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                </button>
               </div>
-
-              {/* ── Expanded content ── */}
-              {isExpanded && (
-                <div className="border-t border-slate-100 bg-slate-50/60 px-4 pt-3 pb-4">
-                  {entry.content ? (
-                    isHtml(entry.content) ? (
-                      <div
-                        className="diary-html-content text-sm leading-relaxed text-slate-700 mb-3"
-                        dangerouslySetInnerHTML={{ __html: entry.content }}
-                      />
-                    ) : (
-                      <p className="text-sm leading-relaxed text-slate-700 whitespace-pre-wrap mb-3">
-                        {entry.content}
-                      </p>
-                    )
-                  ) : (
-                    <p className="text-sm leading-relaxed mb-3">
-                      <em className="text-slate-400">No content</em>
-                    </p>
-                  )}
-                  <button className="btn btn-sm btn-outline" onClick={() => onView(entry)}>
-                    <ChevronRight size={14} /> Open Full Entry
-                  </button>
-                </div>
-              )}
             </div>
           );
         })
-      )}
+      ))}
+
+      {/* ── Shared with me ───────────────────────────────────────────── */}
+      <div style={{ marginTop: 24 }}>
+        <button
+          onClick={() => setSharedOpen(o => !o)}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+            background: 'none', border: 'none', cursor: 'pointer', padding: '4px 0 10px',
+            textAlign: 'left' }}
+        >
+          <Users size={14} style={{ color: '#7c3aed', flexShrink: 0 }} />
+          <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: 'var(--ink-light)',
+            textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            Shared with me ({sharedWithMe.length})
+          </span>
+          <span style={{ color: 'var(--ink-lighter)' }}>
+            {sharedOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          </span>
+        </button>
+
+        {sharedOpen && (sharedWithMe.length === 0 ? (
+          <div style={{ padding: '6px 0', color: 'var(--ink-lighter)', fontSize: 13, fontStyle: 'italic' }}>
+            No diary entries shared with you yet.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {sharedWithMe.map(d => (
+              <div
+                key={d.id}
+                className="card"
+                style={{ cursor: 'pointer', padding: '14px 18px',
+                  border: '1px solid #ddd6fe', background: '#faf5ff' }}
+                onClick={() => onView({ ...d, isSharedWithMe: true })}
+              >
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, background: '#7c3aed22',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <Users size={18} style={{ color: '#7c3aed' }} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ margin: '0 0 3px', fontWeight: 600, fontSize: 15,
+                      fontFamily: 'var(--font-heading)', color: 'var(--ink)',
+                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {d.title || 'Untitled Entry'}
+                    </p>
+                    <p style={{ margin: 0, fontSize: 12, color: '#7c3aed', fontFamily: 'var(--font-body)' }}>
+                      Shared by {d.ownerName || d.ownerEmail}
+                    </p>
+                  </div>
+                  {d.tag && (
+                    <div style={{ flexShrink: 0 }}>
+                      <TagBadge tag={d.tag} />
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
 
       {/* ── Archived Entries ─────────────────────────────────────────── */}
       {archivedEntries.length > 0 && (

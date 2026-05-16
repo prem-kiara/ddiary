@@ -9,11 +9,12 @@ import { useState } from 'react';
 import {
   Plus, Table2, Trash2, FileSpreadsheet,
   Archive, RotateCcw, ChevronRight, ChevronDown,
-  Share2, Users,
+  Share2, Users, Download,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { shareSheet, useMySharedSheets } from '../hooks/useSharedSheets';
 import ShareSheetModal from './ShareSheetModal';
+import { downloadSheetAsExcel } from '../utils/exportUtils';
 
 const formatDate = (ts) => {
   if (!ts) return '';
@@ -40,8 +41,9 @@ export default function SpreadsheetList({
   const [sharedOpen,   setSharedOpen]   = useState(true);
   const [archiveOpen,  setArchiveOpen]  = useState(false);
   const [trashOpen,    setTrashOpen]    = useState(false);
-  const [sharingSheet, setSharingSheet] = useState(null); // { id, title }
-  const [sharingBusy,  setSharingBusy]  = useState(null); // sheetId being shared
+  const [sharingSheet,   setSharingSheet]   = useState(null); // { id, title }
+  const [sharingBusy,    setSharingBusy]    = useState(null); // sheetId being shared
+  const [downloadingId,  setDownloadingId]  = useState(null); // sheetId being downloaded
 
   const handleCreate = async () => {
     const t = newTitle.trim() || 'Untitled Sheet';
@@ -129,78 +131,88 @@ export default function SpreadsheetList({
             <p className="text-sm mt-1 text-slate-500">Create your first sheet above.</p>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14 }}>
-            {sheets.map(sheet => (
-              <div
-                key={sheet.id}
-                className="card"
-                style={{ cursor: 'pointer', padding: '16px 18px', position: 'relative' }}
-                onClick={() => onOpen(sheet)}
-              >
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
-                  <Table2 size={20} style={{ color: 'var(--gold)', flexShrink: 0, marginTop: 2 }} />
-                  <div style={{ flex: 1, minWidth: 0, paddingRight: 100 }}>
-                    <p style={{
-                      margin: '0 0 4px', fontWeight: 600, fontSize: 15,
-                      fontFamily: 'var(--font-heading)', color: 'var(--ink)',
-                      whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    }}>
-                      {sheet.title || 'Untitled Sheet'}
-                    </p>
-                    <p style={{ margin: 0, fontSize: 12, color: 'var(--ink-lighter)', fontFamily: 'var(--font-body)' }}>
-                      Updated {formatDate(sheet.updatedAt)}
-                    </p>
-                    {sheet.isShared && (
-                      <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 8,
-                        background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0',
-                        display: 'inline-flex', alignItems: 'center', gap: 3, marginTop: 4 }}>
-                        <Users size={9} /> Shared
-                      </span>
-                    )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {sheets.map((sheet, idx) => {
+              const ACCENTS = ['border-l-amber-400','border-l-teal-400','border-l-violet-400','border-l-blue-400','border-l-rose-400','border-l-emerald-400','border-l-indigo-400'];
+              const accent = ACCENTS[idx % ACCENTS.length];
+              return (
+                <div
+                  key={sheet.id}
+                  className={`card overflow-hidden border-l-4 ${accent}`}
+                  style={{ padding: 0, cursor: 'pointer' }}
+                  onClick={() => onOpen(sheet)}
+                >
+                  <div className="flex items-center gap-3 px-4 py-3.5">
+                    <div className="w-9 h-9 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center flex-shrink-0">
+                      <Table2 size={17} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                        <h3 className="entry-title truncate m-0">{sheet.title || 'Untitled Sheet'}</h3>
+                        {sheet.isShared && (
+                          <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 8,
+                            background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0',
+                            display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                            <Users size={9} /> Shared
+                          </span>
+                        )}
+                      </div>
+                      <p className="entry-date m-0">Updated {formatDate(sheet.updatedAt)}</p>
+                    </div>
+
+                    {/* Action buttons */}
+                    <button
+                      className="btn-icon flex-shrink-0"
+                      title="Download as Excel (.xlsx)"
+                      disabled={downloadingId === sheet.id}
+                      onClick={e => {
+                        e.stopPropagation();
+                        setDownloadingId(sheet.id);
+                        downloadSheetAsExcel(sheet)
+                          .catch(err => console.error('Download failed:', err))
+                          .finally(() => setDownloadingId(null));
+                      }}
+                      style={{ color: '#7c3aed', opacity: downloadingId === sheet.id ? 0.5 : 1 }}
+                    >
+                      {downloadingId === sheet.id ? <span style={{ fontSize: 10 }}>…</span> : <Download size={15} />}
+                    </button>
+                    <button
+                      className="btn-icon flex-shrink-0"
+                      title={sheet.isShared ? 'Manage sharing' : 'Share this sheet'}
+                      disabled={sharingBusy === sheet.id}
+                      onClick={e => handleShare(e, sheet)}
+                      style={{ color: sheet.isShared ? '#16a34a' : undefined }}
+                    >
+                      {sharingBusy === sheet.id ? <span style={{ fontSize: 11 }}>…</span> : <Share2 size={15} />}
+                    </button>
+                    <button
+                      className="btn-icon flex-shrink-0"
+                      title="Archive this sheet"
+                      onClick={e => {
+                        e.stopPropagation();
+                        if (window.confirm('Archive this sheet? You can restore it from the Archived section below.')) {
+                          onArchive(sheet.id);
+                        }
+                      }}
+                    >
+                      <Archive size={15} />
+                    </button>
+                    <button
+                      className="btn-icon flex-shrink-0"
+                      title="Move to trash"
+                      onClick={e => {
+                        e.stopPropagation();
+                        if (window.confirm(`Move "${sheet.title || 'Untitled Sheet'}" to trash?`)) {
+                          onTrash(sheet.id);
+                        }
+                      }}
+                    >
+                      <Trash2 size={15} style={{ color: '#dc2626' }} />
+                    </button>
                   </div>
                 </div>
-
-                {/* Share + Archive + Trash buttons */}
-                <div style={{ position: 'absolute', top: 10, right: 10, display: 'flex', gap: 4 }}>
-                  <button
-                    className="btn-icon"
-                    title={sheet.isShared ? 'Manage sharing' : 'Share this sheet'}
-                    disabled={sharingBusy === sheet.id}
-                    onClick={e => handleShare(e, sheet)}
-                    style={{ color: sheet.isShared ? '#16a34a' : undefined }}
-                  >
-                    {sharingBusy === sheet.id
-                      ? <span style={{ fontSize: 11 }}>…</span>
-                      : <Share2 size={14} />
-                    }
-                  </button>
-                  <button
-                    className="btn-icon"
-                    title="Archive this sheet"
-                    onClick={e => {
-                      e.stopPropagation();
-                      if (window.confirm('Archive this sheet? You can restore it from the Archived section below.')) {
-                        onArchive(sheet.id);
-                      }
-                    }}
-                  >
-                    <Archive size={14} />
-                  </button>
-                  <button
-                    className="btn-icon"
-                    title="Move to trash"
-                    onClick={e => {
-                      e.stopPropagation();
-                      if (window.confirm(`Move "${sheet.title || 'Untitled Sheet'}" to trash?`)) {
-                        onTrash(sheet.id);
-                      }
-                    }}
-                  >
-                    <Trash2 size={14} style={{ color: '#dc2626' }} />
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ))}
       </div>

@@ -19,6 +19,8 @@ import Dashboard from './components/Dashboard';
 import SpreadsheetList from './components/SpreadsheetList';
 import SpreadsheetGrid from './components/SpreadsheetGrid';
 import SheetInviteBanner from './components/SheetInviteBanner';
+import DiaryInviteBanner from './components/DiaryInviteBanner';
+import { saveSharedDiary } from './hooks/useSharedDiaries';
 import './styles/diary.css';
 
 // ─── Route wrappers ──────────────────────────────────────────────────────────
@@ -100,8 +102,21 @@ function SheetGridPage({ sheets, onSave }) {
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
-  const sheet = location.state?.sheet || sheets.find(s => s.id === id);
-  const isShared = !!(location.state?.isShared || sheet?.isShared);
+  // Prefer the live data from the Firestore store (always up-to-date title + data).
+  // Fall back to location state only if the sheet hasn't loaded yet.
+  const sheet = sheets.find(s => s.id === id) || location.state?.sheet;
+
+  // isShared = true ONLY when the user is a collaborator who opened the sheet
+  // from the "Shared with me" section (location.state.isShared is set explicitly
+  // in that case by onOpenShared).
+  //
+  // Do NOT derive isShared from sheet.isShared — that flag just means the owner
+  // has shared the sheet with others.  When the OWNER opens their own shared
+  // sheet, saves must still go to their own users/{uid}/sheets collection (via
+  // onSave), not to the sharedSheets collection.  Using sheet.isShared here was
+  // the root cause of title changes never reaching the My Sheets list.
+  const isCollaborator = location.state?.isShared === true;
+  const isShared = isCollaborator;
 
   if (!sheet) return <Navigate to="/sheets" replace />;
 
@@ -137,20 +152,42 @@ function DiaryApp() {
   const [toast, setToast] = useState(null);
   const showToast = useCallback((message, type = 'info') => setToast({ message, type }), []);
 
-  // ─── Handle ?workspace= invite link for already-authenticated users ─────────
-  // Auth.jsx handles this for unauthenticated users.  For users who are already
+  // ─── Invite highlight IDs (from deep links) ──────────────────────────────
+  const [highlightInviteId,       setHighlightInviteId]       = useState(null);
+  const [highlightDiaryInviteId,  setHighlightDiaryInviteId]  = useState(null);
+
+  // ─── Handle ?workspace= and ?invite= deep links for already-auth'd users ───
+  // Auth.jsx handles these for unauthenticated users.  For users who are already
   // signed in, they land straight in the app and Auth.jsx never renders, so we
-  // process the param here instead — and clean up the URL afterwards.
+  // process the params here instead — and clean up the URL afterwards.
   useEffect(() => {
     if (!user) return;
     const params  = new URLSearchParams(window.location.search);
+
+    // Workspace join link
     const wsParam = params.get('workspace');
-    if (!wsParam) return;
-    // Clean the URL immediately so back-navigation doesn't re-trigger this
-    window.history.replaceState({}, '', window.location.pathname);
-    joinWorkspace(wsParam)
-      .then(() => showToast('You have joined the workspace!', 'success'))
-      .catch(() => showToast('Could not join workspace — the link may have expired.', 'warning'));
+    if (wsParam) {
+      window.history.replaceState({}, '', window.location.pathname);
+      joinWorkspace(wsParam)
+        .then(() => showToast('You have joined the workspace!', 'success'))
+        .catch(() => showToast('Could not join workspace — the link may have expired.', 'warning'));
+    }
+
+    // Sheet invite deep link — navigate to /sheets and highlight the invite card
+    const inviteParam = params.get('invite');
+    if (inviteParam) {
+      window.history.replaceState({}, '', window.location.pathname);
+      setHighlightInviteId(inviteParam);
+      if (window.location.pathname !== '/sheets') navigate('/sheets');
+    }
+
+    // Diary invite deep link — navigate to / and highlight the invite banner
+    const diaryInviteParam = params.get('diary-invite');
+    if (diaryInviteParam) {
+      window.history.replaceState({}, '', window.location.pathname);
+      setHighlightDiaryInviteId(diaryInviteParam);
+      if (window.location.pathname !== '/') navigate('/');
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]); // run once per sign-in, not on every render
 
@@ -193,10 +230,21 @@ function DiaryApp() {
   }, [unreadCount]);
 
   // ─── Entry handlers ──────────────────────────────────────────────────────
-  // editingId is supplied by DiaryEditorPage when an existing entry is being edited.
   const handleSaveEntry = async (entryData, editingId = null) => {
-    if (editingId) await updateEntry(editingId, entryData);
-    else           await addEntry(entryData);
+    if (editingId) {
+      // If this entry is shared, propagate changes to sharedDiaries as well
+      const editingEntry = entries.find(e => e.id === editingId)
+        || archivedEntries.find(e => e.id === editingId);
+      if (editingEntry?.isShared) {
+        // Save to both personal store and shared store
+        await updateEntry(editingId, entryData);
+        await saveSharedDiary(editingId, entryData, user).catch(() => {});
+      } else {
+        await updateEntry(editingId, entryData);
+      }
+    } else {
+      await addEntry(entryData);
+    }
     navigate('/');
   };
 
@@ -256,7 +304,8 @@ function DiaryApp() {
     <>
       {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
       <WorkspaceInvitePrompt showToast={showToast} />
-      <SheetInviteBanner showToast={showToast} />
+      <SheetInviteBanner showToast={showToast} highlightInviteId={highlightInviteId} />
+      <DiaryInviteBanner showToast={showToast} highlightInviteId={highlightDiaryInviteId} />
       <Layout pendingCount={pendingCount} isSuperAdmin={isSuperAdmin} {...commonLayoutProps}>
         <ErrorBoundary>
         <Routes>

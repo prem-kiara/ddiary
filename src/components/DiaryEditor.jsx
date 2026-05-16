@@ -1,14 +1,66 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Save, X, Bold, Italic, Underline, Strikethrough, List, ListOrdered } from 'lucide-react';
+import { Save, X, Bold, Italic, Underline, Strikethrough, List, ListOrdered, Table2 } from 'lucide-react';
 
 // ── Pure helpers (no React deps) ──────────────────────────────────────────────
 
-function detectListPrefix(text) {
-  const numbered = text.match(/^(\d+)([.)]\s+)(.*)/);
-  if (numbered) {
-    return { type: 'numbered', num: parseInt(numbered[1]), sep: numbered[2], body: numbered[3] };
+function getIndentLevel(block) {
+  return parseInt(block?.dataset?.indent || '0');
+}
+
+function setIndentLevel(block, level) {
+  if (!block) return;
+  level = Math.max(0, Math.min(3, level));
+  if (level === 0) {
+    delete block.dataset.indent;
+  } else {
+    block.dataset.indent = String(level);
   }
-  const bullet = text.match(/^([-*•]\s+)(.*)/);
+}
+
+// Get the <td> or <th> ancestor of a node within the editor, if any.
+function getCurrentCell(node, editorEl) {
+  let n = node;
+  while (n && n !== editorEl) {
+    if (n.nodeName === 'TD' || n.nodeName === 'TH') return n;
+    n = n.parentNode;
+  }
+  return null;
+}
+
+// Select all content in a cell and move cursor to end.
+function selectCell(cell) {
+  if (!cell) return;
+  const sel = window.getSelection();
+  const range = document.createRange();
+  range.selectNodeContents(cell);
+  range.collapse(false);
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
+
+/**
+ * Detect list prefix on a block.
+ * Supports:
+ *   - Nested numbered:  1.   /  1.1.  /  1.1.1.  etc.
+ *   - Bullets:          - text  /  * text  /  • text
+ *
+ * The trailing space after the last digit+dot is optional so that blocks
+ * where the cursor landed mid-prefix (and the space is missing) are still
+ * detected and can be renumbered / continued correctly.
+ */
+function detectListPrefix(text) {
+  // Allow zero or one space after the final period so mis-formatted prefixes
+  // (e.g. "3.1.Test Entry" missing the trailing space) are still recognised.
+  const numbered = text.match(/^([\d]+(?:\.[\d]+)*\. ?)(.*)/s);
+  if (numbered) {
+    const rawPrefix = numbered[1];
+    // Normalise: ensure exactly one trailing space
+    const prefix = rawPrefix.trimEnd() + '. ';
+    const nums = (prefix.match(/\d+/g) || []).map(Number);
+    const num  = nums[nums.length - 1] || 1;
+    return { type: 'numbered', prefix, nums, num, sep: '. ', body: numbered[2] };
+  }
+  const bullet = text.match(/^([-*•]\s+)(.*)/s);
   if (bullet) {
     return { type: 'bullet', prefix: bullet[1], body: bullet[2] };
   }
@@ -16,43 +68,63 @@ function detectListPrefix(text) {
 }
 
 /**
- * Walk every direct-child block in the contentEditable and fix the sequential
- * numbering of any numbered-list run.  Preserves the starting number of each
- * run so intentional offsets are kept.
+ * Walk every direct-child block in the contentEditable and fix sequential
+ * numbering across all indent levels.
+ * Counters are maintained per-level: [level0, level1, level2, level3]
+ * Prefix format: 1. / 2.1. / 2.1.3. etc.
  */
 function fixNumberedListsInDOM(editorEl) {
   if (!editorEl) return;
-  const blocks = Array.from(editorEl.children);
-  let expectedNum = null;
-  let blockSep    = null;
+  const blocks  = Array.from(editorEl.children);
+  const counters = [0, 0, 0, 0];
 
   blocks.forEach(block => {
-    const text = block.textContent;
-    const m    = text.match(/^(\d+)([.)]\s)/);
-    if (m) {
-      const num = parseInt(m[1]);
-      if (expectedNum === null) {
-        // First item in this run — anchor the expected sequence here
-        expectedNum = num + 1;
-        blockSep    = m[2];
-      } else if (num !== expectedNum) {
-        // Out-of-sequence — patch the leading text node
-        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
-        const firstTxt = walker.nextNode();
-        if (firstTxt) {
-          firstTxt.nodeValue = firstTxt.nodeValue.replace(
-            /^\d+([.)]\s)/,
-            `${expectedNum}$1`,
-          );
+    // ── Skip tables entirely — a table in the middle of a numbered list
+    // should not break the sequence; counters carry through unmodified.
+    if (block.nodeName === 'TABLE') return;
+
+    const level = getIndentLevel(block);
+    const text  = block.textContent;
+
+    // ── Skip empty blocks (<p><br></p>, whitespace-only paragraphs) ──────
+    // An empty line between list items should not reset the counter; only
+    // a block that actually contains non-list non-empty text resets it.
+    if (!text.trim()) return;
+
+    // Allow missing trailing space so stale/mis-formatted blocks are
+    // still detected and healed (e.g. "3.1.Text" → "3.1. Text").
+    const isNumbered = /^[\d]+(?:\.[\d]+)*\. ?/.test(text);
+
+    if (isNumbered) {
+      // If the block carries a restart marker, reset this level and all
+      // deeper levels so numbering begins at 1 again from this point.
+      if (block.dataset.restart === 'true') {
+        counters[level] = 0;
+        for (let i = level + 1; i < counters.length; i++) counters[i] = 0;
+      }
+      counters[level]++;
+      // Reset all deeper levels
+      for (let i = level + 1; i < counters.length; i++) counters[i] = 0;
+
+      // Always emit a prefix with exactly one trailing space for consistency.
+      const expectedPrefix = counters.slice(0, level + 1).join('.') + '. ';
+
+      const walker   = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+      const firstTxt = walker.nextNode();
+      if (firstTxt) {
+        // IMPORTANT: only mutate the text node when the prefix actually
+        // needs to change.  Touching nodeValue even with the same string
+        // invalidates the browser's current Selection and moves the cursor
+        // to offset 0 — which is why the cursor was jumping left while typing.
+        const updated = firstTxt.nodeValue.replace(/^[\d]+(?:\.[\d]+)*\. ?/, expectedPrefix);
+        if (updated !== firstTxt.nodeValue) {
+          firstTxt.nodeValue = updated;
         }
-        expectedNum++;
-      } else {
-        expectedNum++;
       }
     } else {
-      // Non-list line — reset the run
-      expectedNum = null;
-      blockSep    = null;
+      // Non-empty, non-numbered block: reset this level and deeper counters
+      counters[level] = 0;
+      for (let i = level + 1; i < counters.length; i++) counters[i] = 0;
     }
   });
 }
@@ -66,20 +138,17 @@ function legacyTextToHtml(text) {
   if (!text) return '';
   if (/<[a-zA-Z]/.test(text)) return text; // already HTML
 
-  // Escape entities first
   let s = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  // Convert markdown inline markers → HTML
   s = s
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/__(.+?)__/g,     '<u>$1</u>')
     .replace(/~~(.+?)~~/g,     '<s>$1</s>')
     .replace(/\*(.+?)\*/g,     '<em>$1</em>');
 
-  // Wrap each line in <p>; empty lines become <p><br></p>
   return s
     .split('\n')
     .map(line => (line ? `<p>${line}</p>` : '<p><br></p>'))
@@ -88,16 +157,16 @@ function legacyTextToHtml(text) {
 
 // ── Shared toolbar button style & hover helper ────────────────────────────────
 const toolbarBtnStyle = {
-  background:   'none',
-  border:       '1px solid transparent',
-  borderRadius: 6,
-  cursor:       'pointer',
-  padding:      '4px 7px',
-  color:        'var(--ink)',
-  display:      'flex',
-  alignItems:   'center',
+  background:     'none',
+  border:         '1px solid transparent',
+  borderRadius:   6,
+  cursor:         'pointer',
+  padding:        '4px 7px',
+  color:          'var(--ink)',
+  display:        'flex',
+  alignItems:     'center',
   justifyContent: 'center',
-  transition:   'background 0.12s, border-color 0.12s',
+  transition:     'background 0.12s, border-color 0.12s',
 };
 const applyHover = (e, on) => {
   e.currentTarget.style.background  = on ? 'var(--paper)' : 'none';
@@ -106,64 +175,207 @@ const applyHover = (e, on) => {
 
 // ── Shared quick-key button style ─────────────────────────────────────────────
 const quickKeyStyle = {
-  background:    'var(--paper-dark)',
-  border:        '1px solid var(--paper-line)',
-  borderRadius:  8,
-  cursor:        'pointer',
-  fontSize:      20,
-  width:         46,
-  height:        46,
-  display:       'flex',
-  alignItems:    'center',
-  justifyContent:'center',
-  fontFamily:    'system-ui, sans-serif',
-  color:         'var(--ink)',
-  transition:    'background 0.15s ease',
-  userSelect:    'none',
+  background:       'var(--paper-dark)',
+  border:           '1px solid var(--paper-line)',
+  borderRadius:     8,
+  cursor:           'pointer',
+  fontSize:         20,
+  width:            46,
+  height:           46,
+  display:          'flex',
+  alignItems:       'center',
+  justifyContent:   'center',
+  fontFamily:       'system-ui, sans-serif',
+  color:            'var(--ink)',
+  transition:       'background 0.15s ease',
+  userSelect:       'none',
   WebkitUserSelect: 'none',
 };
 
+// Highlight colour palette
+const HIGHLIGHT_COLORS = [
+  { color: '#fef08a', title: 'Yellow highlight'  },
+  { color: '#bbf7d0', title: 'Green highlight'   },
+  { color: '#fce7f3', title: 'Pink highlight'    },
+  { color: '#bfdbfe', title: 'Blue highlight'    },
+  { color: '#fed7aa', title: 'Orange highlight'  },
+];
+
+// Table cell inline style string (used when inserting / adding rows)
+const TD_STYLE = 'border:1px solid #e2e8f0;padding:4px 6px;min-width:0;vertical-align:top';
+
+/**
+ * Returns true when `range` is collapsed at the very beginning of `block`
+ * (before any text or child elements).
+ */
+function isAtBlockStart(range, block) {
+  if (!range || !range.collapsed || !block) return false;
+  if (range.startContainer === block && range.startOffset === 0) return true;
+  if (range.startOffset !== 0) return false;
+  // Walk up from the start container: every ancestor up to the block must
+  // have no previous sibling (i.e., we are on the leftmost path).
+  let node = range.startContainer;
+  while (node && node !== block) {
+    if (node.previousSibling) return false;
+    node = node.parentNode;
+  }
+  return node === block;
+}
+
+/**
+ * Place the cursor at the very end of a block.
+ * We walk into the deepest last child so the cursor is inside the final
+ * text node (not at element-level offset N), which makes the next Backspace
+ * delete a character rather than an element node.
+ */
+function placeCursorAtEnd(block, sel) {
+  if (!block || !sel) return;
+  function deepLast(node) {
+    return node.lastChild ? deepLast(node.lastChild) : node;
+  }
+  const target = deepLast(block);
+  const r = document.createRange();
+  if (target.nodeType === Node.TEXT_NODE) {
+    r.setStart(target, target.length);
+    r.setEnd(target, target.length);
+  } else if (target.nodeName === 'BR') {
+    // Place cursor right before the <br> (= end of visible content)
+    r.setStartBefore(target);
+    r.collapse(true);
+  } else {
+    r.selectNodeContents(block);
+    r.collapse(false);
+  }
+  sel.removeAllRanges();
+  sel.addRange(r);
+}
+
+/**
+ * Set all cells in the table to the same fractional width so columns are
+ * uniform after adding or removing a column.
+ */
+function equalizeColumns(table) {
+  const firstRow = table.querySelector('tr');
+  if (!firstRow) return;
+  const colCount = firstRow.children.length;
+  if (colCount === 0) return;
+  const pct = `${(100 / colCount).toFixed(2)}%`;
+  Array.from(table.querySelectorAll('td, th')).forEach(cell => {
+    cell.style.width = pct;
+  });
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast }) {
-  const [title,        setTitle]        = useState('');
-  const [saving,       setSaving]       = useState(false);
-  const [showQuickKeys,setShowQuickKeys]= useState(true);
-  const [draftStatus,  setDraftStatus]  = useState('idle'); // 'idle'|'saving'|'saved'|'restored'
-  const [isEmpty,      setIsEmpty]      = useState(true);
+  const [title,         setTitle]         = useState('');
+  const [saving,        setSaving]        = useState(false);
+  const [draftStatus,   setDraftStatus]   = useState('idle'); // 'idle'|'saving'|'saved'|'restored'
+  const [isEmpty,       setIsEmpty]       = useState(true);
+  // Table right-click context menu: { x, y, cell, table } | null
+  const [tableMenu,     setTableMenu]     = useState(null);
+  // List right-click context menu: { x, y, block, hasRestart } | null
+  const [listMenu,      setListMenu]      = useState(null);
+  // Row / Col background-color picker open in toolbar: null | 'row' | 'col'
+  const [cellBgPicker,  setCellBgPicker]  = useState(null);
 
   const editorRef         = useRef(null);
-  const titleRef          = useRef('');           // always mirrors `title` state
+  const titleRef          = useRef('');
   const entryIdRef        = useRef(editingEntry?.id || 'new');
   const autoSaveTimerRef  = useRef(null);
-  const skipFirstSaveRef  = useRef(true);         // skip autosave on initial load
+  const skipFirstSaveRef  = useRef(true);
+  const editorWrapRef     = useRef(null);   // wrapper for cursor-style changes
+  const resizeDragRef     = useRef(null);   // active resize drag state
+  const hoverResizeRef    = useRef(null);   // current hover: {type:'col'|'row', cell}
+  // Table drag-move — fully imperative (no React state) to prevent flicker
+  const tableDragRef      = useRef(null);   // {table, insertBefore: Element|null}
+  const hoveredTableRef   = useRef(null);   // which table the handle is shown for
+  const dragHandleElRef   = useRef(null);   // the handle DOM node (created imperatively)
+  const dropLineElRef     = useRef(null);   // the drop-line DOM node (created imperatively)
+  const prevBlockCountRef = useRef(0);      // tracks child count to detect structural changes
 
-  // Keep titleRef in sync with state so the autosave closure always reads fresh value
   useEffect(() => { titleRef.current = title; }, [title]);
+
+  // ── Create drag handle + drop-line DOM nodes imperatively ─────────────────
+  // Using React state for these causes flicker: there is always a gap between
+  // setState() and React actually committing the new DOM, during which the ref
+  // is null and the guard check fails.  Imperative nodes have zero re-render lag.
+  useEffect(() => {
+    const wrap = editorWrapRef.current;
+    if (!wrap) return;
+
+    // Drag handle — positioned inside the table's top-left corner (no gap = no flicker)
+    const handle = document.createElement('div');
+    handle.title = 'Drag to move table';
+    handle.textContent = '⠿';
+    Object.assign(handle.style, {
+      position: 'absolute', display: 'none', zIndex: '100',
+      cursor: 'grab', background: '#7c3aed', color: '#fff',
+      borderRadius: '3px', width: '20px', height: '18px',
+      alignItems: 'center', justifyContent: 'center',
+      fontSize: '12px', userSelect: 'none', lineHeight: '1',
+      pointerEvents: 'all', opacity: '0.85',
+      boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+    });
+    wrap.appendChild(handle);
+    dragHandleElRef.current = handle;
+
+    // Drop indicator (horizontal purple line)
+    const dropLine = document.createElement('div');
+    Object.assign(dropLine.style, {
+      position: 'absolute', display: 'none', left: '0', right: '0',
+      height: '3px', background: '#7c3aed', borderRadius: '2px',
+      pointerEvents: 'none', zIndex: '20',
+    });
+    wrap.appendChild(dropLine);
+    dropLineElRef.current = dropLine;
+
+    const onHandleMouseDown = (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const table = hoveredTableRef.current;
+      if (!table) return;
+      tableDragRef.current    = { table, insertBefore: null };
+      handle.style.display    = 'none';
+      document.body.style.cursor = 'grabbing';
+    };
+    handle.addEventListener('mousedown', onHandleMouseDown);
+
+    return () => {
+      handle.removeEventListener('mousedown', onHandleMouseDown);
+      handle.remove();
+      dropLine.remove();
+      dragHandleElRef.current = null;
+      dropLineElRef.current = null;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Load entry + restore draft ──────────────────────────────────────────────
   useEffect(() => {
-    entryIdRef.current   = editingEntry?.id || 'new';
-    skipFirstSaveRef.current = true;
+    entryIdRef.current        = editingEntry?.id || 'new';
+    skipFirstSaveRef.current  = true;
 
     const rawContent = editingEntry?.content || '';
     const ttl        = editingEntry?.title   || '';
     const html       = legacyTextToHtml(rawContent) || '<p><br></p>';
 
-    // Check for a newer local draft
     try {
       const key = `ddiary_draft_${entryIdRef.current}`;
       const raw = localStorage.getItem(key);
       if (raw) {
-        const draft     = JSON.parse(raw);
-        const ut        = editingEntry?.updatedAt;
-        const savedAt   = ut
+        const draft  = JSON.parse(raw);
+        const ut     = editingEntry?.updatedAt;
+        const savedAt = ut
           ? (ut.seconds ? ut.seconds * 1000 : new Date(ut).getTime())
           : 0;
         if (draft.savedAt > savedAt) {
           setTitle(draft.title ?? ttl);
           titleRef.current = draft.title ?? ttl;
-          if (editorRef.current) editorRef.current.innerHTML = draft.content || html;
-          setIsEmpty(!(draft.content || '').replace(/<[^>]+>/g,'').trim());
+          if (editorRef.current) {
+            editorRef.current.innerHTML = draft.content || html;
+            prevBlockCountRef.current = editorRef.current.childElementCount;
+          }
+          setIsEmpty(!(draft.content || '').replace(/<[^>]+>/g, '').trim());
           setDraftStatus('restored');
           return;
         }
@@ -172,12 +384,14 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
 
     setTitle(ttl);
     titleRef.current = ttl;
-    if (editorRef.current) editorRef.current.innerHTML = html;
+    if (editorRef.current) {
+      editorRef.current.innerHTML = html;
+      prevBlockCountRef.current = editorRef.current.childElementCount;
+    }
     setIsEmpty(!rawContent.trim());
     setDraftStatus('idle');
   }, [editingEntry]);
 
-  // Cleanup timer on unmount
   useEffect(() => () => clearTimeout(autoSaveTimerRef.current), []);
 
   // ── Autosave ──────────────────────────────────────────────────────────────
@@ -204,7 +418,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
 
   // ── Save to server ────────────────────────────────────────────────────────
   const handleSave = async () => {
-    const html = editorRef.current?.innerHTML || '';
+    const html     = editorRef.current?.innerHTML || '';
     const emptyHtml = !html || !html.replace(/<[^>]+>/g, '').trim();
     if (!title.trim() && emptyHtml) {
       showToast('Please add a title or some content.', 'warning');
@@ -223,71 +437,37 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
   };
 
   // ── Editor input ──────────────────────────────────────────────────────────
+  // fixNumberedListsInDOM is NOT called on every keystroke because rewriting
+  // text nodes mid-keystroke races with the browser's selection state and
+  // causes the cursor to jump to position 0 on numbered lines.
+  // HOWEVER: when the block count changes (a whole block was added/removed via
+  // native browser delete, select+Backspace, etc.) we renumber via rAF — the
+  // cursor is already placed by that point so the race doesn't apply.
   const handleEditorInput = useCallback(() => {
     const text = editorRef.current?.textContent?.trim() || '';
     setIsEmpty(!text);
-    // Renumber any out-of-sequence numbered list items
-    requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
     scheduleAutosave();
+
+    const currentCount = editorRef.current?.childElementCount ?? 0;
+    if (currentCount !== prevBlockCountRef.current) {
+      prevBlockCountRef.current = currentCount;
+      requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
+    }
   }, [scheduleAutosave]);
 
   // ── Set defaultParagraphSeparator once on mount ───────────────────────────
   useEffect(() => {
-    // Ensure the browser always creates <p> elements (not <div>) on Enter
     document.execCommand('defaultParagraphSeparator', false, 'p');
   }, []);
 
-  // Helper: walk up the DOM to the direct child of editorRef (works for text nodes too)
+  // Helper: walk up to the direct child of editorRef
   const getBlock = useCallback((node) => {
     let n = node;
     while (n && n.parentNode !== editorRef.current) {
-      n = n.parentNode; // parentNode works for text nodes; parentElement would return null
+      n = n.parentNode;
     }
     return (n && n !== editorRef.current) ? n : null;
   }, []);
-
-  // ── List continuation on Enter ────────────────────────────────────────────
-  const handleEditorKeyDown = useCallback((e) => {
-    if (e.key !== 'Enter' || e.shiftKey) return;
-
-    const sel = window.getSelection();
-    if (!sel?.rangeCount) return;
-
-    const block = getBlock(sel.getRangeAt(0).startContainer);
-    if (!block) return;
-
-    const list = detectListPrefix(block.textContent);
-    if (!list) return; // no list → let the browser handle Enter normally
-
-    e.preventDefault();
-
-    if (!list.body.trim()) {
-      // Empty list item → strip the prefix and leave a blank paragraph
-      block.innerHTML = '<br>';
-      const r = document.createRange();
-      r.setStart(block, 0);
-      r.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(r);
-      scheduleAutosave();
-      return;
-    }
-
-    const nextPrefix = list.type === 'numbered'
-      ? `${list.num + 1}${list.sep}`
-      : list.prefix;
-
-    // ── Use execCommand so the browser manages DOM + cursor correctly ─────
-    // insertParagraph splits the current paragraph at the cursor (or creates a
-    // new one at the end).  insertText then types the prefix into the new line.
-    // This is far more reliable than manually inserting <p> elements.
-    document.execCommand('insertParagraph');
-    document.execCommand('insertText', false, nextPrefix);
-
-    // Renumber any out-of-sequence items that follow (handles mid-list inserts)
-    requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
-    scheduleAutosave();
-  }, [getBlock, scheduleAutosave]);
 
   // ── Formatting (Bold / Italic / Underline / Strikethrough) ───────────────
   const handleFormat = useCallback((cmd) => {
@@ -296,10 +476,40 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     scheduleAutosave();
   }, [scheduleAutosave]);
 
+  // ── Highlight with one of 5 colours (or clear) ───────────────────────────
+  const handleHighlight = useCallback((color) => {
+    editorRef.current?.focus();
+    // hiliteColor is the standard; backColor is IE-compat fallback
+    const ok = document.execCommand('hiliteColor', false, color);
+    if (!ok) document.execCommand('backColor', false, color);
+    scheduleAutosave();
+  }, [scheduleAutosave]);
+
+  // ── Apply background colour to every cell in the current row or column ─────
+  const handleCellBgColor = useCallback((scope, color, cell) => {
+    // `cell` may be passed directly (from context menu) or resolved from selection
+    const target = cell || (() => {
+      const sel = window.getSelection();
+      if (!sel?.rangeCount) return null;
+      return getCurrentCell(sel.getRangeAt(0).startContainer, editorRef.current);
+    })();
+    if (!target) return;
+    const bg = color === 'transparent' ? '' : color;
+    if (scope === 'row') {
+      const row = target.closest('tr');
+      if (row) Array.from(row.children).forEach(td => { td.style.backgroundColor = bg; });
+    } else {
+      const table = target.closest('table');
+      const colIdx = Array.from(target.parentElement.children).indexOf(target);
+      if (table) Array.from(table.querySelectorAll('tr')).forEach(row => {
+        if (row.children[colIdx]) row.children[colIdx].style.backgroundColor = bg;
+      });
+    }
+    setCellBgPicker(null);
+    scheduleAutosave();
+  }, [scheduleAutosave]);
+
   // ── Toggle numbered / bullet list on the current paragraph ───────────────
-  // If the line already has that list prefix → remove it.
-  // If it has the OTHER list type → replace it.
-  // If it has no prefix → add one (numbered: use next sequence number).
   const toggleList = useCallback((type) => {
     editorRef.current?.focus();
     const sel = window.getSelection();
@@ -311,56 +521,621 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     const existing = detectListPrefix(block.textContent);
 
     if (existing && existing.type === type) {
-      // ── Remove prefix ─────────────────────────────────────────────────────
-      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+      // Remove prefix
+      const walker   = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
       const firstTxt = walker.nextNode();
       if (firstTxt) {
-        const prefixStr = type === 'numbered'
-          ? `${existing.num}${existing.sep}`
-          : existing.prefix;
-        firstTxt.nodeValue = firstTxt.nodeValue.replace(prefixStr, '');
+        firstTxt.nodeValue = firstTxt.nodeValue.replace(existing.prefix, '');
       }
     } else {
-      // ── Add (or replace) prefix ───────────────────────────────────────────
-      // Strip any existing prefix first
+      // Strip any existing prefix
       if (existing) {
-        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+        const walker   = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
         const firstTxt = walker.nextNode();
         if (firstTxt) {
-          const prefixStr = existing.type === 'numbered'
-            ? `${existing.num}${existing.sep}`
-            : existing.prefix;
-          firstTxt.nodeValue = firstTxt.nodeValue.replace(prefixStr, '');
+          firstTxt.nodeValue = firstTxt.nodeValue.replace(existing.prefix, '');
         }
       }
 
-      // Determine the right number for a new numbered item
       let newPrefix = '- ';
       if (type === 'numbered') {
-        // Look at the previous sibling to continue the sequence
-        const prev = block.previousElementSibling;
+        const prev     = block.previousElementSibling;
         const prevList = prev ? detectListPrefix(prev.textContent) : null;
         const startNum = (prevList?.type === 'numbered') ? prevList.num + 1 : 1;
         newPrefix = `${startNum}. `;
       }
 
-      // Prepend prefix to first text node (or set as content if empty)
-      const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+      const walker   = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
       const firstTxt = walker.nextNode();
       if (firstTxt) {
         firstTxt.nodeValue = newPrefix + firstTxt.nodeValue;
       } else {
         block.textContent = newPrefix;
-        // Move cursor to end
-        const r = document.createRange();
-        r.selectNodeContents(block);
-        r.collapse(false);
-        sel.removeAllRanges();
-        sel.addRange(r);
+        placeCursorAtEnd(block, sel);
       }
     }
 
     requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
+    scheduleAutosave();
+  }, [getBlock, scheduleAutosave]);
+
+  // ── Indent / outdent a block ──────────────────────────────────────────────
+  const handleIndent = useCallback((increase) => {
+    editorRef.current?.focus();
+    const sel = window.getSelection();
+    if (!sel?.rangeCount) return;
+    const block = getBlock(sel.getRangeAt(0).startContainer);
+    if (!block) return;
+    const level = getIndentLevel(block);
+    setIndentLevel(block, increase ? level + 1 : level - 1);
+    fixNumberedListsInDOM(editorRef.current);
+    // Reposition cursor at end of block so typing always follows the prefix
+    placeCursorAtEnd(block, window.getSelection());
+    scheduleAutosave();
+  }, [getBlock, scheduleAutosave]);
+
+  // ── Insert a 3×2 table at the cursor position ────────────────────────────
+  const handleInsertTable = useCallback(() => {
+    editorRef.current?.focus();
+    const tr = (cols) =>
+      `<tr>${Array.from({ length: cols }, () =>
+        `<td style="${TD_STYLE}"><br></td>`
+      ).join('')}</tr>`;
+    const tableHtml =
+      `<table style="border-collapse:collapse;width:100%;margin:8px 0">` +
+        `<tbody>${tr(3)}${tr(3)}</tbody>` +
+      `</table><p><br></p>`;
+    document.execCommand('insertHTML', false, tableHtml);
+    scheduleAutosave();
+  }, [scheduleAutosave]);
+
+  // ── Table column / row resize ────────────────────────────────────────────
+  // Detects hover within 6px of a cell's right edge (col resize) or bottom
+  // edge (row resize) and changes the wrapper cursor accordingly.
+  const handleEditorWrapMouseMove = useCallback((e) => {
+    if (resizeDragRef.current) return; // resize drag handled by document listener
+    if (tableDragRef.current) return;  // table drag handled by document listener
+
+    // If the event originates from the drag handle itself, leave it alone
+    if (dragHandleElRef.current && dragHandleElRef.current.contains(e.target)) return;
+
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+
+    // ── Resize border detection ──────────────────────────────────────────────
+    const cell = el?.closest?.('td, th');
+    if (cell && editorRef.current?.contains(cell)) {
+      const rect = cell.getBoundingClientRect();
+      const T = 6;
+      if (e.clientX >= rect.right - T) {
+        hoverResizeRef.current = { type: 'col', cell };
+        editorWrapRef.current.style.cursor = 'col-resize';
+        // Hide drag handle while near resize border
+        if (dragHandleElRef.current) dragHandleElRef.current.style.display = 'none';
+        return;
+      } else if (e.clientY >= rect.bottom - T) {
+        hoverResizeRef.current = { type: 'row', cell };
+        editorWrapRef.current.style.cursor = 'row-resize';
+        if (dragHandleElRef.current) dragHandleElRef.current.style.display = 'none';
+        return;
+      }
+    }
+    if (hoverResizeRef.current) {
+      hoverResizeRef.current = null;
+      editorWrapRef.current.style.cursor = '';
+    }
+
+    // ── Table drag handle ────────────────────────────────────────────────────
+    const table = el?.closest?.('table');
+    const handle = dragHandleElRef.current;
+    if (table && editorRef.current?.contains(table) && handle) {
+      const tRect = table.getBoundingClientRect();
+      const wRect = editorWrapRef.current.getBoundingClientRect();
+      hoveredTableRef.current      = table;
+      // Position the handle INSIDE the table at the top-left corner (no gap
+      // between handle and table, so the mouse never crosses empty space when
+      // moving from table to handle — that gap was the cause of the flicker).
+      handle.style.top             = `${tRect.top  - wRect.top  + 2}px`;
+      handle.style.left            = `${tRect.left - wRect.left + 2}px`;
+      handle.style.display         = 'flex';
+    } else if (handle) {
+      handle.style.display         = 'none';
+      hoveredTableRef.current      = null;
+    }
+  }, []);
+
+  // Starts a drag when the mouse is pressed on a resize border.
+  const handleEditorWrapMouseDown = useCallback((e) => {
+    if (!hoverResizeRef.current || e.button !== 0) return;
+    const { type, cell } = hoverResizeRef.current;
+    const table = cell.closest('table');
+    if (!table) return;
+    e.preventDefault(); // prevent focus/selection disruption in contentEditable
+    // Lock the table so resizing one column doesn't affect others:
+    //  1. Read ALL pixel widths before touching the layout
+    //  2. Switch to table-layout:fixed + width:auto
+    //  3. Apply the frozen widths back so nothing visually shifts
+    const allRows = Array.from(table.querySelectorAll('tr'));
+    const frozenWidths = allRows.map(row =>
+      Array.from(row.children).map(c => c.getBoundingClientRect().width)
+    );
+    table.style.tableLayout = 'fixed';
+    table.style.width       = 'auto';
+    allRows.forEach((row, ri) =>
+      Array.from(row.children).forEach((c, ci) => {
+        c.style.minWidth  = '';
+        c.style.maxWidth  = '';
+        c.style.minHeight = '';
+        c.style.width     = `${frozenWidths[ri][ci]}px`;
+      })
+    );
+
+    if (type === 'col') {
+      const colIdx  = Array.from(cell.parentElement.children).indexOf(cell);
+      const rows    = allRows;
+      const initWidths = rows.map((row, ri) => frozenWidths[ri][colIdx] || 0);
+      resizeDragRef.current = { type: 'col', startX: e.clientX, table, colIdx, rows, initWidths };
+    } else {
+      const rowEl     = cell.closest('tr');
+      const initHeight = rowEl.getBoundingClientRect().height;
+      resizeDragRef.current = { type: 'row', startY: e.clientY, rowEl, initHeight };
+    }
+  }, []);
+
+  // Document-level drag handlers: update sizes on mousemove, finish on mouseup.
+  useEffect(() => {
+    const onDocMove = (e) => {
+      // ── Cell / row resize drag ──────────────────────────────────────────
+      if (resizeDragRef.current) {
+        const cur = resizeDragRef.current.type === 'col' ? 'col-resize' : 'row-resize';
+        document.body.style.cursor = cur;
+        if (editorWrapRef.current) editorWrapRef.current.style.cursor = cur;
+
+        if (resizeDragRef.current.type === 'col') {
+          const { startX, colIdx, rows, initWidths } = resizeDragRef.current;
+          const dx = e.clientX - startX;
+          rows.forEach((row, i) => {
+            const c = row.children[colIdx];
+            if (c) c.style.width = `${Math.max(8, (initWidths[i] || 80) + dx)}px`;
+          });
+        } else {
+          const { startY, rowEl, initHeight } = resizeDragRef.current;
+          const dy = e.clientY - startY;
+          const newH = Math.max(6, initHeight + dy);
+          rowEl.style.height = `${newH}px`;
+          Array.from(rowEl.children).forEach(c => { c.style.height = `${newH}px`; c.style.minHeight = ''; });
+        }
+        return;
+      }
+
+      // ── Table drag-move ─────────────────────────────────────────────────
+      if (tableDragRef.current) {
+        document.body.style.cursor = 'grabbing';
+        if (editorWrapRef.current) editorWrapRef.current.style.cursor = 'grabbing';
+
+        const editor = editorRef.current;
+        if (!editor) return;
+        const blocks = Array.from(editor.children);
+        const wRect  = editorWrapRef.current?.getBoundingClientRect();
+        if (!wRect) return;
+
+        let insertBefore = null;
+        let lineTop = null;
+
+        for (let i = 0; i < blocks.length; i++) {
+          const b = blocks[i];
+          if (b === tableDragRef.current.table) continue;
+          const bRect = b.getBoundingClientRect();
+          if (e.clientY < bRect.top + bRect.height / 2) {
+            insertBefore = b;
+            lineTop = bRect.top - wRect.top;
+            break;
+          }
+          if (i === blocks.length - 1) lineTop = bRect.bottom - wRect.top;
+        }
+
+        tableDragRef.current.insertBefore = insertBefore;
+
+        // Update drop line imperatively — no React state, no re-render
+        const dl = dropLineElRef.current;
+        if (dl && lineTop !== null) {
+          dl.style.top     = `${lineTop - 1}px`;
+          dl.style.display = 'block';
+        } else if (dl) {
+          dl.style.display = 'none';
+        }
+        return;
+      }
+    };
+
+    const onDocUp = () => {
+      // ── Finish resize ───────────────────────────────────────────────────
+      if (resizeDragRef.current) {
+        resizeDragRef.current = null;
+        hoverResizeRef.current = null;
+        document.body.style.cursor = '';
+        if (editorWrapRef.current) editorWrapRef.current.style.cursor = '';
+        scheduleAutosave();
+        return;
+      }
+
+      // ── Finish table drag-move ──────────────────────────────────────────
+      if (tableDragRef.current) {
+        const { table, insertBefore } = tableDragRef.current;
+        tableDragRef.current = null;
+        hoveredTableRef.current = null;
+        document.body.style.cursor = '';
+        if (editorWrapRef.current) editorWrapRef.current.style.cursor = '';
+        if (dropLineElRef.current)  dropLineElRef.current.style.display  = 'none';
+        if (dragHandleElRef.current) dragHandleElRef.current.style.display = 'none';
+
+        const editor = editorRef.current;
+        if (editor && table.parentElement === editor) {
+          if (insertBefore && insertBefore !== table) {
+            editor.insertBefore(table, insertBefore);
+          } else if (!insertBefore) {
+            editor.appendChild(table);
+          }
+          fixNumberedListsInDOM(editor);
+          scheduleAutosave();
+        }
+      }
+    };
+
+    document.addEventListener('mousemove', onDocMove);
+    document.addEventListener('mouseup',   onDocUp);
+    return () => {
+      document.removeEventListener('mousemove', onDocMove);
+      document.removeEventListener('mouseup',   onDocUp);
+    };
+  }, [scheduleAutosave]);
+
+  // ── Close context menus / pickers on outside click ───────────────────────
+  useEffect(() => {
+    if (!tableMenu && !listMenu && !cellBgPicker) return;
+    const close = () => { setTableMenu(null); setListMenu(null); setCellBgPicker(null); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [tableMenu, listMenu, cellBgPicker]);
+
+  // ── Context menu dispatcher ───────────────────────────────────────────────
+  const handleContextMenu = useCallback((e) => {
+    // ── Inside a table cell → show table menu ──────────────────────────
+    const cell = getCurrentCell(e.target, editorRef.current);
+    if (cell) {
+      e.preventDefault();
+      const table = cell.closest('table');
+      setTableMenu({ x: e.clientX, y: e.clientY, cell, table });
+      return;
+    }
+
+    // ── Inside a numbered list block → show list menu ──────────────────
+    let node = e.target;
+    let block = null;
+    while (node && node !== editorRef.current) {
+      if (node.parentNode === editorRef.current) { block = node; break; }
+      node = node.parentNode;
+    }
+    if (block) {
+      const list = detectListPrefix(block.textContent);
+      if (list && list.type === 'numbered') {
+        e.preventDefault();
+        setListMenu({
+          x: e.clientX,
+          y: e.clientY,
+          block,
+          hasRestart: block.dataset.restart === 'true',
+        });
+      }
+    }
+  }, []);
+
+  // ── Table context menu actions ────────────────────────────────────────────
+  const handleTableMenuAction = useCallback((action) => {
+    if (!tableMenu) return;
+    const { cell, table } = tableMenu;
+    setTableMenu(null);
+
+    const colIdx = Array.from(cell.parentElement.children).indexOf(cell);
+    const rows   = Array.from(table.querySelectorAll('tr'));
+
+    if (action === 'col-left' || action === 'col-right') {
+      const insertIdx = action === 'col-left' ? colIdx : colIdx + 1;
+      rows.forEach(row => {
+        const td = document.createElement('td');
+        td.setAttribute('style', TD_STYLE);
+        td.innerHTML = '<br>';
+        const ref = row.children[insertIdx];
+        if (ref) row.insertBefore(td, ref);
+        else     row.appendChild(td);
+      });
+      equalizeColumns(table);
+      selectCell(table.querySelector('tr').children[insertIdx] || cell);
+
+    } else if (action === 'col-delete') {
+      if (rows[0].children.length <= 1) return; // keep at least one column
+      rows.forEach(row => { if (row.children[colIdx]) row.children[colIdx].remove(); });
+      equalizeColumns(table);
+      const newIdx = Math.min(colIdx, rows[0].children.length - 1);
+      selectCell(rows[0].children[newIdx]);
+
+    } else if (action === 'row-above' || action === 'row-below') {
+      const currentRow = cell.closest('tr');
+      const colCount   = currentRow.children.length;
+      const newRow     = document.createElement('tr');
+      for (let i = 0; i < colCount; i++) {
+        const td = document.createElement('td');
+        td.setAttribute('style', TD_STYLE);
+        td.innerHTML = '<br>';
+        newRow.appendChild(td);
+      }
+      currentRow.insertAdjacentElement(
+        action === 'row-above' ? 'beforebegin' : 'afterend',
+        newRow,
+      );
+      selectCell(newRow.children[0]);
+
+    } else if (action === 'row-delete') {
+      const currentRow = cell.closest('tr');
+      const tbody = currentRow.parentElement;
+      if (tbody.children.length <= 1) return; // keep at least one row
+      const nextRow = currentRow.nextElementSibling || currentRow.previousElementSibling;
+      currentRow.remove();
+      if (nextRow) selectCell(nextRow.children[0]);
+
+    } else if (action === 'table-delete') {
+      // Move cursor to the block after the table (or before it) then remove
+      const after  = table.nextElementSibling;
+      const before = table.previousElementSibling;
+      table.remove();
+      const target = after || before;
+      if (target) placeCursorAtEnd(target, window.getSelection());
+    }
+
+    scheduleAutosave();
+  }, [tableMenu, scheduleAutosave]);
+
+  // ── List right-click actions (restart / continue numbering) ──────────────
+  const handleListMenuAction = useCallback((action) => {
+    if (!listMenu) return;
+    const { block } = listMenu;
+    setListMenu(null);
+    if (action === 'restart') {
+      block.dataset.restart = 'true';
+    } else if (action === 'continue') {
+      delete block.dataset.restart;
+    }
+    fixNumberedListsInDOM(editorRef.current);
+    scheduleAutosave();
+  }, [listMenu, scheduleAutosave]);
+
+  // ── Keyboard handler ─────────────────────────────────────────────────────
+  const handleEditorKeyDown = useCallback((e) => {
+    const sel = window.getSelection();
+    if (!sel?.rangeCount) return;
+    const range = sel.getRangeAt(0);
+
+    // ── Backspace at the very start of a block (MS Word–style merge) ────
+    //
+    // When the cursor is at position 0 of a block we merge the current line
+    // into the previous one — exactly like MS Word — rather than letting the
+    // browser do an element-level merge (which can leave the cursor at an
+    // element-offset position and cause the next Backspace to delete a whole
+    // child node instead of a character).
+    //
+    // Rules:
+    //  • If current block is empty: delete it, cursor → end of prev block.
+    //  • If current block has a numbered prefix: strip the prefix, append the
+    //    remaining body text/nodes to the end of the previous block, cursor
+    //    lands at the join point.  Renumber afterwards.
+    //  • Non-numbered block with content: same merge without stripping.
+    //  • If prev block is a <table>: skip (don't merge into a table).
+    if (e.key === 'Backspace' && range.collapsed) {
+      const block = getBlock(range.startContainer);
+      if (block && isAtBlockStart(range, block)) {
+        const prevBlock = block.previousElementSibling;
+        if (prevBlock) {
+          // Don't merge into a table — just delete empty blocks above tables
+          if (prevBlock.nodeName === 'TABLE') {
+            const isEmpty2 =
+              block.innerHTML === '<br>' || block.innerHTML === '' || !block.textContent.trim();
+            if (isEmpty2) {
+              e.preventDefault();
+              block.remove();
+              fixNumberedListsInDOM(editorRef.current);
+              scheduleAutosave();
+            }
+            return;
+          }
+
+          e.preventDefault();
+
+          const list     = detectListPrefix(block.textContent);
+          const isEmpty  =
+            block.innerHTML === '<br>' ||
+            block.innerHTML === '' ||
+            (!block.textContent.trim()) ||
+            (list && !list.body.trim() && getIndentLevel(block) === 0);
+
+          if (isEmpty) {
+            // Empty block: just remove it, cursor to end of prev
+            block.remove();
+            placeCursorAtEnd(prevBlock, sel);
+          } else {
+            // ── Strip list prefix from the first text node if present ───
+            if (list) {
+              const tw = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+              const ft = tw.nextNode();
+              if (ft) {
+                const stripped = ft.nodeValue.replace(/^[\d]+(?:\.[\d]+)*\. ?/, '');
+                if (stripped) ft.nodeValue = stripped;
+                else ft.remove();
+              }
+            }
+
+            // ── Record junction point (end of prevBlock's last text) ───
+            function deepLastNode(n) { return n.lastChild ? deepLastNode(n.lastChild) : n; }
+            const junctionNode   = deepLastNode(prevBlock);
+            const junctionOffset = junctionNode.nodeType === Node.TEXT_NODE
+              ? junctionNode.length : 0;
+            const junctionIsText = junctionNode.nodeType === Node.TEXT_NODE;
+
+            // ── Move all child nodes (preserves inline formatting) ──────
+            const kids = Array.from(block.childNodes);
+            kids.forEach(child => {
+              if (child.nodeName !== 'BR') prevBlock.appendChild(child);
+            });
+
+            // ── Remove the now-empty source block ───────────────────────
+            block.remove();
+
+            // ── Place cursor at junction ────────────────────────────────
+            if (junctionIsText) {
+              const r = document.createRange();
+              r.setStart(junctionNode, junctionOffset);
+              r.collapse(true);
+              sel.removeAllRanges();
+              sel.addRange(r);
+            } else {
+              placeCursorAtEnd(prevBlock, sel);
+            }
+
+            fixNumberedListsInDOM(editorRef.current);
+          }
+
+          scheduleAutosave();
+          return;
+        }
+      }
+    }
+
+    // ── Tab key: table navigation OR block indent/outdent ────────────────
+    if (e.key === 'Tab') {
+      const cell = getCurrentCell(range.startContainer, editorRef.current);
+
+      if (cell) {
+        // ── Inside a table cell ──────────────────────────────────────────
+        e.preventDefault();
+        const table = cell.closest('table');
+        const cells = Array.from(table.querySelectorAll('td, th'));
+        const idx   = cells.indexOf(cell);
+
+        if (!e.shiftKey) {
+          if (idx < cells.length - 1) {
+            selectCell(cells[idx + 1]);
+          } else {
+            // Add a new row after the last row
+            const lastRow = table.querySelector('tr:last-child');
+            const colCount = lastRow.children.length;
+            const newRow  = document.createElement('tr');
+            for (let i = 0; i < colCount; i++) {
+              const td = document.createElement('td');
+              td.setAttribute('style', TD_STYLE);
+              td.innerHTML = '<br>';
+              newRow.appendChild(td);
+            }
+            lastRow.insertAdjacentElement('afterend', newRow);
+            selectCell(newRow.children[0]);
+            scheduleAutosave();
+          }
+        } else {
+          if (idx > 0) selectCell(cells[idx - 1]);
+        }
+        return;
+      }
+
+      // ── Outside a table: indent/outdent the current block ────────────
+      const block = getBlock(range.startContainer);
+      if (block) {
+        e.preventDefault();
+        const level = getIndentLevel(block);
+        setIndentLevel(block, e.shiftKey ? level - 1 : level + 1);
+        fixNumberedListsInDOM(editorRef.current);
+        // After fixNumberedListsInDOM rewrites the first text node the cursor
+        // offset no longer lines up correctly (e.g. "4. " → "3.1. " changes
+        // the text length).  Explicitly place cursor deep inside last text node.
+        placeCursorAtEnd(block, window.getSelection());
+        scheduleAutosave();
+      }
+      return;
+    }
+
+    // ── Enter key ────────────────────────────────────────────────────────
+    if (e.key !== 'Enter' || e.shiftKey) return;
+
+    // Enter inside a table cell → insert a new row below
+    const cell = getCurrentCell(range.startContainer, editorRef.current);
+    if (cell) {
+      e.preventDefault();
+      const currentRow = cell.closest('tr');
+      const table      = currentRow.closest('table');
+      const colCount   = currentRow.children.length;
+      const newRow     = document.createElement('tr');
+      for (let i = 0; i < colCount; i++) {
+        const td = document.createElement('td');
+        td.setAttribute('style', TD_STYLE);
+        td.innerHTML = '<br>';
+        newRow.appendChild(td);
+      }
+      currentRow.insertAdjacentElement('afterend', newRow);
+      selectCell(newRow.children[0]);
+      scheduleAutosave();
+      return;
+    }
+
+    // Enter inside a list item → continue the list
+    const block = getBlock(range.startContainer);
+    if (!block) return;
+
+    const list = detectListPrefix(block.textContent);
+    if (!list) return;
+
+    e.preventDefault();
+    const level = getIndentLevel(block);
+
+    if (!list.body.trim()) {
+      // Empty list item:
+      // - If nested (level > 0): dedent back one level, add placeholder prefix
+      // - If at level 0: strip prefix, leave a blank paragraph
+      if (level > 0) {
+        setIndentLevel(block, level - 1);
+        block.textContent = list.type === 'numbered' ? '1. ' : list.prefix;
+        fixNumberedListsInDOM(editorRef.current);
+        placeCursorAtEnd(block, sel);
+      } else {
+        block.innerHTML = '<br>';
+        const r = document.createRange();
+        r.setStart(block, 0);
+        r.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+      scheduleAutosave();
+      return;
+    }
+
+    // Insert a new paragraph inheriting this block's list type & indent.
+    // We use direct DOM manipulation instead of execCommand('insertText') to
+    // avoid the async race between execCommand and the rAF-scheduled
+    // fixNumberedListsInDOM call, which caused the prefix to repeat (e.g.
+    // pressing Enter after "3." produced another "3." instead of "4.").
+    document.execCommand('insertParagraph');
+
+    // The cursor is now in the freshly-created block
+    const newSel = window.getSelection();
+    if (newSel?.rangeCount) {
+      const newBlock = getBlock(newSel.getRangeAt(0).startContainer);
+      if (newBlock && newBlock !== block) {
+        if (level > 0) newBlock.dataset.indent = String(level);
+        // Set a placeholder prefix directly (any valid numbered prefix works —
+        // fixNumberedListsInDOM will renumber everything correctly in one pass).
+        newBlock.textContent = list.type === 'numbered' ? '1. ' : list.prefix;
+        // Renumber synchronously so numbering is correct before the next render
+        fixNumberedListsInDOM(editorRef.current);
+        // Place cursor deep inside the last text node for reliable Backspace
+        placeCursorAtEnd(newBlock, newSel);
+      }
+    }
+
     scheduleAutosave();
   }, [getBlock, scheduleAutosave]);
 
@@ -370,9 +1145,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
 
     if (action === 'backspace') {
       document.execCommand('delete');
-
     } else if (action === 'enter') {
-      // Try list continuation first, then fall back to insertParagraph
       const sel = window.getSelection();
       if (sel?.rangeCount) {
         const block = getBlock(sel.getRangeAt(0).startContainer);
@@ -382,21 +1155,54 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
         }
       }
       document.execCommand('insertParagraph');
-
     } else if (action === 'list-numbered') {
       document.execCommand('insertText', false, '1. ');
     } else if (action === 'list-bullet') {
       document.execCommand('insertText', false, '- ');
     } else {
-      // space or any character
       document.execCommand('insertText', false, action);
     }
     scheduleAutosave();
-  }, [handleEditorKeyDown, scheduleAutosave]);
+  }, [handleEditorKeyDown, scheduleAutosave, getBlock]);
 
   // ── JSX ───────────────────────────────────────────────────────────────────
   return (
     <div className="fade-in">
+      {/* Indent-level + table CSS for the editor */}
+      <style>{`
+        .diary-editor [data-indent="1"] { padding-left: 24px; }
+        .diary-editor [data-indent="2"] { padding-left: 48px; }
+        .diary-editor [data-indent="3"] { padding-left: 72px; }
+        .diary-editor table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+        .diary-editor td, .diary-editor th {
+          border: 1px solid #e2e8f0;
+          padding: 4px 6px;
+          min-width: 0;
+          vertical-align: top;
+          overflow: hidden;
+        }
+        .diary-editor [data-restart="true"] {
+          border-left: 3px solid #7c3aed;
+          padding-left: 6px;
+          margin-left: -9px;
+        }
+        .diary-editor td:focus, .diary-editor td:focus-within {
+          outline: 2px solid var(--gold-light);
+          outline-offset: -1px;
+        }
+        .diary-html-content [data-indent="1"] { padding-left: 24px; }
+        .diary-html-content [data-indent="2"] { padding-left: 48px; }
+        .diary-html-content [data-indent="3"] { padding-left: 72px; }
+        .diary-html-content table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+        .diary-html-content td, .diary-html-content th {
+          border: 1px solid #e2e8f0;
+          padding: 4px 6px;
+          min-width: 0;
+          vertical-align: top;
+          overflow: hidden;
+        }
+      `}</style>
+
       <h2 className="section-title">
         {editingEntry ? 'Edit Entry' : 'New Entry'}
       </h2>
@@ -431,16 +1237,18 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
 
         {/* ── Formatting toolbar ── */}
         <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 4,
-          marginBottom: 8,
-          padding: '4px 6px',
-          background: 'var(--paper-dark)',
-          border: '1px solid var(--paper-line)',
-          borderRadius: 8,
+          display:       'flex',
+          alignItems:    'center',
+          flexWrap:      'wrap',
+          gap:           4,
+          marginBottom:  8,
+          padding:       '4px 6px',
+          background:    'var(--paper-dark)',
+          border:        '1px solid var(--paper-line)',
+          borderRadius:  8,
         }}>
-          {/* ── Inline formatting buttons ── */}
+
+          {/* ── Row 1: inline formatting ── */}
           {[
             { icon: <Bold size={15} />,          cmd: 'bold',          label: 'Bold'          },
             { icon: <Italic size={15} />,        cmd: 'italic',        label: 'Italic'        },
@@ -459,9 +1267,9 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
             </button>
           ))}
 
-          <div style={{ width: 1, height: 18, background: 'var(--paper-line)', margin: '0 4px' }} />
+          <div style={{ width: 1, height: 18, background: 'var(--paper-line)', margin: '0 2px' }} />
 
-          {/* ── List toggle buttons ── */}
+          {/* ── List toggles ── */}
           <button
             onMouseDown={e => { e.preventDefault(); toggleList('numbered'); }}
             title="Numbered list (toggle)"
@@ -481,18 +1289,163 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
             <List size={15} />
           </button>
 
-          <div style={{ width: 1, height: 18, background: 'var(--paper-line)', margin: '0 4px' }} />
-          <span style={{ fontSize: 11, color: 'var(--ink-lighter)', fontFamily: 'var(--font-body)', userSelect: 'none' }}>
-            Select text then click to format
-          </span>
+          <div style={{ width: 1, height: 18, background: 'var(--paper-line)', margin: '0 2px' }} />
+
+          {/* ── Indent / Outdent ── */}
+          <button
+            onMouseDown={e => { e.preventDefault(); handleIndent(true); }}
+            title="Increase indent (Tab)"
+            style={toolbarBtnStyle}
+            onMouseEnter={e => applyHover(e, true)}
+            onMouseLeave={e => applyHover(e, false)}
+          >
+            <span style={{ fontSize: 13, fontFamily: 'monospace', lineHeight: 1 }}>⇥</span>
+          </button>
+          <button
+            onMouseDown={e => { e.preventDefault(); handleIndent(false); }}
+            title="Decrease indent (Shift+Tab)"
+            style={toolbarBtnStyle}
+            onMouseEnter={e => applyHover(e, true)}
+            onMouseLeave={e => applyHover(e, false)}
+          >
+            <span style={{ fontSize: 13, fontFamily: 'monospace', lineHeight: 1 }}>⇤</span>
+          </button>
+
+          <div style={{ width: 1, height: 18, background: 'var(--paper-line)', margin: '0 2px' }} />
+
+          {/* ── Highlight colours ── */}
+          {HIGHLIGHT_COLORS.map(({ color, title }) => (
+            <button
+              key={color}
+              onMouseDown={e => { e.preventDefault(); handleHighlight(color); }}
+              title={title}
+              style={{
+                width:        18,
+                height:       18,
+                borderRadius: '50%',
+                background:   color,
+                border:       '1px solid rgba(0,0,0,0.15)',
+                cursor:       'pointer',
+                padding:      0,
+                flexShrink:   0,
+              }}
+            />
+          ))}
+          {/* Clear highlight */}
+          <button
+            onMouseDown={e => { e.preventDefault(); handleHighlight('transparent'); }}
+            title="Clear highlight"
+            style={{ ...toolbarBtnStyle, fontSize: 11, padding: '2px 5px', color: 'var(--ink-lighter)' }}
+            onMouseEnter={e => applyHover(e, true)}
+            onMouseLeave={e => applyHover(e, false)}
+          >
+            ✕hl
+          </button>
+
+          <div style={{ width: 1, height: 18, background: 'var(--paper-line)', margin: '0 2px' }} />
+
+          {/* ── Insert table ── */}
+          <button
+            onMouseDown={e => { e.preventDefault(); handleInsertTable(); }}
+            title="Insert table (3 × 2) — Tab moves between cells, Enter adds a row"
+            style={toolbarBtnStyle}
+            onMouseEnter={e => applyHover(e, true)}
+            onMouseLeave={e => applyHover(e, false)}
+          >
+            <Table2 size={15} />
+          </button>
+
+          {/* ── Row / Column background colour ── */}
+          {['row', 'col'].map(scope => (
+            <div key={scope} style={{ position: 'relative' }}
+              onMouseDown={e => e.stopPropagation()} // prevent outside-click closing picker immediately
+            >
+              <button
+                onMouseDown={e => {
+                  e.preventDefault();
+                  setCellBgPicker(p => (p === scope ? null : scope));
+                }}
+                title={scope === 'row' ? 'Highlight row background' : 'Highlight column background'}
+                style={toolbarBtnStyle}
+                onMouseEnter={e => applyHover(e, true)}
+                onMouseLeave={e => applyHover(e, false)}
+              >
+                <span style={{
+                  fontSize: 11, fontWeight: 700,
+                  fontFamily: 'var(--font-body)',
+                  lineHeight: 1,
+                  display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1,
+                }}>
+                  {scope === 'row' ? '▬' : '▐'}
+                  <span style={{ fontSize: 9, opacity: 0.7 }}>{scope}</span>
+                </span>
+              </button>
+              {cellBgPicker === scope && (
+                <div style={{
+                  position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 300,
+                  background: 'var(--paper)', border: '1px solid var(--paper-line)',
+                  borderRadius: 8, padding: '6px 8px',
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.14)',
+                  display: 'flex', gap: 5, alignItems: 'center',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {HIGHLIGHT_COLORS.map(({ color, title }) => (
+                    <button
+                      key={color}
+                      onMouseDown={e => { e.preventDefault(); handleCellBgColor(scope, color, null); }}
+                      title={title}
+                      style={{
+                        width: 18, height: 18, borderRadius: '50%',
+                        background: color, border: '1px solid rgba(0,0,0,0.15)',
+                        cursor: 'pointer', padding: 0, flexShrink: 0,
+                      }}
+                    />
+                  ))}
+                  <button
+                    onMouseDown={e => { e.preventDefault(); handleCellBgColor(scope, 'transparent', null); }}
+                    title="Clear background"
+                    style={{ ...toolbarBtnStyle, fontSize: 10, padding: '1px 5px', color: 'var(--ink-lighter)' }}
+                  >✕</button>
+                </div>
+              )}
+            </div>
+          ))}
+
+          <div style={{ width: 1, height: 18, background: 'var(--paper-line)', margin: '0 2px' }} />
+
+          {/* ── Backspace / Enter quick keys ── */}
+          <button
+            onMouseDown={e => { e.preventDefault(); insertAtCursor('backspace'); }}
+            title="Backspace"
+            style={toolbarBtnStyle}
+            onMouseEnter={e => applyHover(e, true)}
+            onMouseLeave={e => applyHover(e, false)}
+          >
+            <span style={{ fontSize: 15 }}>⌫</span>
+          </button>
+          <button
+            onMouseDown={e => { e.preventDefault(); insertAtCursor('enter'); }}
+            title="Enter / new line"
+            style={toolbarBtnStyle}
+            onMouseEnter={e => applyHover(e, true)}
+            onMouseLeave={e => applyHover(e, false)}
+          >
+            <span style={{ fontSize: 15 }}>↵</span>
+          </button>
+
         </div>
 
         {/* ── Editor area + Quick-Keys ── */}
         <div className="editor-layout" style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
 
           {/* contentEditable editor */}
-          <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-            {/* Placeholder (shown when editor is empty) */}
+          <div
+            ref={editorWrapRef}
+            style={{ flex: 1, minWidth: 0, position: 'relative' }}
+            onMouseMove={handleEditorWrapMouseMove}
+            onMouseDown={handleEditorWrapMouseDown}
+          >
+            {/* Drag handle + drop line are created imperatively in useEffect — no JSX needed */}
             {isEmpty && (
               <span style={{
                 position:      'absolute',
@@ -513,70 +1466,11 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
               suppressContentEditableWarning
               onInput={handleEditorInput}
               onKeyDown={handleEditorKeyDown}
+              onContextMenu={handleContextMenu}
               className="diary-editor"
             />
           </div>
 
-          {/* Quick-Keys panel */}
-          {showQuickKeys ? (
-            <div className="editor-quick-keys" style={{
-              flexShrink: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 6,
-              background: 'var(--paper)',
-              border: '1px solid var(--paper-line)',
-              borderRadius: 12,
-              padding: '6px 6px 8px',
-              boxShadow: '0 3px 14px rgba(124, 58, 237, 0.15)',
-              position: 'sticky',
-              top: 120,
-            }}>
-              <button
-                onClick={() => setShowQuickKeys(false)}
-                title="Hide quick keys"
-                style={{
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  color: 'var(--ink-lighter)', fontSize: 11,
-                  padding: '0 2px 2px', fontFamily: 'var(--font-body)',
-                  alignSelf: 'flex-end', lineHeight: 1,
-                }}
-              >✕</button>
-
-              <button onMouseDown={e => { e.preventDefault(); insertAtCursor('backspace'); }}   title="Backspace"       style={quickKeyStyle}>⌫</button>
-              <button onMouseDown={e => { e.preventDefault(); insertAtCursor(' '); }}           title="Space"           style={{ ...quickKeyStyle, fontSize: 13, fontFamily: 'var(--font-body)', letterSpacing: 0.5 }}>spc</button>
-              <button onMouseDown={e => { e.preventDefault(); insertAtCursor('enter'); }}       title="Enter / new line" style={quickKeyStyle}>↵</button>
-
-              <div style={{ width: '70%', height: 1, background: 'var(--paper-line)', margin: '2px 0' }} />
-
-              <button onMouseDown={e => { e.preventDefault(); insertAtCursor('list-numbered'); }} title="Start numbered list" style={{ ...quickKeyStyle, fontSize: 13, fontFamily: 'var(--font-body)', fontWeight: 700 }}>1.</button>
-              <button onMouseDown={e => { e.preventDefault(); insertAtCursor('list-bullet'); }}   title="Start bullet list"   style={{ ...quickKeyStyle, fontSize: 18 }}>•</button>
-            </div>
-          ) : (
-            <button
-              className="editor-quick-keys-reopen"
-              onClick={() => setShowQuickKeys(true)}
-              title="Show quick keys"
-              style={{
-                flexShrink: 0,
-                background: 'var(--gold)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '50%',
-                width: 40,
-                height: 40,
-                cursor: 'pointer',
-                fontSize: 17,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
-                position: 'sticky',
-                top: 120,
-              }}
-            >⌨</button>
-          )}
         </div>
 
         {/* ── Action buttons ── */}
@@ -590,6 +1484,144 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
         </div>
 
       </div>
+
+      {/* ── Table right-click context menu ── */}
+      {tableMenu && (
+        <div
+          onMouseDown={e => e.stopPropagation()} // prevent outside-click close when interacting
+          style={{
+            position:     'fixed',
+            top:          tableMenu.y,
+            left:         tableMenu.x,
+            background:   'var(--paper)',
+            border:       '1px solid var(--paper-line)',
+            borderRadius: 8,
+            boxShadow:    '0 6px 24px rgba(0,0,0,0.13)',
+            zIndex:       9999,
+            minWidth:     180,
+            padding:      '4px 0',
+            fontFamily:   'var(--font-body)',
+          }}
+        >
+          {[
+            { label: '← Add Column Left',  action: 'col-left'    },
+            { label: 'Add Column Right →',  action: 'col-right'   },
+            { label: 'Delete Column',        action: 'col-delete',  danger: true },
+            null,
+            { label: '↑ Add Row Above',     action: 'row-above'   },
+            { label: '↓ Add Row Below',     action: 'row-below'   },
+            { label: 'Delete Row',           action: 'row-delete',  danger: true },
+            null,
+            { label: 'Delete Entire Table', action: 'table-delete', danger: true },
+          ].map((item, idx) =>
+            item === null ? (
+              <div key={idx} style={{ height: 1, background: 'var(--paper-line)', margin: '4px 0' }} />
+            ) : (
+              <button
+                key={idx}
+                onMouseDown={(e) => { e.preventDefault(); handleTableMenuAction(item.action); }}
+                style={{
+                  display:    'block',
+                  width:      '100%',
+                  padding:    '8px 16px',
+                  background: 'none',
+                  border:     'none',
+                  cursor:     'pointer',
+                  textAlign:  'left',
+                  fontSize:   13,
+                  color:      item.danger ? '#dc2626' : 'var(--ink)',
+                  transition: 'background 0.1s',
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = item.danger ? '#fff1f2' : 'var(--paper-dark)'}
+                onMouseLeave={e => e.currentTarget.style.background = 'none'}
+              >
+                {item.label}
+              </button>
+            )
+          )}
+
+          {/* ── Row / Column background colour ── */}
+          <div style={{ height: 1, background: 'var(--paper-line)', margin: '4px 0' }} />
+          {[{ scope: 'row', label: '🎨 Row colour' }, { scope: 'col', label: '🎨 Column colour' }].map(({ scope, label }) => (
+            <div key={scope} style={{ padding: '5px 16px' }}>
+              <div style={{ fontSize: 12, color: 'var(--ink-lighter)', marginBottom: 5, fontWeight: 600 }}>
+                {label}
+              </div>
+              <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
+                {HIGHLIGHT_COLORS.map(({ color, title }) => (
+                  <button
+                    key={color}
+                    onMouseDown={e => { e.preventDefault(); handleCellBgColor(scope, color, tableMenu?.cell); }}
+                    title={title}
+                    style={{
+                      width: 18, height: 18, borderRadius: '50%',
+                      background: color, border: '1px solid rgba(0,0,0,0.15)',
+                      cursor: 'pointer', padding: 0, flexShrink: 0,
+                    }}
+                  />
+                ))}
+                <button
+                  onMouseDown={e => { e.preventDefault(); handleCellBgColor(scope, 'transparent', tableMenu?.cell); }}
+                  title="Clear background"
+                  style={{
+                    background: 'none', border: '1px solid var(--paper-line)',
+                    borderRadius: 4, fontSize: 10, cursor: 'pointer',
+                    padding: '1px 5px', color: 'var(--ink-lighter)',
+                  }}
+                >✕</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── List right-click context menu (restart / continue numbering) ── */}
+      {listMenu && (
+        <div
+          onMouseDown={e => e.stopPropagation()}
+          style={{
+            position:     'fixed',
+            top:          listMenu.y,
+            left:         listMenu.x,
+            background:   'var(--paper)',
+            border:       '1px solid var(--paper-line)',
+            borderRadius: 8,
+            boxShadow:    '0 6px 24px rgba(0,0,0,0.13)',
+            zIndex:       9999,
+            minWidth:     210,
+            padding:      '4px 0',
+            fontFamily:   'var(--font-body)',
+          }}
+        >
+          {/* Header label */}
+          <div style={{ padding: '6px 16px 4px', fontSize: 11, color: 'var(--ink-lighter)',
+            textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
+            Numbering
+          </div>
+          <div style={{ height: 1, background: 'var(--paper-line)', margin: '2px 0 4px' }} />
+          {listMenu.hasRestart ? (
+            <button
+              onMouseDown={e => { e.preventDefault(); handleListMenuAction('continue'); }}
+              style={{ display:'block', width:'100%', padding:'8px 16px', background:'none',
+                border:'none', cursor:'pointer', textAlign:'left', fontSize:13, color:'var(--ink)' }}
+              onMouseEnter={e => e.currentTarget.style.background = 'var(--paper-dark)'}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}
+            >
+              ↩ Continue from previous sequence
+            </button>
+          ) : (
+            <button
+              onMouseDown={e => { e.preventDefault(); handleListMenuAction('restart'); }}
+              style={{ display:'block', width:'100%', padding:'8px 16px', background:'none',
+                border:'none', cursor:'pointer', textAlign:'left', fontSize:13, color:'#7c3aed' }}
+              onMouseEnter={e => e.currentTarget.style.background = '#f5f3ff'}
+              onMouseLeave={e => e.currentTarget.style.background = 'none'}
+            >
+              ↺ Restart numbering from here
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

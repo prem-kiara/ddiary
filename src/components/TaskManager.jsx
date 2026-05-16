@@ -69,9 +69,12 @@ export function MoveToBoard({
   const [selectedWsId, setSelectedWsId] = useState(workspaces[0]?.id || '');
   const { workspace: selectedWs, members: wsMembers } = useWorkspace(selectedWsId);
   const [moveStatus, setMoveStatus] = useState('open');
-  // Selected assignee is tracked by email — works for both workspace members
-  // (who have UIDs) and M365 org users (who don't, until they sign in).
-  const [moveAssigneeEmail, setMoveAssigneeEmail] = useState(user?.email?.toLowerCase() || '');
+  // Multi-assignee: array of emails. Primary = [0], co-assignees = rest.
+  const [moveAssigneeEmails, setMoveAssigneeEmails] = useState(
+    user?.email?.toLowerCase() ? [user.email.toLowerCase()] : []
+  );
+  const [moveAssigneePicker, setMoveAssigneePicker] = useState(false);
+  const [moveAssigneeSearch, setMoveAssigneeSearch] = useState('');
   const [moveCategoryId, setMoveCategoryId] = useState('');
   const [moveSubcategoryId, setMoveSubcategoryId] = useState('');
   const [movePriority, setMovePriority] = useState('medium');
@@ -124,7 +127,8 @@ export function MoveToBoard({
     const taskEmail = task.assigneeEmail?.toLowerCase();
     const matched = taskEmail && assigneeOptions.find(o => o.email === taskEmail);
     const me      = user?.email?.toLowerCase();
-    setMoveAssigneeEmail(matched?.email || me || assigneeOptions[0]?.email || '');
+    const primary = matched?.email || me || assigneeOptions[0]?.email || '';
+    setMoveAssigneeEmails(primary ? [primary] : []);
     setMoveCategoryId('');
     setMoveSubcategoryId('');
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -133,14 +137,28 @@ export function MoveToBoard({
   // If user switches category, reset the sub-category selection.
   useEffect(() => { setMoveSubcategoryId(''); }, [moveCategoryId]);
 
+  // Close assignee picker on outside click
+  useEffect(() => {
+    if (!moveAssigneePicker) return;
+    const close = () => { setMoveAssigneePicker(false); setMoveAssigneeSearch(''); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [moveAssigneePicker]);
+
   const handleMove = async () => {
     if (!selectedWsId) return;
-    if (!moveAssigneeEmail) {
+    if (!moveAssigneeEmails.length) {
       showToast('Please pick an assignee before moving to Team Board.', 'warning');
       return;
     }
     setMoveSaving(true);
     try {
+      const moveAssigneeEmail = moveAssigneeEmails[0];
+      const coAssignees = moveAssigneeEmails.slice(1).map(email => {
+        const o = assigneeOptions.find(x => x.email === email);
+        const m = wsMembers?.find(x => x.email?.toLowerCase() === email);
+        return { uid: (m && !m.uid?.startsWith('pending_')) ? m.uid : null, email, name: o?.name || email.split('@')[0] };
+      });
       const chosen       = assigneeOptions.find(o => o.email === moveAssigneeEmail);
       const wsMember     = wsMembers?.find(m => m.email?.toLowerCase() === moveAssigneeEmail);
       const assigneeName = chosen?.name || wsMember?.displayName || moveAssigneeEmail.split('@')[0];
@@ -206,6 +224,7 @@ export function MoveToBoard({
         assigneeUid:   (wsMember && !wsMember.uid?.startsWith('pending_')) ? wsMember.uid : null,
         assigneeEmail: moveAssigneeEmail,
         assigneeName:  assigneeName,
+        coAssignees:   coAssignees.length ? coAssignees : null,
         categoryId:    moveCategoryId    || null,
         subcategoryId: moveSubcategoryId || null,
       }, {
@@ -214,15 +233,18 @@ export function MoveToBoard({
         displayName: ownerName,
       });
 
-      // ── Notify the assignee about the new task (skip when assigning to self).
-      //    If we already sent an invite email, the invite email itself covers it;
-      //    otherwise send the dedicated task-assigned email.
-      if (!isSelf && !sentInviteEmail) {
+      // ── Notify all assignees (skip when assigning to self for primary).
+      const allAssignees = [
+        isSelf || sentInviteEmail ? null : { email: moveAssigneeEmail, name: assigneeName },
+        ...coAssignees,
+      ].filter(Boolean);
+      for (const a of allAssignees) {
         try {
           await notifyTaskAssigned({
-            assigneeEmail: moveAssigneeEmail,
-            assigneeName:  assigneeName,
+            assigneeEmail: a.email,
+            assigneeName:  a.name,
             taskText:      task.text,
+            notes:         moveNotes?.trim() || null,
             dueDate:       moveDue || null,
             priority:      movePriority || 'medium',
             ownerName:     ownerName,
@@ -324,33 +346,100 @@ export function MoveToBoard({
               <option value="done">Done</option>
             </select>
           </div>
-          <div>
+          <div style={{ position: 'relative' }}>
             <label className="label">
               Assign to <span style={{ color: '#dc2626' }}>*</span>
             </label>
-            <select
-              value={moveAssigneeEmail}
-              onChange={e => setMoveAssigneeEmail(e.target.value)}
+            {/* Pill trigger */}
+            <div
+              onClick={() => setMoveAssigneePicker(o => !o)}
               style={{
-                ...selStyle,
-                borderColor: moveAssigneeEmail ? '#cbd5e1' : '#dc262688',
+                ...selStyle, height: 'auto', minHeight: 40, padding: '6px 10px',
+                display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center', cursor: 'pointer',
+                borderColor: moveAssigneeEmails.length ? '#cbd5e1' : '#dc262688',
               }}
-              required
             >
-              {!moveAssigneeEmail && <option value="" disabled>— Pick someone —</option>}
-              {assigneeOptions.map(o => {
-                const isMe = o.email === user?.email?.toLowerCase();
-                return (
-                  <option key={o.email} value={o.email}>
-                    {isMe ? `Me (${o.name})` : o.name}
-                    {!o.isMember && !isMe ? ' — will be invited' : ''}
-                  </option>
-                );
-              })}
-            </select>
-            {moveAssigneeEmail && !assigneeOptions.find(o => o.email === moveAssigneeEmail)?.isMember && moveAssigneeEmail !== user?.email?.toLowerCase() && (
+              {moveAssigneeEmails.length === 0
+                ? <span style={{ color: '#94a3b8', fontSize: 13, flex: 1 }}>— Pick someone —</span>
+                : moveAssigneeEmails.map(email => {
+                    const o = assigneeOptions.find(x => x.email === email);
+                    const isMe = email === user?.email?.toLowerCase();
+                    return (
+                      <span key={email} style={{
+                        background: '#dbeafe', color: '#1d4ed8', borderRadius: 12,
+                        padding: '2px 8px 2px 10px', fontSize: 12, fontWeight: 600,
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                      }}>
+                        {isMe ? `Me` : (o?.name || email)}
+                        <button
+                          type="button"
+                          onMouseDown={e => { e.stopPropagation(); setMoveAssigneeEmails(prev => prev.filter(x => x !== email)); }}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#1d4ed8', padding: 0, fontSize: 14, lineHeight: 1 }}
+                        >×</button>
+                      </span>
+                    );
+                  })
+              }
+              <ChevronDown size={12} style={{ marginLeft: 'auto', color: '#94a3b8', flexShrink: 0 }} />
+            </div>
+            {/* Dropdown */}
+            {moveAssigneePicker && (
+              <div
+                onMouseDown={e => e.stopPropagation()}
+                style={{
+                  position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 200,
+                  background: '#fff', border: '1px solid #cbd5e1', borderRadius: 8,
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+                }}
+              >
+                <div style={{ padding: '8px 10px', borderBottom: '1px solid #f1f5f9' }}>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={moveAssigneeSearch}
+                    onChange={e => setMoveAssigneeSearch(e.target.value)}
+                    placeholder="Search people…"
+                    style={{
+                      width: '100%', padding: '6px 10px', fontSize: 13,
+                      border: '1px solid #e2e8f0', borderRadius: 6, outline: 'none',
+                      fontFamily: 'var(--font-body)', boxSizing: 'border-box',
+                    }}
+                  />
+                </div>
+                <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+                  {assigneeOptions
+                    .filter(o => !moveAssigneeSearch || o.name?.toLowerCase().includes(moveAssigneeSearch.toLowerCase()) || o.email?.toLowerCase().includes(moveAssigneeSearch.toLowerCase()))
+                    .map(o => {
+                      const isMe = o.email === user?.email?.toLowerCase();
+                      const selected = moveAssigneeEmails.includes(o.email);
+                      return (
+                        <label key={o.email} style={{
+                          display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+                          cursor: 'pointer', background: selected ? '#eff6ff' : 'transparent',
+                        }}
+                          onMouseEnter={e => e.currentTarget.style.background = selected ? '#dbeafe' : '#f8fafc'}
+                          onMouseLeave={e => e.currentTarget.style.background = selected ? '#eff6ff' : 'transparent'}
+                        >
+                          <input type="checkbox" checked={selected}
+                            onChange={ev => setMoveAssigneeEmails(prev =>
+                              ev.target.checked ? [...prev, o.email] : prev.filter(x => x !== o.email)
+                            )}
+                            style={{ accentColor: '#2563eb', width: 15, height: 15 }}
+                          />
+                          <span style={{ fontSize: 13, color: '#0f172a', fontWeight: selected ? 600 : 400, flex: 1 }}>
+                            {isMe ? `Me (${o.name})` : o.name}
+                            {!o.isMember && !isMe && <span style={{ color: '#7c3aed', fontSize: 11, marginLeft: 4 }}>— will be invited</span>}
+                          </span>
+                          {selected && <span style={{ color: '#2563eb', fontSize: 12 }}>✓</span>}
+                        </label>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+            {moveAssigneeEmails.some(e => !assigneeOptions.find(o => o.email === e)?.isMember && e !== user?.email?.toLowerCase()) && (
               <p style={{ fontSize: 11, color: '#7c3aed', marginTop: 4, lineHeight: 1.4 }}>
-                They'll be added to this workspace so they can see the task.
+                Non-members will be added to this workspace so they can see the task.
               </p>
             )}
           </div>

@@ -18,8 +18,9 @@
  *  - Auto-save (debounced)
  */
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
-import { Bold, Italic, Plus, Filter, ChevronUp, ChevronDown, Bell, MessageSquare, Send, X } from 'lucide-react';
-import { doc, onSnapshot, collection as fsCollection } from 'firebase/firestore';
+import { Bold, Italic, Plus, Filter, ChevronUp, ChevronDown, Bell, MessageSquare, Send, X, Download, Trash2 } from 'lucide-react';
+import { downloadSheetAsExcel } from '../utils/exportUtils';
+import { doc, onSnapshot, collection as fsCollection, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { saveSharedSheet, logSheetOpen } from '../hooks/useSharedSheets';
@@ -31,8 +32,8 @@ const LETTERS       = Array.from({ length: 26 }, (_, i) => String.fromCharCode(6
 const FORMULA_NAMES = ['SUM', 'AVERAGE', 'AVG', 'COUNT', 'COUNTA', 'MIN', 'MAX'];
 const DEFAULT_COL_W = 110;
 const DEFAULT_ROW_H = 28;
-const MIN_COL_W     = 40;
-const MIN_ROW_H     = 18;
+const MIN_COL_W     = 20;
+const MIN_ROW_H     = 10;
 
 // ─── Formula engine ───────────────────────────────────────────────────────────
 export function ck(c, r) { return `${LETTERS[c] ?? '?'}${r + 1}`; }
@@ -103,6 +104,60 @@ function displayVal(c, r, data) {
   return v === '' || v === null || v === undefined ? '' : String(v);
 }
 
+// ─── Row / column manipulation helpers ───────────────────────────────────────
+function insertRowInData(data, at) {
+  const result = {};
+  for (const [key, cell] of Object.entries(data)) {
+    const ref = parseRef(key);
+    if (!ref) { result[key] = cell; continue; }
+    result[ref.row < at ? key : ck(ref.col, ref.row + 1)] = cell;
+  }
+  return result;
+}
+function deleteRowFromData(data, at) {
+  const result = {};
+  for (const [key, cell] of Object.entries(data)) {
+    const ref = parseRef(key);
+    if (!ref) { result[key] = cell; continue; }
+    if (ref.row === at) continue;
+    result[ref.row < at ? key : ck(ref.col, ref.row - 1)] = cell;
+  }
+  return result;
+}
+function insertColInData(data, at) {
+  const result = {};
+  for (const [key, cell] of Object.entries(data)) {
+    const ref = parseRef(key);
+    if (!ref) { result[key] = cell; continue; }
+    result[ref.col < at ? key : ck(ref.col + 1, ref.row)] = cell;
+  }
+  return result;
+}
+function deleteColFromData(data, at) {
+  const result = {};
+  for (const [key, cell] of Object.entries(data)) {
+    const ref = parseRef(key);
+    if (!ref) { result[key] = cell; continue; }
+    if (ref.col === at) continue;
+    result[ref.col < at ? key : ck(ref.col - 1, ref.row)] = cell;
+  }
+  return result;
+}
+function shiftRowComments(rc, at, dir) {
+  const result = {};
+  for (const [rs, cmts] of Object.entries(rc)) {
+    const r = parseInt(rs, 10);
+    if (isNaN(r)) continue;
+    if (dir === 'insert') {
+      result[r < at ? r : r + 1] = cmts;
+    } else {
+      if (r === at) continue;
+      result[r < at ? r : r - 1] = cmts;
+    }
+  }
+  return result;
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = false, sharedSheetId = null }) {
   const { id: sheetId, title: initialTitle } = sheet;
@@ -112,6 +167,9 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
 
   // ── Core state ─────────────────────────────────────────────────────────────
   const [title,      setTitle]      = useState(initialTitle || 'Untitled Sheet');
+  // Track the last title that was actually persisted to Firestore so we can
+  // show a "Save Name" button whenever there is an unsaved title change.
+  const [savedTitle, setSavedTitle] = useState(initialTitle || 'Untitled Sheet');
   const [data,       setData]       = useState(() => sheet.data || {});
   const [cols,       setCols]       = useState(initCols);
   const [rows,       setRows]       = useState(initRows);
@@ -127,6 +185,8 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
   const [dragRow,    setDragRow]    = useState(null);
   const [dragOverRow,setDragOverRow]= useState(null);
   const [dragCol,    setDragCol]    = useState(null);
+  const [downloading,  setDownloading]  = useState(false);
+  const [contextMenu,  setContextMenu]  = useState(null); // { x, y, row, col }
   const [dragOverCol,setDragOverCol]= useState(null);
 
   // ── Comments + Reminders state ─────────────────────────────────────────────
@@ -173,10 +233,28 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
   // Latest save trigger (always up-to-date with current data/cols/rows/title)
   const triggerSaveRef  = useRef(null);
 
+  // Always-fresh refs for the flush-on-back / flush-on-unmount path.
+  // These must be kept in sync with their corresponding state values so the
+  // unmount cleanup can read the latest values without stale closures.
+  const titleRef  = useRef(title);
+  const dataRef   = useRef(data);
+  const colsRef   = useRef(cols);
+  const rowsRef   = useRef(rows);
+  const userRef   = useRef(user);
+
   // Keep refs in sync
   useEffect(() => { colWidthsRef.current  = colWidths;  }, [colWidths]);
   useEffect(() => { rowHeightsRef.current = rowHeights; }, [rowHeights]);
   useEffect(() => { rowCommentsRef.current = rowComments; }, [rowComments]);
+  useEffect(() => { titleRef.current = title; }, [title]);
+  useEffect(() => { dataRef.current  = data;  }, [data]);
+  useEffect(() => { colsRef.current  = cols;  }, [cols]);
+  useEffect(() => { rowsRef.current  = rows;  }, [rows]);
+  useEffect(() => { userRef.current  = user;  }, [user]);
+
+  // NOTE: Title is NOT auto-saved separately. The "Save Name" button below
+  // gives the user explicit control. The full-data scheduleSave also includes
+  // the title whenever cell data is edited, so it gets persisted that way too.
 
   // Focus cell input when entering edit mode — place cursor at end, not position 0
   useEffect(() => {
@@ -233,8 +311,9 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
       if (!snap.exists() || snap.metadata.hasPendingWrites) return;
       const d = snap.data();
       if (!editCell) setData(d.data || {});  // don't disrupt active edit
-      if (d.cols)            setCols(d.cols);
-      if (d.rows)            setRows(d.rows);
+      if (d.title)              setTitle(d.title);  // sync title from other collaborators
+      if (d.cols)               setCols(d.cols);
+      if (d.rows)               setRows(d.rows);
       if (d.colWidths?.length)  setColWidths(d.colWidths);
       if (d.rowHeights?.length) setRowHeights(d.rowHeights);
       if (d.rowComments && !commentRow) setRowComments(d.rowComments);
@@ -310,15 +389,50 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
           await saveSharedSheet(sharedSheetId, updates, user, events);
         } else {
           await onSave(sheetId, updates);
+          // If owner has shared this sheet, sync title to sharedSheets too
+          if (sheet.isShared && sheet.sharedSheetId) {
+            updateDoc(doc(db, 'sharedSheets', sheet.sharedSheetId), { title: nt }).catch(() => {});
+          }
         }
         setSaveStatus('saved');
+        setSavedTitle(nt); // title included in this save — clear the "Save Name" button
       } catch {
         setSaveStatus('unsaved');
       }
     }, 1500);
   }, [sheetId, onSave, isShared, sharedSheetId, user]);
 
-  useEffect(() => () => clearTimeout(saveTimer.current), []);
+  // On unmount: flush any pending debounced save immediately so title/data
+  // changes are never lost when the user navigates away before the 1500ms
+  // debounce fires.  We read from refs (not state) to avoid stale closures.
+  useEffect(() => {
+    return () => {
+      if (!saveTimer.current) return; // nothing pending
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+      const updates = {
+        title:       titleRef.current,
+        data:        dataRef.current,
+        cols:        colsRef.current,
+        rows:        rowsRef.current,
+        colWidths:   colWidthsRef.current,
+        rowHeights:  rowHeightsRef.current,
+        rowComments: rowCommentsRef.current,
+      };
+      // fire-and-forget — component is unmounting so we can't await.
+      // For shared sheets saveSharedSheet needs a user object; use the ref.
+      if (isShared && sharedSheetId) {
+        saveSharedSheet(sharedSheetId, updates, userRef.current, []).catch(() => {});
+      } else {
+        onSave(sheetId, updates).catch(() => {});
+        // Sync title to sharedSheets collection if owner has shared this sheet
+        if (sheet.isShared && sheet.sharedSheetId && updates.title) {
+          updateDoc(doc(db, 'sharedSheets', sheet.sharedSheetId), { title: updates.title }).catch(() => {});
+        }
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // empty deps intentional — reads latest values via refs
 
   // Keep triggerSaveRef always fresh so the resize mouseup can call it
   // without any stale-closure issue
@@ -370,6 +484,53 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
     scheduleSave(next, cols, rows, title);
   }, [cols, rows, title, scheduleSave]);
 
+  // ── Row / column insert + delete ──────────────────────────────────────────
+  const handleInsertRow = useCallback((at) => {
+    setDataWithHistory(prev => insertRowInData(prev, at));
+    setRowComments(prev => shiftRowComments(prev, at, 'insert'));
+    setRowHeights(prev => { const next = [...prev]; next.splice(at, 0, DEFAULT_ROW_H); return next; });
+    setRows(r => r + 1);
+    setSel(s => ({ ...s, r: s.r >= at ? s.r + 1 : s.r }));
+    setSelEnd(null);
+    setTimeout(() => triggerSaveRef.current?.(), 0);
+  }, [setDataWithHistory]);
+
+  const handleDeleteRow = useCallback((at) => {
+    setDataWithHistory(prev => deleteRowFromData(prev, at));
+    setRowComments(prev => shiftRowComments(prev, at, 'delete'));
+    setRowHeights(prev => { const next = [...prev]; next.splice(at, 1); return next; });
+    setRows(r => Math.max(1, r - 1));
+    setSel(s => ({ ...s, r: Math.max(0, s.r > at ? s.r - 1 : s.r) }));
+    setSelEnd(null);
+    setTimeout(() => triggerSaveRef.current?.(), 0);
+  }, [setDataWithHistory]);
+
+  const handleInsertCol = useCallback((at) => {
+    setDataWithHistory(prev => insertColInData(prev, at));
+    setColWidths(prev => { const next = [...prev]; next.splice(at, 0, DEFAULT_COL_W); return next; });
+    setCols(c => c + 1);
+    setSel(s => ({ ...s, c: s.c >= at ? s.c + 1 : s.c }));
+    setSelEnd(null);
+    setTimeout(() => triggerSaveRef.current?.(), 0);
+  }, [setDataWithHistory]);
+
+  const handleDeleteCol = useCallback((at) => {
+    setDataWithHistory(prev => deleteColFromData(prev, at));
+    setColWidths(prev => { const next = [...prev]; next.splice(at, 1); return next; });
+    setCols(c => Math.max(1, c - 1));
+    setSel(s => ({ ...s, c: Math.max(0, s.c > at ? s.c - 1 : s.c) }));
+    setSelEnd(null);
+    setTimeout(() => triggerSaveRef.current?.(), 0);
+  }, [setDataWithHistory]);
+
+  // Close context menu when clicking anywhere
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [contextMenu]);
+
   // ── Cell helpers ───────────────────────────────────────────────────────────
   const updateCell = useCallback((c, r, patch) => {
     setDataWithHistory(prev => {
@@ -385,7 +546,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
         }
       }
       const next = { ...prev, [key]: { ...(prev[key] || {}), ...patch } };
-      if (!next[key].v && !next[key].b && !next[key].i) delete next[key];
+      if (!next[key].v && !next[key].b && !next[key].i && !next[key].bg) delete next[key];
       scheduleSave(next, cols, rows, title);
       return next;
     });
@@ -470,7 +631,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
             if (c < cols && r < rows) {
               const k = ck(c, r);
               next[k] = { ...(next[k] || {}), v: val };
-              if (!next[k].v && !next[k].b && !next[k].i) delete next[k];
+              if (!next[k].v && !next[k].b && !next[k].i && !next[k].bg) delete next[k];
             }
           });
         });
@@ -489,7 +650,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
         for (let r = selRange.r1; r <= selRange.r2; r++) {
           const k = ck(c, r);
           next[k] = { ...(next[k] || {}), [fmt]: newVal, v: (next[k]?.v ?? '') };
-          if (!next[k].v && !next[k].b && !next[k].i) delete next[k];
+          if (!next[k].v && !next[k].b && !next[k].i && !next[k].bg) delete next[k];
         }
       }
       scheduleSave(next, cols, rows, title);
@@ -497,6 +658,32 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
     });
     requestAnimationFrame(() => gridRef.current?.focus());
   }, [selectedKey, data, selRange, cols, rows, title, scheduleSave, setDataWithHistory]);
+
+  // ── Cell background colour ─────────────────────────────────────────────────
+  const setCellBg = useCallback((color) => {
+    setDataWithHistory(prev => {
+      const next = { ...prev };
+      for (let c = selRange.c1; c <= selRange.c2; c++) {
+        for (let r = selRange.r1; r <= selRange.r2; r++) {
+          const k = ck(c, r);
+          const cell = { ...(next[k] || {}), v: (next[k]?.v ?? '') };
+          if (color) {
+            cell.bg = color;
+          } else {
+            delete cell.bg;
+          }
+          if (!cell.v && !cell.b && !cell.i && !cell.bg) {
+            delete next[k];
+          } else {
+            next[k] = cell;
+          }
+        }
+      }
+      scheduleSave(next, cols, rows, title);
+      return next;
+    });
+    requestAnimationFrame(() => gridRef.current?.focus());
+  }, [selRange, cols, rows, title, scheduleSave, setDataWithHistory]);
 
   // ── Add rows / columns ─────────────────────────────────────────────────────
   const addRow = () => {
@@ -633,6 +820,12 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
 
   // ── Cell input keydown ─────────────────────────────────────────────────────
   const onCellKeyDown = useCallback((e) => {
+    // Stop all keystrokes from bubbling to the grid's onKeyDown while editing.
+    // Without this, Delete/Backspace inside the textarea propagate up and
+    // trigger clearRange(), wiping the entire cell instead of just the
+    // selected text.
+    e.stopPropagation();
+
     const { key, shiftKey, ctrlKey, metaKey } = e;
     const mod = ctrlKey || metaKey;
 
@@ -680,7 +873,12 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
       upsertFormulaRef({ c, r }, null);
       return;
     }
-    if (editCell && !(editCell.c === c && editCell.r === r)) {
+    // If this cell is already open for editing, let the textarea handle the
+    // mousedown natively so the user can click-to-position or drag-to-select
+    // text without accidentally exiting edit mode.
+    if (editCell && editCell.c === c && editCell.r === r) return;
+
+    if (editCell) {
       commitEdit(editCell.c, editCell.r, editVal);
     }
     isDraggingRef.current = true;
@@ -720,6 +918,8 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
   const handleCellClick = useCallback((e, c, r) => {
     if (didDragRef.current) { didDragRef.current = false; return; }
     if (inFormulaMode && editCell && !(editCell.c === c && editCell.r === r)) return;
+    // Already editing this cell — let the textarea handle click/selection natively
+    if (editCell && editCell.c === c && editCell.r === r) return;
     if (e.shiftKey && !inFormulaMode) { setSelEnd({ c, r }); return; }
     setSel({ c, r }); setSelEnd(null);
   }, [inFormulaMode, editCell]);
@@ -762,6 +962,32 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
         <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ flexShrink: 0 }}>← Back</button>
         <input className="input input-title" value={title} onChange={e => handleTitleChange(e.target.value)}
           style={{ flex: 1, marginBottom: 0, fontSize: 18 }} />
+        {title !== savedTitle && (
+          <button
+            className="btn btn-gold btn-sm"
+            style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+            onClick={async () => {
+              clearTimeout(titleSaveTimer.current);
+              try {
+                if (isShared && sharedSheetId && user) {
+                  // Collaborator path: save to sharedSheets collection
+                  await saveSharedSheet(sharedSheetId, { title }, user, []);
+                } else {
+                  // Owner path: save to personal sheets collection
+                  await onSave(sheetId, { title });
+                  // If this sheet has been shared, also sync the title to the
+                  // sharedSheets collection so collaborators see the new name
+                  if (sheet.isShared && sheet.sharedSheetId) {
+                    await updateDoc(doc(db, 'sharedSheets', sheet.sharedSheetId), { title });
+                  }
+                }
+                setSavedTitle(title);
+              } catch { /* ignore */ }
+            }}
+          >
+            Save Name
+          </button>
+        )}
         <span style={{ fontSize: 12, whiteSpace: 'nowrap', fontFamily: 'var(--font-body)',
           color: saveStatus === 'saved' ? '#16a34a' : saveStatus === 'saving' ? 'var(--ink-lighter)' : '#d97706' }}>
           {saveStatus === 'saved' ? '✓ Saved' : saveStatus === 'saving' ? 'Saving…' : '● Unsaved'}
@@ -789,6 +1015,40 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
           ))}
 
         <div style={divider} />
+
+        {/* Cell background colour swatches */}
+        {[
+          { color: '#fef08a', title: 'Yellow fill'  },
+          { color: '#bbf7d0', title: 'Green fill'   },
+          { color: '#fce7f3', title: 'Pink fill'    },
+          { color: '#bfdbfe', title: 'Blue fill'    },
+          { color: '#fed7aa', title: 'Orange fill'  },
+          { color: '#e0e7ff', title: 'Indigo fill'  },
+        ].map(({ color, title }) => (
+          <button
+            key={color}
+            onMouseDown={e => { e.preventDefault(); setCellBg(selCell.bg === color ? null : color); }}
+            title={title}
+            style={{
+              width: 18, height: 18, borderRadius: 4,
+              background: color,
+              border: selCell.bg === color ? '2px solid #7c3aed' : '1px solid rgba(0,0,0,0.18)',
+              cursor: 'pointer', padding: 0, flexShrink: 0,
+            }}
+          />
+        ))}
+        {/* Clear fill */}
+        {selCell.bg && (
+          <button
+            onMouseDown={e => { e.preventDefault(); setCellBg(null); }}
+            title="Clear cell fill"
+            style={{ padding: '2px 5px', borderRadius: 5, border: '1px solid var(--paper-line)',
+              background: 'none', cursor: 'pointer', fontSize: 11, color: 'var(--ink-lighter)',
+              display: 'flex', alignItems: 'center' }}
+          >✕</button>
+        )}
+
+        <div style={divider} />
         <button onMouseDown={e => { e.preventDefault(); setShowFilter(f => !f); setFilters({}); }}
           title="Toggle column filters" style={tbtnStyle(showFilter)}>
           <Filter size={13} /> Filter
@@ -811,6 +1071,23 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
           title="Redo (Ctrl+Y)" disabled={!redoStack.current.length}
           style={{ ...tbtnStyle(false), opacity: redoStack.current.length ? 1 : 0.35 }}>↪ Redo</button>
 
+        <div style={divider} />
+        <button
+          onMouseDown={e => {
+            e.preventDefault();
+            if (downloading) return;
+            setDownloading(true);
+            downloadSheetAsExcel({ title, data, cols, rows })
+              .catch(err => console.error('Download failed:', err))
+              .finally(() => setDownloading(false));
+          }}
+          title="Download as Excel (.xlsx)"
+          disabled={downloading}
+          style={{ ...tbtnStyle(false), opacity: downloading ? 0.5 : 1 }}
+        >
+          <Download size={13} /> {downloading ? 'Saving…' : 'Excel'}
+        </button>
+
         <div style={{ flex: 1 }} />
 
         {/* Cell ref + formula bar */}
@@ -826,6 +1103,8 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
               else { setEditVal(e.target.value); formulaInsertPos.current = null; }
             }}
             onKeyDown={e => {
+              // Prevent keystrokes in the formula bar from bubbling to the grid
+              e.stopPropagation();
               if (formulaSuggestions.length > 0) {
                 if (e.key === 'ArrowDown') { e.preventDefault(); setSuggIdx(i => Math.min(i + 1, formulaSuggestions.length - 1)); return; }
                 if (e.key === 'ArrowUp')   { e.preventDefault(); setSuggIdx(i => Math.max(i - 1, 0)); return; }
@@ -913,7 +1192,8 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
                     onDrop={e => { e.preventDefault(); moveColInsert(dragCol, c); setDragCol(null); setDragOverCol(null); }}
                     onDragEnd={() => { setDragCol(null); setDragOverCol(null); }}
                     onClick={() => { setSel({ c, r: 0 }); setSelEnd({ c, r: rows - 1 }); gridRef.current?.focus(); }}
-                    title="Click to select column · Drag to reorder · Drag right edge to resize"
+                    onContextMenu={e => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, row: null, col: c }); }}
+                    title="Click to select column · Right-click for column options · Drag to reorder"
                   >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2 }}>
                       <span>{LETTERS[c]}</span>
@@ -985,7 +1265,8 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
                   onDrop={e => { e.preventDefault(); moveRowInsert(dragRow, r); setDragRow(null); setDragOverRow(null); }}
                   onDragEnd={() => { setDragRow(null); setDragOverRow(null); }}
                   onClick={() => { setSel({ c: 0, r }); setSelEnd({ c: cols - 1, r }); gridRef.current?.focus(); }}
-                  title="Click to select row · Drag to reorder · Drag bottom edge to resize"
+                  onContextMenu={e => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, row: r, col: null }); }}
+                  title="Click to select row · Right-click for row options · Drag to reorder"
                 >
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2, height: '100%' }}>
                     <span>{r + 1}</span>
@@ -1055,13 +1336,14 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
                         height: rowHeights[r] ?? DEFAULT_ROW_H,
                         padding: 0,
                         cursor: inFormulaMode && !(editCell?.c === c && editCell?.r === r) ? 'crosshair' : 'default',
-                        background: editing ? '#faf5ff' : inRange ? '#ede9fe' : 'transparent',
+                        background: editing ? '#faf5ff' : inRange ? '#ede9fe' : (fmt.bg || 'transparent'),
                         outline: isAnchor && !selEnd ? '2px solid #7c3aed' : inRange && !isAnchor ? '1px solid #a78bfa' : 'none',
                         outlineOffset: -1, position: 'relative', overflow: 'hidden', boxSizing: 'border-box',
                       }}
                       onMouseDown={e => handleCellMouseDown(e, c, r)}
                       onMouseEnter={e => handleCellMouseEnter(e, c, r)}
                       onClick={e => handleCellClick(e, c, r)}
+                      onContextMenu={e => { e.preventDefault(); setContextMenu({ x: e.clientX, y: e.clientY, row: r, col: c }); }}
                       onDoubleClick={() => {
                         if (inFormulaMode) return;
                         setSel({ c, r }); setSelEnd(null);
@@ -1096,6 +1378,57 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
           </tbody>
         </table>
       </div>
+
+      {/* ── Right-click context menu ── */}
+      {contextMenu && (() => {
+        const { x, y, row, col } = contextMenu;
+        const menuW = 220;
+        const menuH = (row !== null ? 3 : 0) * 36 + (col !== null ? 3 : 0) * 36 + (row !== null && col !== null ? 9 : 0) + 16;
+        // Keep menu on screen
+        const left = Math.min(x, window.innerWidth  - menuW - 8);
+        const top  = Math.min(y, window.innerHeight - menuH - 8);
+        const sep  = { height: 1, background: '#e2e8f0', margin: '4px 0' };
+        const item = (label, icon, onClick, danger) => (
+          <div
+            key={label}
+            onMouseDown={e => { e.stopPropagation(); onClick(); setContextMenu(null); }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              padding: '8px 14px', cursor: 'pointer', fontSize: 13,
+              color: danger ? '#dc2626' : '#0f172a', borderRadius: 6, margin: '0 4px',
+              fontFamily: 'var(--font-body)',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = danger ? '#fef2f2' : '#f1f5f9'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+          >
+            {icon}
+            <span>{label}</span>
+          </div>
+        );
+        return (
+          <div
+            onMouseDown={e => e.stopPropagation()}
+            style={{
+              position: 'fixed', left, top, zIndex: 9999,
+              background: '#fff', border: '1px solid #e2e8f0',
+              borderRadius: 10, boxShadow: '0 8px 24px rgba(0,0,0,0.14)',
+              minWidth: menuW, padding: '6px 0', userSelect: 'none',
+            }}
+          >
+            {row !== null && <>
+              {item('Insert Row Above', <Plus size={14} color="#7c3aed" />, () => handleInsertRow(row))}
+              {item('Insert Row Below', <Plus size={14} color="#7c3aed" />, () => handleInsertRow(row + 1))}
+              {item('Delete Row', <Trash2 size={14} />, () => handleDeleteRow(row), true)}
+            </>}
+            {row !== null && col !== null && <div style={sep} />}
+            {col !== null && <>
+              {item('Insert Column Left',  <Plus size={14} color="#0891b2" />, () => handleInsertCol(col))}
+              {item('Insert Column Right', <Plus size={14} color="#0891b2" />, () => handleInsertCol(col + 1))}
+              {item('Delete Column', <Trash2 size={14} />, () => handleDeleteCol(col), true)}
+            </>}
+          </div>
+        );
+      })()}
 
       {/* ── Comments side panel ── */}
       {commentRow !== null && (

@@ -59,50 +59,63 @@ function Empty({ user }) {
  */
 function ReassignPanel({ task, orgAssignees, onClose, showToast }) {
   const { user } = useAuth();
-  const [newAssigneeEmail, setNewAssigneeEmail] = useState('');
+  const [newAssigneeEmails, setNewAssigneeEmails] = useState([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerSearch, setPickerSearch] = useState('');
   const [saving, setSaving] = useState(false);
 
   const options = useMemo(() => {
-    // Exclude the current user (reassigning to myself is a no-op).
     const myEmail = user?.email?.toLowerCase();
     return (orgAssignees || []).filter(o => o.email?.toLowerCase() !== myEmail);
   }, [orgAssignees, user?.email]);
 
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const close = () => { setPickerOpen(false); setPickerSearch(''); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [pickerOpen]);
+
   const handleSave = async () => {
-    if (!newAssigneeEmail) {
+    if (!newAssigneeEmails.length) {
       showToast?.('Please pick someone to reassign to.', 'warning');
       return;
     }
     setSaving(true);
     try {
-      const chosen     = options.find(o => o.email === newAssigneeEmail);
-      const newName    = chosen?.name || newAssigneeEmail.split('@')[0];
+      const primary    = newAssigneeEmails[0];
+      const chosen     = options.find(o => o.email === primary);
+      const newName    = chosen?.name || primary.split('@')[0];
       const newUid     = chosen?.uid  || null;
 
+      // Reassign primary via the callable (handles activity log + notifications)
       await reassignAssignedTask(task._ownerUid, task.id, {
-        newAssigneeEmail,
-        newAssigneeName: newName,
-        newAssigneeUid:  newUid,
-        actor:           { uid: user.uid, email: user.email, displayName: user.displayName || user.email },
-        ownerEmail:      null, // we don't have the owner's email in the task; notification is best-effort
-        ownerName:       task.ownerName,
-        taskText:        task.text,
+        newAssigneeEmail: primary,
+        newAssigneeName:  newName,
+        newAssigneeUid:   newUid,
+        coAssignees: newAssigneeEmails.slice(1).map(e => {
+          const o = options.find(x => x.email === e);
+          return { email: e, name: o?.name || e.split('@')[0], uid: o?.uid || null };
+        }),
+        actor:    { uid: user.uid, email: user.email, displayName: user.displayName || user.email },
+        ownerEmail: null,
+        ownerName:  task.ownerName,
+        taskText:   task.text,
       });
 
-      showToast?.(`Reassigned to ${newName}.`, 'success');
+      const names = newAssigneeEmails.map(e => options.find(o => o.email === e)?.name || e.split('@')[0]).join(', ');
+      showToast?.(`Reassigned to ${names}.`, 'success');
       onClose?.();
     } catch (e) {
       console.error('reassignAssignedTask failed', e);
-      const detail = e?.code === 'permission-denied'
-        ? 'Permission denied.'
-        : (e?.message || 'Please try again.');
+      const detail = e?.code === 'permission-denied' ? 'Permission denied.' : (e?.message || 'Please try again.');
       showToast?.(`Failed to reassign. ${detail}`, 'warning');
       setSaving(false);
     }
   };
 
-  const selStyle = {
-    width: '100%', height: 40, padding: '0 10px',
+  const inputStyle = {
+    width: '100%', padding: '0 10px', height: 'auto', minHeight: 40,
     border: '1px solid #cbd5e1', borderRadius: 8, fontSize: 13,
     fontFamily: 'var(--font-body)', background: '#ffffff', color: '#0f172a', outline: 'none',
   };
@@ -119,23 +132,96 @@ function ReassignPanel({ task, orgAssignees, onClose, showToast }) {
           {task.ownerName ? ` ${task.ownerName} (who gave it to you) will be notified.` : ''}
         </p>
 
-        <div style={{ marginBottom: 12 }}>
+        <div style={{ marginBottom: 12, position: 'relative' }}>
           <label className="label">
             Reassign to <span style={{ color: '#dc2626' }}>*</span>
           </label>
-          <select
-            value={newAssigneeEmail}
-            onChange={e => setNewAssigneeEmail(e.target.value)}
-            style={{ ...selStyle, borderColor: newAssigneeEmail ? '#cbd5e1' : '#dc262688' }}
-            required
+          {/* Pill trigger */}
+          <div
+            onClick={() => setPickerOpen(o => !o)}
+            onMouseDown={e => e.stopPropagation()}
+            style={{
+              ...inputStyle, display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center',
+              padding: '6px 10px', cursor: 'pointer',
+              borderColor: newAssigneeEmails.length ? '#cbd5e1' : '#dc262688',
+            }}
           >
-            <option value="" disabled>— Pick someone —</option>
-            {options.map(o => (
-              <option key={o.email} value={o.email}>
-                {o.name}{o.email ? ` (${o.email})` : ''}
-              </option>
-            ))}
-          </select>
+            {newAssigneeEmails.length === 0
+              ? <span style={{ color: '#94a3b8', fontSize: 13, flex: 1 }}>— Pick someone —</span>
+              : newAssigneeEmails.map(email => {
+                  const o = options.find(x => x.email === email);
+                  return (
+                    <span key={email} style={{
+                      background: '#fde68a', color: '#92400e', borderRadius: 12,
+                      padding: '2px 8px 2px 10px', fontSize: 12, fontWeight: 600,
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                    }}>
+                      {o?.name || email}
+                      <button
+                        type="button"
+                        onMouseDown={e => { e.stopPropagation(); setNewAssigneeEmails(prev => prev.filter(x => x !== email)); }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#92400e', padding: 0, fontSize: 14, lineHeight: 1 }}
+                      >×</button>
+                    </span>
+                  );
+                })
+            }
+            <ChevronDown size={12} style={{ marginLeft: 'auto', color: '#94a3b8', flexShrink: 0 }} />
+          </div>
+          {/* Dropdown */}
+          {pickerOpen && (
+            <div
+              onMouseDown={e => e.stopPropagation()}
+              style={{
+                position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 200,
+                background: '#fff', border: '1px solid #cbd5e1', borderRadius: 8,
+                maxHeight: 200, overflowY: 'auto', boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+              }}
+            >
+              <div style={{ padding: '8px 10px', borderBottom: '1px solid #f1f5f9' }}>
+                <input
+                  autoFocus
+                  type="text"
+                  value={pickerSearch}
+                  onChange={e => setPickerSearch(e.target.value)}
+                  placeholder="Search people…"
+                  style={{
+                    width: '100%', padding: '6px 10px', fontSize: 13,
+                    border: '1px solid #e2e8f0', borderRadius: 6, outline: 'none',
+                    fontFamily: 'var(--font-body)', boxSizing: 'border-box',
+                  }}
+                />
+              </div>
+              {options
+                .filter(o => !pickerSearch ||
+                  o.name?.toLowerCase().includes(pickerSearch.toLowerCase()) ||
+                  o.email?.toLowerCase().includes(pickerSearch.toLowerCase()))
+                .map(o => {
+                const selected = newAssigneeEmails.includes(o.email);
+                return (
+                  <label key={o.email} style={{
+                    display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px',
+                    cursor: 'pointer', background: selected ? '#fffbeb' : 'transparent',
+                  }}
+                    onMouseEnter={e => e.currentTarget.style.background = selected ? '#fef3c7' : '#f8fafc'}
+                    onMouseLeave={e => e.currentTarget.style.background = selected ? '#fffbeb' : 'transparent'}
+                  >
+                    <input type="checkbox" checked={selected}
+                      onChange={ev => setNewAssigneeEmails(prev =>
+                        ev.target.checked ? [...prev, o.email] : prev.filter(x => x !== o.email)
+                      )}
+                      style={{ accentColor: '#d97706', width: 15, height: 15 }}
+                    />
+                    <span style={{ flex: 1, fontSize: 13, color: '#0f172a', fontWeight: selected ? 600 : 400 }}>
+                      {o.name}
+                    </span>
+                    <span style={{ fontSize: 11, color: '#64748b' }}>{o.email}</span>
+                    {selected && <span style={{ color: '#d97706', fontSize: 12 }}>✓</span>}
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
@@ -146,11 +232,11 @@ function ReassignPanel({ task, orgAssignees, onClose, showToast }) {
             className="btn btn-sm"
             style={{
               background: '#d97706', color: '#fff', border: 'none',
-              opacity: (!newAssigneeEmail || saving) ? 0.5 : 1,
-              cursor:  (!newAssigneeEmail || saving) ? 'not-allowed' : 'pointer',
+              opacity: (!newAssigneeEmails.length || saving) ? 0.5 : 1,
+              cursor:  (!newAssigneeEmails.length || saving) ? 'not-allowed' : 'pointer',
             }}
             onClick={handleSave}
-            disabled={saving || !newAssigneeEmail}
+            disabled={saving || !newAssigneeEmails.length}
           >
             {saving ? 'Reassigning…' : <><Check size={13} /> Reassign</>}
           </button>
