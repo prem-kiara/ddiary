@@ -73,6 +73,31 @@ function detectListPrefix(text) {
 }
 
 /**
+ * Wrap any bare text-node direct children of the editor in <p> elements.
+ *
+ * Why this matters: when a contentEditable is cleared via `innerHTML = ''`
+ * and the user starts typing, Chrome inserts the first characters as a raw
+ * text node — not wrapped in a <p>.  Raw text nodes are NOT included in
+ * `element.children` (which only returns element nodes), so
+ * fixNumberedListsInDOM never sees them, the counter starts at 0 for the
+ * first real <p>, and every numbered block gets the wrong number.
+ *
+ * Call this before any logic that iterates `editorEl.children`.
+ */
+function normalizeBareTextNodes(editorEl) {
+  if (!editorEl) return;
+  // Snapshot childNodes first — modifying the DOM while iterating a live
+  // NodeList produces unexpected results.
+  Array.from(editorEl.childNodes).forEach(node => {
+    if (node.nodeType === Node.TEXT_NODE && node.nodeValue.trim()) {
+      const p = document.createElement('p');
+      editorEl.insertBefore(p, node);
+      p.appendChild(node); // moves the text node into the new <p>
+    }
+  });
+}
+
+/**
  * Walk every direct-child block in the contentEditable and fix sequential
  * numbering across all indent levels.
  * Counters are maintained per-level: [level0, level1, level2, level3]
@@ -80,6 +105,10 @@ function detectListPrefix(text) {
  */
 function fixNumberedListsInDOM(editorEl) {
   if (!editorEl) return;
+
+  // Normalise bare text nodes into <p> elements first so they participate in
+  // the renumber sequence (see normalizeBareTextNodes for the full explanation).
+  normalizeBareTextNodes(editorEl);
 
   // ── Snapshot cursor before any DOM mutations ──────────────────────────────
   // Mutating ANY text node's nodeValue (even in a block the cursor is NOT in)
@@ -939,6 +968,59 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     if (!sel?.rangeCount) return;
     const range = sel.getRangeAt(0);
 
+    // ── Home / End constrained to the current block ───────────────────────
+    // In a contenteditable the browser treats the entire div as one long line,
+    // so shift+End can select all the way to the end of the LAST block and
+    // cause accidental multi-line deletions.  We intercept Home/End (with or
+    // without Shift) and keep the movement/selection inside the current block.
+    if ((e.key === 'Home' || e.key === 'End') && !e.ctrlKey && !e.metaKey) {
+      const block = getBlock(range.startContainer);
+      if (block && block.nodeName !== 'TABLE') {
+        e.preventDefault();
+
+        // Find first and last text nodes within the block
+        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
+        let firstTn = null, lastTn = null, tn;
+        while ((tn = walker.nextNode())) {
+          if (!firstTn) firstTn = tn;
+          lastTn = tn;
+        }
+
+        // Target node + offset for the movement destination
+        let destNode, destOff;
+        if (e.key === 'Home') {
+          destNode = firstTn || block;
+          destOff  = 0;
+        } else {
+          // End — jump to last text node's end (or block end if no text)
+          destNode = lastTn || block;
+          destOff  = lastTn ? lastTn.length : block.childNodes.length;
+        }
+
+        const r = document.createRange();
+        if (e.shiftKey) {
+          // Extend: keep anchor where it is, move focus to dest
+          // The current range's collapse-end is the focus; the anchor is
+          // the side that does NOT move.  When shift is held the anchor is
+          // range.startContainer/startOffset for a forward selection.
+          r.setStart(range.startContainer, range.startOffset);
+          r.setEnd(destNode, destOff);
+          // If dest is before the anchor (e.g. shift+Home and cursor is past
+          // end), swap so Range is always start ≤ end.
+          if (r.collapsed && e.key === 'Home') {
+            r.setStart(destNode, destOff);
+            r.setEnd(range.startContainer, range.startOffset);
+          }
+        } else {
+          r.setStart(destNode, destOff);
+          r.collapse(true);
+        }
+        sel.removeAllRanges();
+        sel.addRange(r);
+        return;
+      }
+    }
+
     // ── Backspace at the very start of a block (MS Word–style merge) ────
     //
     // When the cursor is at position 0 of a block we merge the current line
@@ -980,6 +1062,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     }
 
     if (e.key === 'Backspace' && range.collapsed) {
+      normalizeBareTextNodes(editorRef.current);
       const block = getBlock(range.startContainer);
       if (block && isAtBlockStart(range, block)) {
         const prevBlock = block.previousElementSibling;
@@ -1131,6 +1214,11 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
       scheduleAutosave();
       return;
     }
+
+    // Normalise any bare text nodes synchronously before querying blocks —
+    // the rAF from handleEditorInput may not have fired yet if the user is
+    // typing quickly, so we ensure the first line is always a <p> here too.
+    normalizeBareTextNodes(editorRef.current);
 
     // Enter inside a list item → continue the list
     const block = getBlock(range.startContainer);
