@@ -232,15 +232,20 @@ function DiaryApp() {
   // ─── Entry handlers ──────────────────────────────────────────────────────
   const handleSaveEntry = async (entryData, editingId = null) => {
     if (editingId) {
-      // If this entry is shared, propagate changes to sharedDiaries as well
       const editingEntry = entries.find(e => e.id === editingId)
         || archivedEntries.find(e => e.id === editingId);
+
       if (editingEntry?.isShared) {
-        // Save to both personal store and shared store
+        // Owner saving their own shared entry — write to both stores
         await updateEntry(editingId, entryData);
         await saveSharedDiary(editingId, entryData, user).catch(() => {});
-      } else {
+      } else if (editingEntry) {
+        // Normal personal entry
         await updateEntry(editingId, entryData);
+      } else {
+        // Entry not found in personal collection — it's a shared-with-me entry.
+        // Save only to sharedDiaries; the collaborator has no personal copy.
+        await saveSharedDiary(editingId, entryData, user);
       }
     } else {
       await addEntry(entryData);

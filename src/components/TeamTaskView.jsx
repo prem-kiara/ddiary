@@ -14,7 +14,7 @@ import {
 import { useMyWorkspaces } from '../hooks/useWorkspace';
 import { fetchAllOrgUsers } from '../utils/graphPeopleSearch';
 import TaskCollabPanel, { StatusBadge } from './TaskCollabPanel';
-import { MoveToBoard } from './TaskManager';
+import MoveToBoard from './TaskManager/MoveToBoard';
 import SectionHeader from './shared/SectionHeader';
 import { formatShortStamp, elapsedSince } from '../utils/dates';
 

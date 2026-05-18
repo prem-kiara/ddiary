@@ -59,6 +59,12 @@ service cloud.firestore {
         }
       }
 
+      // Personal spreadsheets — owner only (super admin can read/write any)
+      match /sheets/{sheetId} {
+        allow read, write: if isSuperAdmin()
+                            || (request.auth != null && request.auth.uid == userId);
+      }
+
       // Team members — owner only (super admin can read/write any)
       match /teamMembers/{memberId} {
         allow read, write: if isSuperAdmin()

@@ -81,7 +81,15 @@
         { "fieldPath": "createdBy",        "order": "ASCENDING" },
         { "fieldPath": "reminder.enabled", "order": "ASCENDING" }
       ]
-    }
+    },
+    {
+      "collectionGroup": "tasks",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "reminder.enabled",    "order": "ASCENDING" },
+        { "fieldPath": "reminder.nextSendAt", "order": "ASCENDING" }
+      ]
+    },
   ],
   "fieldOverrides": [
     {

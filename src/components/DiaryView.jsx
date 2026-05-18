@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ChevronLeft, Edit3, Trash2, Archive, RotateCcw, Share2, Download, Users } from 'lucide-react';
 import { TagBadge } from './shared/Pills';
 import { parseDate } from '../utils/dates';
@@ -7,6 +7,8 @@ import ShareDiaryModal from './ShareDiaryModal';
 import { downloadEntryAsPDF } from '../utils/exportUtils';
 import { shareDiary } from '../hooks/useSharedDiaries';
 import { useAuth } from '../contexts/AuthContext';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 
 // Long-form date — "Monday, April 3, 2026" — used in the entry header.
 const formatDate = (d) => {
@@ -121,6 +123,35 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
   const [sharingDiary,    setSharingDiary]    = useState(false);
   const [downloading,     setDownloading]     = useState(false);
 
+  // ── Live content for shared entries ─────────────────────────────────────
+  const [liveContent,      setLiveContent]     = useState(entry.content || '');
+  const [liveTitle,        setLiveTitle]       = useState(entry.title   || '');
+  const [liveUpdater,      setLiveUpdater]     = useState(null); // "updated by X" banner
+
+  // Sync initial values whenever the entry prop changes (e.g. navigating to a new entry)
+  useEffect(() => {
+    setLiveContent(entry.content || '');
+    setLiveTitle(entry.title || '');
+  }, [entry.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Subscribe to sharedDiaries for real-time changes (owner or collaborator)
+  useEffect(() => {
+    const isShared = entry.isShared || entry.isSharedWithMe;
+    if (!isShared || !entry.id) return;
+    const unsub = onSnapshot(doc(db, 'sharedDiaries', entry.id), (snap) => {
+      if (!snap.exists() || snap.metadata.hasPendingWrites) return;
+      const d = snap.data();
+      if (d.content !== undefined) setLiveContent(d.content);
+      if (d.title   !== undefined) setLiveTitle(d.title);
+      const updaterName = d.updaterName || null;
+      if (updaterName && updaterName !== (user?.displayName || user?.email)) {
+        setLiveUpdater(updaterName);
+        setTimeout(() => setLiveUpdater(null), 4000);
+      }
+    });
+    return () => unsub();
+  }, [entry.id, entry.isShared, entry.isSharedWithMe]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleCollaborate = async () => {
     if (entry.isShared) {
       setCollaborateOpen(true);
@@ -163,9 +194,16 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
           <div className="flex-1 min-w-[60%]" style={{ minWidth: 0 }}>
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <h2 className="entry-title m-0" style={{ fontSize: 'clamp(20px, 5vw, 26px)', wordBreak: 'break-word' }}>
-                {entry.title || 'Untitled'}
+                {liveTitle || 'Untitled'}
               </h2>
               {entry.tag && <TagBadge tag={entry.tag} />}
+              {(entry.isShared || entry.isSharedWithMe) && (
+                <span style={{ fontSize: 11, fontWeight: 600, padding: '1px 7px', borderRadius: 8,
+                  background: '#f5f3ff', color: '#7c3aed', border: '1px solid #ddd6fe',
+                  display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                  🔴 Live
+                </span>
+              )}
             </div>
             <p className="text-sm text-slate-500 m-0">
               {formatDate(entry.createdAt)} · {formatTime(entry.createdAt)}
@@ -233,8 +271,17 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
           </div>
         </div>
 
+        {liveUpdater && (
+          <div style={{ marginBottom: 10, padding: '6px 12px', borderRadius: 8,
+            background: '#f0fdf4', border: '1px solid #bbf7d0',
+            fontSize: 13, color: '#15803d', fontFamily: 'var(--font-body)',
+            display: 'flex', alignItems: 'center', gap: 6 }}>
+            ✏️ <strong>{liveUpdater}</strong> just made changes.
+          </div>
+        )}
+
         <div className="border-t border-slate-200 pt-4 pb-2">
-          {renderContent(entry.content)}
+          {renderContent(liveContent)}
         </div>
 
         {/* Legacy drawings from old entries */}
