@@ -1,11 +1,12 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
 import { X, Send, Search, Check, AlertCircle, Loader2 } from 'lucide-react';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useTeamMembers } from '../hooks/useFirestore';
 import { useMyWorkspaces } from '../hooks/useWorkspace';
 import { shareDiaryEntry } from '../utils/emailNotifications';
+import { shareDiary, inviteToDiary } from '../hooks/useSharedDiaries';
 import { searchOrgPeople } from '../utils/graphPeopleSearch';
 
 /**
@@ -166,14 +167,71 @@ export default function ShareEntryModal({ entry, onClose, showToast }) {
     if (!hasMsToken) { showToast('Sign in with Microsoft first to send email.', 'warning'); return; }
     setSending(true);
     try {
+      // ── Step 1: ensure the entry is registered as a sharedDiary ──────────
+      // This is idempotent — if it was already shared, setDoc overwrites with
+      // the same data, which is harmless.
+      let diaryId = entry.id;
+      try {
+        const alreadyShared = await getDoc(doc(db, 'sharedDiaries', entry.id));
+        if (!alreadyShared.exists()) {
+          await shareDiary(entry, {
+            uid:         user.uid,
+            email:       user.email,
+            displayName: user.displayName || user.email,
+          });
+        }
+      } catch (shareErr) {
+        console.warn('shareDiary registration failed:', shareErr);
+        // Non-fatal — the content email is still sent below.
+      }
+
+      // ── Step 2: create a diaryInvites doc for every recipient ────────────
+      // This fires the in-app notification banner for each invitee.
+      // Invite emails are NOT sent here (we send the richer content email
+      // below instead).  inviteToDiary internally calls notifyDiaryInvite;
+      // we suppress that by catching it — the content email below is the
+      // single email the recipient receives.
+      const inviteIds = {};
+      await Promise.allSettled(
+        selected.map(async (s) => {
+          try {
+            // inviteToDiary writes the Firestore doc and fires notifyDiaryInvite.
+            // We let it run — the invite email it sends is a lightweight "you've
+            // been invited" note while the content email below carries the full
+            // entry text.
+            const ref = await inviteToDiary(
+              diaryId,
+              entry.title || 'Diary Entry',
+              { uid: user.uid, email: user.email, displayName: user.displayName || user.email },
+              s.email
+            );
+            // Record the deterministic invite ID so the content email can link
+            // to the accept deep-link.
+            inviteIds[s.email.toLowerCase()] = `${diaryId}_${s.email.toLowerCase().trim()}`;
+          } catch (inviteErr) {
+            console.warn('inviteToDiary failed for', s.email, inviteErr);
+          }
+        })
+      );
+
+      // ── Step 3: send the rich content email with an Accept CTA ───────────
+      // Use the first recipient's inviteId for the accept deep link (if only
+      // one recipient) or a generic diary link for bulk sends.
+      const recipientEmails = selected.map(s => s.email);
+      const singleInviteId  = recipientEmails.length === 1
+        ? inviteIds[recipientEmails[0].toLowerCase()]
+        : null;
+
       const ok = await shareDiaryEntry({
         entry,
-        recipients: selected.map(s => s.email),
+        recipients: recipientEmails,
         senderName: user?.displayName || user?.email?.split('@')[0] || 'A colleague',
         personalNote,
         copyToSelf,
         selfEmail: user?.email,
+        inviteId:  singleInviteId,   // adds an "Open in App" accept button
       });
+
       if (ok) {
         showToast(`Entry shared with ${selected.length} recipient${selected.length === 1 ? '' : 's'}.`, 'success');
         onClose();

@@ -75,6 +75,25 @@ function detectListPrefix(text) {
  */
 function fixNumberedListsInDOM(editorEl) {
   if (!editorEl) return;
+
+  // ── Snapshot cursor before any DOM mutations ──────────────────────────────
+  // Mutating ANY text node's nodeValue (even in a block the cursor is NOT in)
+  // can invalidate the browser's Selection and silently move the cursor to
+  // offset 0, especially in Firefox.  We save the range endpoints by their
+  // (node, offset) references and restore them after all rewrites are done.
+  const sel = window.getSelection();
+  let savedStart = null, savedStartOff = 0;
+  let savedEnd   = null, savedEndOff   = 0;
+  let hadSelection = false;
+  if (sel?.rangeCount) {
+    const r = sel.getRangeAt(0);
+    savedStart    = r.startContainer;
+    savedStartOff = r.startOffset;
+    savedEnd      = r.endContainer;
+    savedEndOff   = r.endOffset;
+    hadSelection  = true;
+  }
+
   const blocks  = Array.from(editorEl.children);
   const counters = [0, 0, 0, 0];
 
@@ -120,12 +139,19 @@ function fixNumberedListsInDOM(editorEl) {
       const walker   = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
       const firstTxt = walker.nextNode();
       if (firstTxt) {
-        // IMPORTANT: only mutate the text node when the prefix actually
-        // needs to change.  Touching nodeValue even with the same string
-        // invalidates the browser's current Selection and moves the cursor
-        // to offset 0 — which is why the cursor was jumping left while typing.
         const updated = firstTxt.nodeValue.replace(/^[\d]+(?:\.[\d]+)*\. ?/, expectedPrefix);
         if (updated !== firstTxt.nodeValue) {
+          // When the prefix length changes, adjust saved cursor offsets if the
+          // cursor lives inside this text node so the restore lands correctly.
+          const oldPrefixLen = (firstTxt.nodeValue.match(/^[\d]+(?:\.[\d]+)*\. ?/) || [''])[0].length;
+          const newPrefixLen = expectedPrefix.length;
+          const delta        = newPrefixLen - oldPrefixLen;
+          if (delta !== 0) {
+            if (savedStart === firstTxt)
+              savedStartOff = Math.max(newPrefixLen, savedStartOff + delta);
+            if (savedEnd === firstTxt)
+              savedEndOff   = Math.max(newPrefixLen, savedEndOff + delta);
+          }
           firstTxt.nodeValue = updated;
         }
       }
@@ -139,6 +165,24 @@ function fixNumberedListsInDOM(editorEl) {
       for (let i = level + 1; i < counters.length; i++) counters[i] = 0;
     }
   });
+
+  // ── Restore cursor after all mutations ───────────────────────────────────
+  if (hadSelection && savedStart?.isConnected) {
+    try {
+      const clamp = (node, off) =>
+        node.nodeType === Node.TEXT_NODE
+          ? Math.min(off, node.length)
+          : Math.min(off, node.childNodes.length);
+      const newRange = document.createRange();
+      newRange.setStart(savedStart, clamp(savedStart, savedStartOff));
+      newRange.setEnd(
+        savedEnd?.isConnected ? savedEnd : savedStart,
+        clamp(savedEnd?.isConnected ? savedEnd : savedStart, savedEndOff)
+      );
+      sel.removeAllRanges();
+      sel.addRange(newRange);
+    } catch { /* node detached or invalid — leave cursor where browser put it */ }
+  }
 }
 
 /**
@@ -459,41 +503,12 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     const text = editorRef.current?.textContent?.trim() || '';
     setIsEmpty(!text);
     scheduleAutosave();
-
-    const currentCount = editorRef.current?.childElementCount ?? 0;
-    const inputType    = e?.nativeEvent?.inputType ?? '';
-    const isDeletion   = inputType.startsWith('delete') || inputType === 'deleteByCut';
-
-    // Re-run numbering when a whole block was added or removed (block count
-    // changed — covers Enter, Backspace-merge, select+delete, etc.)
-    let shouldRenumber = currentCount !== prevBlockCountRef.current;
-
-    // Also renumber on a deletion keystroke BUT ONLY when the focused block has
-    // just become prefix-only (all body content erased).  Running on every
-    // single backspace character races with the browser's Selection and jumps
-    // the cursor to offset 0 even with the nodeValue guard in
-    // fixNumberedListsInDOM — so we restrict to the transition moment only.
-    if (!shouldRenumber && isDeletion) {
-      const sel = window.getSelection();
-      if (sel?.rangeCount) {
-        let node = sel.getRangeAt(0).startContainer;
-        // Walk up to the direct child of the editor (the block element)
-        while (node && node.parentNode !== editorRef.current) node = node.parentNode;
-        if (node && node !== editorRef.current) {
-          const blockText = node.textContent || '';
-          const prefixMatch = blockText.match(/^[\d]+(?:\.[\d]+)*\. ?/);
-          if (prefixMatch) {
-            const body = blockText.slice(prefixMatch[0].length).trim();
-            if (!body) shouldRenumber = true; // block just became prefix-only
-          }
-        }
-      }
-    }
-
-    prevBlockCountRef.current = currentCount;
-    if (shouldRenumber) {
-      requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
-    }
+    prevBlockCountRef.current = editorRef.current?.childElementCount ?? 0;
+    // Always renumber — fixNumberedListsInDOM saves/restores the cursor
+    // internally so running on every keystroke is safe and ensures the list
+    // stays consistent no matter how content was changed (typing, paste,
+    // select+delete, drag-drop, etc.).
+    requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
   }, [scheduleAutosave]);
 
   // ── Set defaultParagraphSeparator once on mount ───────────────────────────
@@ -970,6 +985,31 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     //    lands at the join point.  Renumber afterwards.
     //  • Non-numbered block with content: same merge without stripping.
     //  • If prev block is a <table>: skip (don't merge into a table).
+    // ── Prefix-only block: any Backspace/Delete wipes the whole prefix ────────
+    // When a numbered block has no body content (e.g. "1.1." or "2. ") the
+    // user's intent on pressing Backspace or Delete is always "get rid of this
+    // prefix".  Character-by-character deletion races with fixNumberedListsInDOM
+    // and the cursor-restore.  We short-circuit: one keypress → empty block.
+    if ((e.key === 'Backspace' || e.key === 'Delete') && range.collapsed) {
+      const block = getBlock(range.startContainer);
+      if (block) {
+        const listCheck = detectListPrefix(block.textContent);
+        if (listCheck && !listCheck.body.trim()) {
+          e.preventDefault();
+          block.innerHTML = '<br>';
+          // Place cursor at start of the now-empty block
+          const r2 = document.createRange();
+          r2.setStart(block, 0);
+          r2.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(r2);
+          requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
+          scheduleAutosave();
+          return;
+        }
+      }
+    }
+
     if (e.key === 'Backspace' && range.collapsed) {
       const block = getBlock(range.startContainer);
       if (block && isAtBlockStart(range, block)) {
@@ -995,7 +1035,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
             block.innerHTML === '<br>' ||
             block.innerHTML === '' ||
             (!block.textContent.trim()) ||
-            (list && !list.body.trim() && getIndentLevel(block) === 0);
+            (list && !list.body.trim());
 
           if (isEmpty) {
             // Empty block: just remove it, cursor to end of prev

@@ -383,6 +383,14 @@ export default function Dashboard({ showToast } = {}) {
   const { tasks, loading, workspaces, effectiveMode } = usePlatformTasks({ mode: viewMode });
   const [addingInline, setAddingInline] = useState(false);
 
+  // "My tasks" toggle — client-side filter on top of all workspace tasks.
+  // When on, only tasks where _isMine === true are shown in the tiles/drill-down.
+  const [myTasksOnly, setMyTasksOnly] = useState(false);
+  const displayTasks = useMemo(
+    () => (myTasksOnly && effectiveMode !== 'global') ? tasks.filter(t => t._isMine) : tasks,
+    [tasks, myTasksOnly, effectiveMode]
+  );
+
   // Click a row -> deep-link into the Team Board with full context so the
   // workspace, category, sub-category all auto-expand and the task modal opens.
   const openTaskInTeamBoard = (task) => {
@@ -418,6 +426,7 @@ export default function Dashboard({ showToast } = {}) {
         assigneeEmail: taskData.assigneeEmail,
         assigneeName:  taskData.assigneeName,
         taskText:      taskData.text,
+        notes:         taskData.notes || null,
         dueDate:       taskData.dueDate,
         priority:      'medium',
         ownerName:     user.displayName || user.email,
@@ -452,19 +461,19 @@ export default function Dashboard({ showToast } = {}) {
   const weekEnd = sod + 7 * 24 * 60 * 60 * 1000;
 
   const counts = useMemo(() => {
-    const total       = tasks.length;
-    const outstanding = tasks.filter(t => !isDoneTask(t)).length;
-    const dueToday    = tasks.filter(t => {
+    const total       = displayTasks.length;
+    const outstanding = displayTasks.filter(t => !isDoneTask(t)).length;
+    const dueToday    = displayTasks.filter(t => {
       const d = dueDateMs(t);
       return d && d >= sod && d <= eod && !isDoneTask(t);
     }).length;
-    const overdue     = tasks.filter(t => {
+    const overdue     = displayTasks.filter(t => {
       const d = dueDateMs(t);
       return d && d < sod && !isDoneTask(t);
     }).length;
 
     const assigneeMap = new Map();
-    tasks.forEach(t => {
+    displayTasks.forEach(t => {
       if (isDoneTask(t)) return;
       const k = assigneeKey(t);
       assigneeMap.set(k, (assigneeMap.get(k) || 0) + 1);
@@ -472,7 +481,7 @@ export default function Dashboard({ showToast } = {}) {
     const assigneeList = [...assigneeMap.entries()].sort((a, b) => b[1] - a[1]);
 
     const buckets = { Overdue: 0, Today: 0, 'This week': 0, Later: 0, 'No due date': 0 };
-    tasks.forEach(t => {
+    displayTasks.forEach(t => {
       if (isDoneTask(t)) return;
       const d = dueDateMs(t);
       if (!d)             buckets['No due date']++;
@@ -483,24 +492,24 @@ export default function Dashboard({ showToast } = {}) {
     });
 
     return { total, outstanding, dueToday, overdue, assigneeList, buckets };
-  }, [tasks, sod, eod, weekEnd]);
+  }, [displayTasks, sod, eod, weekEnd]);
 
   // ── Drill-down filtering ─────────────────────────────────────────────────
   const drillTasks = useMemo(() => {
     if (!drillDown) return [];
     const { kind, value } = drillDown;
-    if (kind === 'total')       return tasks;
-    if (kind === 'outstanding') return tasks.filter(t => !isDoneTask(t));
-    if (kind === 'dueToday')    return tasks.filter(t => {
+    if (kind === 'total')       return displayTasks;
+    if (kind === 'outstanding') return displayTasks.filter(t => !isDoneTask(t));
+    if (kind === 'dueToday')    return displayTasks.filter(t => {
       const d = dueDateMs(t);
       return d && d >= sod && d <= eod && !isDoneTask(t);
     });
-    if (kind === 'overdue')     return tasks.filter(t => {
+    if (kind === 'overdue')     return displayTasks.filter(t => {
       const d = dueDateMs(t);
       return d && d < sod && !isDoneTask(t);
     });
-    if (kind === 'assignee')    return tasks.filter(t => !isDoneTask(t) && assigneeKey(t) === value);
-    if (kind === 'bucket')      return tasks.filter(t => {
+    if (kind === 'assignee')    return displayTasks.filter(t => !isDoneTask(t) && assigneeKey(t) === value);
+    if (kind === 'bucket')      return displayTasks.filter(t => {
       if (isDoneTask(t)) return false;
       const d = dueDateMs(t);
       if (value === 'No due date') return !d;
@@ -518,7 +527,7 @@ export default function Dashboard({ showToast } = {}) {
   const filterOptions = useMemo(() => {
     const wsSet = new Set();
     const asSet = new Set();
-    tasks.forEach(t => {
+    displayTasks.forEach(t => {
       const wsLabel = t._kind === 'workspace' ? (t._label?.split(' › ')[0] || '') : (t._label || '');
       if (wsLabel) wsSet.add(wsLabel);
       asSet.add(assigneeKey(t));
@@ -613,22 +622,32 @@ export default function Dashboard({ showToast } = {}) {
             </h1>
             <p className="text-sm text-slate-500">
               {effectiveMode === 'global'
-                ? <>Super-admin overview · {tasks.length} task{tasks.length === 1 ? '' : 's'} loaded</>
-                : <>Tasks assigned to or created by you · {tasks.length} task{tasks.length === 1 ? '' : 's'} loaded</>}
+                ? <>Super-admin overview · {displayTasks.length} task{displayTasks.length === 1 ? '' : 's'} loaded</>
+                : myTasksOnly
+                  ? <>My tasks only · {displayTasks.length} of {tasks.length} task{tasks.length === 1 ? '' : 's'}</>
+                  : <>All workspace tasks · {displayTasks.length} task{displayTasks.length === 1 ? '' : 's'} loaded</>}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* Super-admin only: toggle between My tasks and Global view. */}
+          {/* "My tasks" filter — shows only tasks assigned to/created by me. */}
+          {effectiveMode !== 'global' && (
+            <button
+              onClick={() => setMyTasksOnly(v => !v)}
+              className={`btn btn-sm inline-flex items-center gap-1.5 ${myTasksOnly ? 'btn-purple' : 'btn-outline'}`}
+              title={myTasksOnly ? 'Showing only my tasks — click to see all workspace tasks' : 'Showing all workspace tasks — click to filter to my tasks only'}
+            >
+              <UserCircle size={14} /> My tasks
+            </button>
+          )}
+          {/* Super-admin only: global view of ALL platform tasks. */}
           {isSuperAdmin && (
             <button
-              onClick={() => setViewMode(m => m === 'mine' ? 'global' : 'mine')}
+              onClick={() => { setViewMode(m => m === 'mine' ? 'global' : 'mine'); setMyTasksOnly(false); }}
               className={`btn btn-sm inline-flex items-center gap-1.5 ${effectiveMode === 'global' ? 'btn-purple' : 'btn-outline'}`}
-              title={effectiveMode === 'global' ? 'Currently showing all platform tasks — click for My tasks only' : 'Currently showing My tasks — click for Global view'}
+              title={effectiveMode === 'global' ? 'Currently showing all platform tasks — click to return' : 'Switch to global view (all platform tasks)'}
             >
-              {effectiveMode === 'global'
-                ? <><Globe size={14} /> Global view</>
-                : <><UserCircle size={14} /> My tasks</>}
+              <Globe size={14} /> {effectiveMode === 'global' ? 'Global view' : 'Global'}
             </button>
           )}
           <button

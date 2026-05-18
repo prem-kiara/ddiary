@@ -644,7 +644,7 @@ function entryContentToHtml(content) {
  * Returns true on success. Multiple recipients go in the same To: header so
  * everyone sees the full distribution list (standard for meeting minutes).
  */
-export async function shareDiaryEntry({ entry, recipients, senderName, personalNote, copyToSelf, selfEmail }) {
+export async function shareDiaryEntry({ entry, recipients, senderName, personalNote, copyToSelf, selfEmail, inviteId }) {
   if (!entry || !recipients || recipients.length === 0) return false;
 
   const title    = entry.title?.trim() || 'Untitled diary entry';
@@ -686,6 +686,28 @@ export async function shareDiaryEntry({ entry, recipients, senderName, personalN
     <span style="display: inline-block; background: #ede9fe; color: #6d28d9; font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px; letter-spacing: 0.04em; text-transform: uppercase;">${escapeHtml(entry.tag)}</span>
   ` : '';
 
+  // CTA button — if an inviteId is provided the link takes the recipient
+  // directly to the in-app invite banner so they can accept with one click.
+  const acceptLink = inviteId
+    ? `${APP_URL}/?diary-invite=${encodeURIComponent(inviteId)}`
+    : APP_URL;
+
+  const ctaBlock = `
+    <div style="margin: 24px 0 8px; padding: 16px 20px; background: #f5f3ff; border-radius: 10px; border: 1px solid #ddd6fe; text-align: center;">
+      <p style="font-size: 14px; color: #4c1d95; margin: 0 0 12px; font-weight: 600;">
+        📓 Open this shared entry in Dhanam Workspace
+      </p>
+      <a href="${acceptLink}"
+         style="display: inline-block; background: #7c3aed; color: #fff; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 700; font-size: 14px;">
+        ${inviteId ? 'Accept &amp; Open in App' : 'Open in Dhanam Workspace'}
+      </a>
+      ${inviteId ? `<p style="font-size: 12px; color: #94a3b8; margin: 10px 0 0; line-height: 1.5;">
+        Sign in with your Dhanam Microsoft account when prompted.<br/>
+        An invite banner will appear — click Accept to add this entry to your diary.
+      </p>` : ''}
+    </div>
+  `;
+
   const body = `
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 6px;">
       <strong>${escapeHtml(senderName || 'A colleague')}</strong> shared a diary entry with you${dateStr ? ` from ${escapeHtml(dateStr)}` : ''}.
@@ -700,6 +722,7 @@ export async function shareDiaryEntry({ entry, recipients, senderName, personalN
       ${entryContentToHtml(entry.content)}
     </div>
     ${drawingsBlock}
+    ${ctaBlock}
   `;
 
   const recipientList = recipients.map(r => r.trim()).filter(Boolean);
