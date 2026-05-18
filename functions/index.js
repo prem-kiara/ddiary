@@ -13,13 +13,17 @@
  * 4. Deploy: firebase deploy --only functions
  */
 
-const functions = require('firebase-functions');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
+const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { defineSecret } = require('firebase-functions/params');
 const admin = require('firebase-admin');
 
 // ── Secrets (stored in Cloud Secret Manager, not in source) ──────────────────
 // Set once with: firebase functions:secrets:set SENDGRID_API_KEY
 const sendgridApiKey = defineSecret('SENDGRID_API_KEY');
+
+// Runtime service account — the firebase-adminsdk SA that already exists in this project
+const SA = 'firebase-adminsdk-fbsvc@ddiary-a72ca.iam.gserviceaccount.com';
 
 admin.initializeApp();
 
@@ -166,12 +170,9 @@ function describeSchedule(reminder) {
 
 // ── The Cloud Function ────────────────────────────────────────────────────────
 
-exports.sendTaskReminders = functions
-  .runWith({ secrets: ['SENDGRID_API_KEY'], timeoutSeconds: 300, memory: '512MB' })
-  .pubsub
-  .schedule('*/5 * * * *')   // every 5 minutes
-  .timeZone('UTC')
-  .onRun(async () => {
+exports.sendTaskReminders = onSchedule(
+  { schedule: '*/5 * * * *', timeZone: 'UTC', secrets: [sendgridApiKey], timeoutSeconds: 300, memory: '512MiB', serviceAccount: SA },
+  async (event) => {
     const sgMail    = require('@sendgrid/mail');
     const fromEmail = process.env.SENDGRID_FROM || 'noreply@dhanam.finance';
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
@@ -465,7 +466,8 @@ exports.sendTaskReminders = functions
       console.error('[sendTaskReminders] fatal:', fatalErr);
       return null;
     }
-  });
+  }
+);
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 📊 SHEET ROW REMINDERS — Runs every hour (UTC).
@@ -475,12 +477,9 @@ exports.sendTaskReminders = functions
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const REMINDER_COOLDOWN_MS = 23 * 60 * 60 * 1000; // 23 h
 
-exports.sendSheetRowReminders = functions
-  .runWith({ secrets: ['SENDGRID_API_KEY'] })
-  .pubsub
-  .schedule('0 * * * *')   // every hour on the hour (UTC)
-  .timeZone('UTC')
-  .onRun(async () => {
+exports.sendSheetRowReminders = onSchedule(
+  { schedule: '0 * * * *', timeZone: 'UTC', secrets: [sendgridApiKey], serviceAccount: SA },
+  async (event) => {
     try {
       const sgMail = require('@sendgrid/mail');
       sgMail.setApiKey(process.env.SENDGRID_API_KEY);
@@ -609,18 +608,16 @@ exports.sendSheetRowReminders = functions
       console.error('[sheetRowReminders] fatal error:', err);
       return null;
     }
-  });
+  }
+);
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 📧 HOURLY CHECK — Respects each user's saved timezone + reminder time.
 // Runs every hour; skips users whose local hour doesn't match their setting.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-exports.sendDailyReminders = functions
-  .runWith({ secrets: ['SENDGRID_API_KEY'] })
-  .pubsub
-  .schedule('0 * * * *') // Every hour on the hour (UTC)
-  .timeZone('UTC')
-  .onRun(async (context) => {
+exports.sendDailyReminders = onSchedule(
+  { schedule: '0 * * * *', timeZone: 'UTC', secrets: [sendgridApiKey], serviceAccount: SA },
+  async (event) => {
     try {
       const sgMail = require('@sendgrid/mail');
       sgMail.setApiKey(process.env.SENDGRID_API_KEY);
@@ -687,7 +684,8 @@ exports.sendDailyReminders = functions
       console.error('Error sending reminders:', error);
       return null;
     }
-  });
+  }
+);
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 📧 ON-DEMAND REMINDER — Callable function from the app
@@ -695,12 +693,12 @@ exports.sendDailyReminders = functions
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const RATE_LIMIT_MS = 60 * 60 * 1000; // 1 hour
 
-exports.sendReminderNow = functions.runWith({ secrets: ['SENDGRID_API_KEY'] }).https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+exports.sendReminderNow = onCall({ secrets: [sendgridApiKey], serviceAccount: SA }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Must be signed in');
   }
 
-  const uid = context.auth.uid;
+  const uid = request.auth.uid;
   const userRef = db.collection('users').doc(uid);
   const userDoc = await userRef.get();
   const userData = userDoc.data();
@@ -711,16 +709,16 @@ exports.sendReminderNow = functions.runWith({ secrets: ['SENDGRID_API_KEY'] }).h
     const elapsed = Date.now() - new Date(lastSent).getTime();
     if (elapsed < RATE_LIMIT_MS) {
       const waitMins = Math.ceil((RATE_LIMIT_MS - elapsed) / 60000);
-      throw new functions.https.HttpsError(
+      throw new HttpsError(
         'resource-exhausted',
         `Please wait ${waitMins} more minute${waitMins !== 1 ? 's' : ''} before sending another reminder.`
       );
     }
   }
 
-  const email = data.email || userData?.settings?.reminderEmail || userData?.email;
+  const email = request.data.email || userData?.settings?.reminderEmail || userData?.email;
   if (!email) {
-    throw new functions.https.HttpsError('failed-precondition', 'No email configured');
+    throw new HttpsError('failed-precondition', 'No email configured');
   }
 
   const tasksSnap = await db
@@ -757,49 +755,7 @@ exports.sendReminderNow = functions.runWith({ secrets: ['SENDGRID_API_KEY'] }).h
     return { success: true, message: `Reminder sent to ${email}` };
   } catch (error) {
     console.error('Error:', error);
-    throw new functions.https.HttpsError('internal', 'Failed to send email');
-  }
-});
-
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 📝 NEW USER WELCOME EMAIL
-// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-exports.onNewUser = functions.runWith({ secrets: ['SENDGRID_API_KEY'] }).auth.user().onCreate(async (user) => {
-  try {
-    const sgMail = require('@sendgrid/mail');
-    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-
-    await sgMail.send({
-      to: user.email,
-      from: process.env.SENDGRID_FROM || 'noreply@dhanam.finance',
-      subject: '📖 Welcome to Your Digital Diary!',
-      html: `
-        <div style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; background: #fef9ef; padding: 32px; border-radius: 12px;">
-          <h1 style="font-family: 'Caveat', cursive; color: #4a3728; font-size: 32px; text-align: center;">Welcome to Your Digital Diary!</h1>
-          <p style="color: #6b5a4a; line-height: 1.8; font-size: 16px;">
-            Hi ${user.displayName || 'there'},
-          </p>
-          <p style="color: #6b5a4a; line-height: 1.8; font-size: 16px;">
-            Your personal digital diary is ready. Here's what you can do:
-          </p>
-          <ul style="color: #6b5a4a; line-height: 2; font-size: 15px;">
-            <li><strong>Write</strong> diary entries with text or handwriting</li>
-            <li><strong>Draw</strong> sketches with Apple Pencil or your finger</li>
-            <li><strong>Upload</strong> handwritten notes and convert them to text</li>
-            <li><strong>Track</strong> tasks with due dates and priorities</li>
-            <li><strong>Get reminded</strong> about pending tasks via email</li>
-          </ul>
-          <p style="color: #6b5a4a; line-height: 1.8; font-size: 16px;">
-            Install the app on your home screen for the best experience on any device!
-          </p>
-          <p style="color: #8a7a6a; font-size: 14px; margin-top: 24px; text-align: center;">
-            — Your Digital Diary
-          </p>
-        </div>
-      `,
-    });
-  } catch (error) {
-    console.error('Welcome email error:', error);
+    throw new HttpsError('internal', 'Failed to send email');
   }
 });
 
@@ -811,14 +767,14 @@ exports.onNewUser = functions.runWith({ secrets: ['SENDGRID_API_KEY'] }).auth.us
 // Deploy: firebase deploy --only functions
 // Call once via the Firebase console or a one-off script, then remove access.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-exports.runDataMigration = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+exports.runDataMigration = onCall({ serviceAccount: SA }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Must be signed in');
   }
 
   const allowedUid = process.env.MIGRATION_ADMIN_UID || null;
-  if (allowedUid && context.auth.uid !== allowedUid) {
-    throw new functions.https.HttpsError('permission-denied', 'Not authorised to run migrations');
+  if (allowedUid && request.auth.uid !== allowedUid) {
+    throw new HttpsError('permission-denied', 'Not authorised to run migrations');
   }
 
   const stats = { usersProcessed: 0, tasksFixed: 0, membersFixed: 0 };
@@ -899,27 +855,27 @@ exports.runDataMigration = functions.https.onCall(async (data, context) => {
 // Deletes the workspace document and ALL subcollections (tasks, members,
 // comments, activity) to avoid orphaned data in Firestore.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-exports.deleteWorkspace = functions.https.onCall(async (data, context) => {
-  if (!context.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'Must be signed in');
+exports.deleteWorkspace = onCall({ serviceAccount: SA }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Must be signed in');
   }
 
-  const { workspaceId } = data;
+  const { workspaceId } = request.data;
   if (!workspaceId) {
-    throw new functions.https.HttpsError('invalid-argument', 'workspaceId is required');
+    throw new HttpsError('invalid-argument', 'workspaceId is required');
   }
 
   const wsRef = db.collection('workspaces').doc(workspaceId);
   const wsSnap = await wsRef.get();
 
   if (!wsSnap.exists) {
-    throw new functions.https.HttpsError('not-found', 'Workspace not found');
+    throw new HttpsError('not-found', 'Workspace not found');
   }
 
   // Only the workspace creator (owner) may delete it
   const wsData = wsSnap.data();
-  if (wsData.createdBy !== context.auth.uid) {
-    throw new functions.https.HttpsError('permission-denied', 'Only the workspace owner can delete it');
+  if (wsData.createdBy !== request.auth.uid) {
+    throw new HttpsError('permission-denied', 'Only the workspace owner can delete it');
   }
 
   /** Recursively delete all docs in a subcollection (handles >500 docs via batches). */
@@ -950,7 +906,7 @@ exports.deleteWorkspace = functions.https.onCall(async (data, context) => {
   // 3. Delete the workspace doc itself
   await wsRef.delete();
 
-  console.log(`Workspace ${workspaceId} deleted by ${context.auth.uid}`);
+  console.log(`Workspace ${workspaceId} deleted by ${request.auth.uid}`);
   return { success: true };
 });
 

@@ -55,6 +55,9 @@
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
-  "_functions_disabled": "Requires Blaze plan — re-add 'functions' key to enable when upgraded",
+  "functions": {
+    "source": "functions",
+    "ignore": ["node_modules", ".git", "firebase-debug.log"]
+  },
   "_storage_disabled": "Replaced by Cloudinary — re-add 'storage' key to enable"
 }
