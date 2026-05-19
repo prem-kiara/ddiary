@@ -188,31 +188,14 @@ exports.sendTaskReminders = onSchedule(
         .get();
 
       if (snap.empty) {
-        // Diagnostic: count how many tasks have reminder.enabled=true (ignore date filter)
+        // Diagnostic: use the composite index (both fields) to find enabled reminders
+        // with nextSendAt in the far future — tells us if data exists but isn't due yet
         try {
-          const enabledSnap = await db.collectionGroup('tasks')
+          const futureSnap = await db.collectionGroup('tasks')
             .where('reminder.enabled', '==', true)
+            .where('reminder.nextSendAt', '>=', nowIso)
             .get();
-          const nullNext = enabledSnap.docs.filter(d => {
-            const r = d.data().reminder;
-            return !r?.nextSendAt;
-          });
-          console.log(`[sendTaskReminders] no tasks due — ${enabledSnap.size} task(s) with reminder.enabled=true, ${nullNext.length} have null nextSendAt`);
-
-          // Auto-heal: recompute nextSendAt for enabled reminders stuck with null
-          if (nullNext.length > 0) {
-            console.log(`[sendTaskReminders] healing ${nullNext.length} task(s) with null nextSendAt`);
-            for (const taskDoc of nullNext) {
-              const t = taskDoc.data();
-              const r = t.reminder;
-              if (!r || !r.enabled || r.paused) continue;
-              const nextIso = computeNextSendAt(r, new Date());
-              if (nextIso) {
-                await taskDoc.ref.update({ 'reminder.nextSendAt': nextIso });
-                console.log(`[sendTaskReminders] healed ${taskDoc.ref.path} → nextSendAt ${nextIso}`);
-              }
-            }
-          }
+          console.log(`[sendTaskReminders] no tasks due — ${futureSnap.size} task(s) have reminder.enabled=true with future nextSendAt`);
         } catch (diagErr) {
           console.warn('[sendTaskReminders] diagnostic query failed:', diagErr.message);
         }
@@ -396,6 +379,15 @@ exports.sendTaskReminders = onSchedule(
         } catch (emailErr) {
           errors++;
           console.error(`[sendTaskReminders] email failed for ${taskRef.path}:`, emailErr.message);
+          // On email failure, reset nextSendAt to 5 minutes from now so it retries soon
+          // instead of being pushed to tomorrow by the already-committed transaction.
+          try {
+            const retryIso = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+            await taskRef.update({ 'reminder.nextSendAt': retryIso });
+            console.log(`[sendTaskReminders] scheduled retry for ${taskRef.path} at ${retryIso}`);
+          } catch (retryErr) {
+            console.warn(`[sendTaskReminders] could not schedule retry for ${taskRef.path}:`, retryErr.message);
+          }
         }
       }
 
@@ -944,6 +936,32 @@ exports.deleteWorkspace = onCall({ serviceAccount: SA }, async (request) => {
 
   console.log(`Workspace ${workspaceId} deleted by ${request.auth.uid}`);
   return { success: true };
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 🔄 RESET REMINDERS — Callable, authenticated users only
+// Resets nextSendAt to "now" for all enabled reminders whose nextSendAt was
+// pushed to the future due to a prior email failure.  Call this once to
+// unstick reminders — the scheduler will pick them up within 5 minutes.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+exports.resetReminders = onCall({ serviceAccount: SA }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+  const nowIso = new Date().toISOString();
+  // Use the composite index: find all enabled tasks with nextSendAt in the future
+  const snap = await db.collectionGroup('tasks')
+    .where('reminder.enabled', '==', true)
+    .where('reminder.nextSendAt', '>=', nowIso)
+    .get();
+  if (snap.empty) return { reset: 0, message: 'No future-scheduled reminders found' };
+  let reset = 0;
+  // Set nextSendAt to 30 seconds from now so the next scheduler run picks them up
+  const triggerIso = new Date(Date.now() + 30 * 1000).toISOString();
+  for (const taskDoc of snap.docs) {
+    await taskDoc.ref.update({ 'reminder.nextSendAt': triggerIso });
+    reset++;
+  }
+  console.log(`[resetReminders] reset ${reset} task(s) to fire at ${triggerIso}`);
+  return { reset, triggerAt: triggerIso };
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
