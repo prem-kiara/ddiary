@@ -199,10 +199,10 @@ exports.sendTaskReminders = onSchedule(
         } catch (diagErr) {
           console.warn('[sendTaskReminders] diagnostic query failed:', diagErr.message);
         }
-        return null;
+        // NOTE: do NOT return here — fall through so scheduledEmailTime section always runs
+      } else {
+        console.log(`[sendTaskReminders] ${snap.size} task(s) due`);
       }
-
-      console.log(`[sendTaskReminders] ${snap.size} task(s) due`);
 
       // Process each task — one at a time to avoid quota exhaustion
       for (const taskDoc of snap.docs) {
@@ -391,7 +391,9 @@ exports.sendTaskReminders = onSchedule(
         }
       }
 
-      console.log(`[sendTaskReminders] done — ${sent} sent, ${errors} errors (${processed} processed)`);
+      if (processed > 0) {
+        console.log(`[sendTaskReminders] done — ${sent} sent, ${errors} errors (${processed} processed)`);
+      }
 
       // ── One-time scheduled emails (scheduledEmailTime field) ─────────────
       // Tasks assigned via the Reminders/TaskManager "Schedule Send Time" form
