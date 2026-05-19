@@ -319,15 +319,14 @@ exports.sendTaskReminders = onSchedule(
 
         const htmlBody = `
 <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;background:#f8fafc;padding:0;border-radius:12px;overflow:hidden">
-  <!-- Header -->
-  <div style="background:linear-gradient(135deg,#7c3aed,#5b21b6);padding:24px 28px">
-    <h1 style="margin:0;color:#fff;font-size:20px;font-weight:700">⏰ Task Reminder</h1>
-    <p style="margin:5px 0 0;color:#ddd6fe;font-size:13px">${schedule}</p>
+  <!-- Header — background-color is the Outlook fallback; gradient is for modern clients -->
+  <div style="background-color:#6d28d9;background:linear-gradient(135deg,#7c3aed,#5b21b6);padding:24px 28px">
+    <p style="margin:0 0 6px;color:#ddd6fe;font-size:12px;font-weight:600;letter-spacing:0.5px;text-transform:uppercase">⏰ Task Reminder &nbsp;·&nbsp; ${schedule}</p>
+    <h1 style="margin:0;color:#ffffff;font-size:22px;font-weight:700;line-height:1.3">${taskText}</h1>
   </div>
 
   <!-- Body -->
-  <div style="background:#fff;padding:24px 28px;border:1px solid #e2e8f0;border-top:none">
-    <h2 style="margin:0 0 16px;color:#1e293b;font-size:17px;font-weight:600">${taskText}</h2>
+  <div style="background:#ffffff;padding:24px 28px;border:1px solid #e2e8f0;border-top:none">
 
     <table style="border-collapse:collapse;width:100%;font-size:14px;margin-bottom:16px">
       <tr>

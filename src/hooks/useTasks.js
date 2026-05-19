@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
-  collection, collectionGroup, doc, addDoc, updateDoc, deleteDoc, getDoc,
+  collection, collectionGroup, doc, addDoc, updateDoc, deleteDoc, getDoc, getDocs,
   query, orderBy, where, onSnapshot, serverTimestamp,
   writeBatch
 } from 'firebase/firestore';
@@ -117,11 +117,18 @@ export function useTasks() {
 
     // Check if the assignee changed so we can send a notification
     let previousAssigneeEmail = null;
+    let existingTaskText = '';
+    let existingDueDate = null;
+    let existingPriority = 'medium';
     if (sanitized.assigneeEmail) {
       try {
         const snap = await getDoc(doc(db, 'users', user.uid, 'tasks', id));
         if (snap.exists()) {
-          previousAssigneeEmail = snap.data().assigneeEmail || null;
+          const d = snap.data();
+          previousAssigneeEmail = d.assigneeEmail || null;
+          existingTaskText      = d.text || '';
+          existingDueDate       = d.dueDate || null;
+          existingPriority      = d.priority || 'medium';
         }
       } catch { /* non-fatal */ }
     }
@@ -134,6 +141,13 @@ export function useTasks() {
     // If assignee was set or changed, email the new assignee (fire-and-forget)
     const newAssignee = sanitized.assigneeEmail;
     if (newAssignee && newAssignee !== previousAssigneeEmail) {
+      // Use the task text / due / priority from the update payload if provided,
+      // otherwise fall back to the values already stored in Firestore so the
+      // email always shows the real task name (not 'Untitled Task').
+      const resolvedText     = sanitized.text     || existingTaskText;
+      const resolvedDueDate  = sanitized.dueDate  !== undefined ? sanitized.dueDate  : existingDueDate;
+      const resolvedPriority = sanitized.priority || existingPriority;
+
       await _logActivity(user.uid, id, {
         actorUid:  user.uid,
         actorName: user.displayName || user.email,
@@ -145,9 +159,9 @@ export function useTasks() {
         notifyTaskAssigned({
           assigneeEmail: newAssignee,
           assigneeName:  sanitized.assigneeName || null,
-          taskText:      sanitized.text || '',
-          dueDate:       sanitized.dueDate || null,
-          priority:      sanitized.priority || 'medium',
+          taskText:      resolvedText,
+          dueDate:       resolvedDueDate,
+          priority:      resolvedPriority,
           ownerName:     user.displayName || user.email,
           ownerUid:      user.uid,
         }).catch(err => log(err, { action: 'notifyTaskAssigned' }));
@@ -156,7 +170,7 @@ export function useTasks() {
       notifyInApp_Reassigned({
         assigneeEmail: newAssignee,
         assigneeName:  sanitized.assigneeName || null,
-        taskText:      sanitized.text || '',
+        taskText:      resolvedText,
         ownerName:     user.displayName || user.email,
         ownerUid:      user.uid,
         taskId:        id,
@@ -224,6 +238,21 @@ export function useTasks() {
         }
       }
     } catch { /* non-fatal */ }
+
+    // When a task is completed, auto-delete all its notifications for all recipients
+    // so the bell list stays clean — no stale "Task assigned" entries for done tasks.
+    if (newCompleted) {
+      try {
+        const notifSnap = await getDocs(
+          query(collection(db, 'notifications'), where('taskId', '==', id))
+        );
+        if (!notifSnap.empty) {
+          const batch = writeBatch(db);
+          notifSnap.docs.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+      } catch { /* non-fatal — don't block the toggle */ }
+    }
   }, [user]);
 
   const deleteTask = useCallback(async (id) => {
@@ -473,6 +502,21 @@ export async function updateTaskStatus(ownerUid, taskId, { status, actorUid, act
       taskId,
       ownerUid,
     }).catch(err => logError(err, { location: 'updateTaskStatus', action: 'notify' }));
+  }
+
+  // When a task is marked done, auto-delete all its notifications so the
+  // bell list stays clean for every recipient (owner + assignee).
+  if (status === 'done') {
+    try {
+      const notifSnap = await getDocs(
+        query(collection(db, 'notifications'), where('taskId', '==', taskId))
+      );
+      if (!notifSnap.empty) {
+        const batch = writeBatch(db);
+        notifSnap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    } catch { /* non-fatal */ }
   }
 }
 
