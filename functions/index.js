@@ -188,7 +188,34 @@ exports.sendTaskReminders = onSchedule(
         .get();
 
       if (snap.empty) {
-        console.log('[sendTaskReminders] no tasks due');
+        // Diagnostic: count how many tasks have reminder.enabled=true (ignore date filter)
+        try {
+          const enabledSnap = await db.collectionGroup('tasks')
+            .where('reminder.enabled', '==', true)
+            .get();
+          const nullNext = enabledSnap.docs.filter(d => {
+            const r = d.data().reminder;
+            return !r?.nextSendAt;
+          });
+          console.log(`[sendTaskReminders] no tasks due — ${enabledSnap.size} task(s) with reminder.enabled=true, ${nullNext.length} have null nextSendAt`);
+
+          // Auto-heal: recompute nextSendAt for enabled reminders stuck with null
+          if (nullNext.length > 0) {
+            console.log(`[sendTaskReminders] healing ${nullNext.length} task(s) with null nextSendAt`);
+            for (const taskDoc of nullNext) {
+              const t = taskDoc.data();
+              const r = t.reminder;
+              if (!r || !r.enabled || r.paused) continue;
+              const nextIso = computeNextSendAt(r, new Date());
+              if (nextIso) {
+                await taskDoc.ref.update({ 'reminder.nextSendAt': nextIso });
+                console.log(`[sendTaskReminders] healed ${taskDoc.ref.path} → nextSendAt ${nextIso}`);
+              }
+            }
+          }
+        } catch (diagErr) {
+          console.warn('[sendTaskReminders] diagnostic query failed:', diagErr.message);
+        }
         return null;
       }
 
@@ -633,7 +660,8 @@ exports.sendDailyReminders = onSchedule(
         const settings = userData.settings || {};
 
         // Skip if reminders disabled
-        if (!settings.emailRemindersEnabled) continue;
+        // Treat missing flag as enabled; skip only if explicitly disabled
+        if (settings.emailRemindersEnabled === false) continue;
 
         const reminderEmail = settings.reminderEmail || userData.email;
         if (!reminderEmail) continue;
@@ -651,6 +679,13 @@ exports.sendDailyReminders = onSchedule(
 
         // Only send when the local hour matches their setting
         if (localHour !== prefHour) continue;
+
+        // 23-hour cooldown — prevents duplicate sends if function retries
+        const lastDaily = userData.lastDailyReminderAt;
+        if (lastDaily) {
+          const elapsed = Date.now() - new Date(lastDaily).getTime();
+          if (elapsed < 23 * 60 * 60 * 1000) continue;
+        }
 
         // Get pending tasks for this user
         const tasksSnap = await db
@@ -675,6 +710,7 @@ exports.sendDailyReminders = onSchedule(
           text: buildReminderText(overdue, upcoming),
           html: buildReminderEmail(userData.displayName || 'there', overdue, upcoming),
         });
+        await userDoc.ref.update({ lastDailyReminderAt: new Date().toISOString() });
         console.log(`Reminder sent to ${reminderEmail} (${tasks.length} tasks, tz: ${userTz})`);
       }
 
@@ -908,6 +944,57 @@ exports.deleteWorkspace = onCall({ serviceAccount: SA }, async (request) => {
 
   console.log(`Workspace ${workspaceId} deleted by ${request.auth.uid}`);
   return { success: true };
+});
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 📧 TEST EMAIL — Callable, authenticated users only
+// Sends a one-off test email immediately so you can verify SendGrid +
+// sender-identity are working end-to-end.
+// Call from Firebase console → Functions → testEmail → "Run function"
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+exports.testEmail = onCall({ secrets: [sendgridApiKey], serviceAccount: SA }, async (request) => {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Must be signed in');
+  }
+  const uid = request.auth.uid;
+  const userDoc = await db.collection('users').doc(uid).get();
+  const userData = userDoc.data() || {};
+  const toEmail =
+    request.data?.email ||
+    userData.settings?.reminderEmail ||
+    userData.email ||
+    request.auth.token?.email;
+  if (!toEmail) {
+    throw new HttpsError('failed-precondition', 'No email address found for this user. Pass { email: "..." } in the request data.');
+  }
+  try {
+    const sgMail = require('@sendgrid/mail');
+    sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+    const fromEmail = process.env.SENDGRID_FROM || 'noreply@dhanam.finance';
+    const now = new Date().toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      dateStyle: 'full',
+      timeStyle: 'medium',
+    });
+    await sgMail.send({
+      to: toEmail,
+      from: fromEmail,
+      subject: '✅ Dhanam Diary — Email Reminder Test',
+      html: `<div style="font-family:sans-serif;max-width:520px;margin:auto;padding:32px;background:#f5f3ff;border-radius:12px">
+        <h2 style="color:#5b21b6;margin:0 0 12px">Email reminders are working! ✅</h2>
+        <p style="color:#334155;font-size:15px">This test email was sent at <strong>${now} IST</strong>.</p>
+        <p style="color:#64748b;font-size:13px">Sent to: ${toEmail}<br>From: ${fromEmail}</p>
+        <hr style="border:none;border-top:1px solid #ddd6fe;margin:16px 0">
+        <p style="color:#94a3b8;font-size:12px">If you received this, your SendGrid API key and sender identity are both correctly configured.</p>
+      </div>`,
+    });
+    console.log(`[testEmail] sent to ${toEmail} by uid ${uid}`);
+    return { success: true, sentTo: toEmail, from: fromEmail };
+  } catch (err) {
+    const sgError = err.response?.body?.errors?.[0]?.message || err.message;
+    console.error('[testEmail] SendGrid error:', sgError);
+    throw new HttpsError('internal', `SendGrid rejected the email: ${sgError}`);
+  }
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
