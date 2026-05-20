@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Save, X } from 'lucide-react';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import EditorToolbar from './EditorToolbar';
 import { useAutosave } from './hooks/useAutosave';
@@ -331,7 +333,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
   const dragHandleElRef   = useRef(null);   // the handle DOM node (created imperatively)
   const dropLineElRef     = useRef(null);   // the drop-line DOM node (created imperatively)
   const prevBlockCountRef  = useRef(0);     // tracks child count to detect structural changes
-  const isSharedEntryRef   = useRef(false); // true when editing a shared diary
+  const isSharedEntryRef   = useRef(!!(editingEntry?.isShared || editingEntry?.isSharedWithMe)); // true when editing a shared diary
   const lastLocalEditRef   = useRef(0);     // timestamp of last local keystroke
   const pendingFirstSnapRef = useRef(true); // skip the initial onSnapshot fire
 
@@ -422,47 +424,89 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
 
   // ── Load entry + restore draft ──────────────────────────────────────────────
   useEffect(() => {
-    entryIdRef.current        = editingEntry?.id || 'new';
-    skipFirstSaveRef.current  = true;
-    isSharedEntryRef.current  = !!(editingEntry?.isShared || editingEntry?.isSharedWithMe);
-    pendingFirstSnapRef.current = true;   // reset so we skip the first snapshot on re-mount
-    lastLocalEditRef.current  = Date.now(); // treat load as a local edit to block early overwrites
+    const entryId = editingEntry?.id || 'new';
+    entryIdRef.current          = entryId;
+    skipFirstSaveRef.current    = true;
+    isSharedEntryRef.current    = !!(editingEntry?.isShared || editingEntry?.isSharedWithMe);
+    pendingFirstSnapRef.current = true;
+    lastLocalEditRef.current    = Date.now();
 
     const rawContent = editingEntry?.content || '';
     const ttl        = editingEntry?.title   || '';
     const html       = legacyTextToHtml(rawContent) || '<p><br></p>';
 
-    try {
-      const key = `ddiary_draft_${entryIdRef.current}`;
-      const raw = localStorage.getItem(key);
-      if (raw) {
-        const draft  = JSON.parse(raw);
-        const ut     = editingEntry?.updatedAt;
-        const savedAt = ut
-          ? (ut.seconds ? ut.seconds * 1000 : new Date(ut).getTime())
-          : 0;
-        if (draft.savedAt > savedAt) {
-          setTitle(draft.title ?? ttl);
-          titleRef.current = draft.title ?? ttl;
-          if (editorRef.current) {
-            editorRef.current.innerHTML = draft.content || html;
-            prevBlockCountRef.current = editorRef.current.childElementCount;
-          }
-          setIsEmpty(!(draft.content || '').replace(/<[^>]+>/g, '').trim());
-          setDraftStatus('restored');
-          return;
-        }
+    // Helper: apply content + title to the editor
+    const applyToEditor = (content, titleStr, status) => {
+      setTitle(titleStr);
+      titleRef.current = titleStr;
+      if (editorRef.current) {
+        editorRef.current.innerHTML = content;
+        prevBlockCountRef.current = editorRef.current.childElementCount;
       }
-    } catch { /* localStorage unavailable */ }
+      setIsEmpty(!content.replace(/<[^>]+>/g, '').trim());
+      setDraftStatus(status);
+    };
 
-    setTitle(ttl);
-    titleRef.current = ttl;
-    if (editorRef.current) {
-      editorRef.current.innerHTML = html;
-      prevBlockCountRef.current = editorRef.current.childElementCount;
+    // Helper: check localStorage draft and apply if newer than the given timestamp
+    const tryLocalDraft = (fallbackContent, fallbackTitle, fallbackTs) => {
+      try {
+        const key  = `ddiary_draft_${entryId}`;
+        const raw  = localStorage.getItem(key);
+        if (raw) {
+          const draft = JSON.parse(raw);
+          if (draft.savedAt > fallbackTs) {
+            applyToEditor(draft.content || fallbackContent, draft.title ?? fallbackTitle, 'restored');
+            return true;
+          }
+        }
+      } catch { /* localStorage unavailable */ }
+      return false;
+    };
+
+    // For shared entries: sharedDiaries is the canonical source — collaborators write
+    // there directly and the personal entry may lag behind. Fetch it now so the editor
+    // always opens with the latest version regardless of personal-entry sync state.
+    if (isSharedEntryRef.current && entryId && entryId !== 'new') {
+      getDoc(doc(db, 'sharedDiaries', entryId))
+        .then(snap => {
+          if (snap.exists()) {
+            const d            = snap.data();
+            const sharedContent = d.content || html;
+            const sharedTitle   = d.title   || ttl;
+            const sharedTs      = d.updatedAt?.seconds
+              ? d.updatedAt.seconds * 1000
+              : (d.updatedAt?.toMillis?.() ?? 0);
+
+            // localStorage draft wins only if it is newer than sharedDiaries
+            if (!tryLocalDraft(sharedContent, sharedTitle, sharedTs)) {
+              applyToEditor(sharedContent, sharedTitle, 'idle');
+            }
+          } else {
+            // sharedDiaries doc missing — fall back to personal entry
+            const ut = editingEntry?.updatedAt;
+            const personalTs = ut ? (ut.seconds ? ut.seconds * 1000 : new Date(ut).getTime()) : 0;
+            if (!tryLocalDraft(html, ttl, personalTs)) {
+              applyToEditor(html, ttl, 'idle');
+            }
+          }
+        })
+        .catch(() => {
+          // Network/permission error — fall back to personal entry content
+          const ut = editingEntry?.updatedAt;
+          const personalTs = ut ? (ut.seconds ? ut.seconds * 1000 : new Date(ut).getTime()) : 0;
+          if (!tryLocalDraft(html, ttl, personalTs)) {
+            applyToEditor(html, ttl, 'idle');
+          }
+        });
+      return; // async path handles the rest
     }
-    setIsEmpty(!rawContent.trim());
-    setDraftStatus('idle');
+
+    // Non-shared entry: check localStorage draft then fall back to personal entry
+    const ut       = editingEntry?.updatedAt;
+    const personalTs = ut ? (ut.seconds ? ut.seconds * 1000 : new Date(ut).getTime()) : 0;
+    if (!tryLocalDraft(html, ttl, personalTs)) {
+      applyToEditor(html, ttl, 'idle');
+    }
   }, [editingEntry]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => () => {
