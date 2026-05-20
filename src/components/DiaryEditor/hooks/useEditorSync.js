@@ -40,17 +40,39 @@ export function useEditorSync({
     if (!isSharedEntryRef.current) return;
 
     const unsub = onSnapshot(doc(db, 'sharedDiaries', entryId), (snap) => {
-      // Skip the very first fire (that's our own data or the initial load)
-      if (pendingFirstSnapRef.current) {
+      if (!snap.exists() || snap.metadata.hasPendingWrites) {
         pendingFirstSnapRef.current = false;
         return;
       }
-      if (!snap.exists() || snap.metadata.hasPendingWrites) return;
+
+      const d = snap.data();
+      const isFirstSnap = pendingFirstSnapRef.current;
+      pendingFirstSnapRef.current = false;
+
+      if (isFirstSnap) {
+        // On the very first snapshot, sharedDiaries is the canonical source for shared
+        // entries. Apply the content if it differs from what the personal entry loaded —
+        // a collaborator may have saved changes that haven't propagated back to the
+        // owner's personal entry yet (e.g. after a recovery or sync gap).
+        const sharedContent = d.content;
+        const sharedTitle   = d.title;
+        if (sharedContent && editorRef.current && sharedContent !== editorRef.current.innerHTML) {
+          editorRef.current.innerHTML = sharedContent;
+          prevBlockCountRef.current = editorRef.current.childElementCount;
+          setIsEmpty(!sharedContent.replace(/<[^>]+>/g, '').trim());
+        }
+        if (sharedTitle !== undefined && sharedTitle !== titleRef.current) {
+          setTitle(sharedTitle);
+          titleRef.current = sharedTitle;
+        }
+        // Treat this initial load as a "local edit" so the 5-second guard doesn't
+        // immediately overwrite whatever the user is about to type.
+        lastLocalEditRef.current = Date.now();
+        return;
+      }
 
       // Don't overwrite if the user typed in the last 5 seconds
       if (Date.now() - lastLocalEditRef.current < 5000) return;
-
-      const d = snap.data();
 
       // Apply remote title
       if (d.title !== undefined && d.title !== titleRef.current) {

@@ -278,7 +278,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
       } catch {
         setSaveStatus('unsaved');
       }
-    }, 1500);
+    }, 500);
   }, [sheetId, onSave, isShared, sharedSheetId, user]);
 
   // On unmount: flush any pending debounced save immediately

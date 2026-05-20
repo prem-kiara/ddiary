@@ -64,7 +64,7 @@ export function useAutosave({
           }).catch(() => {});
         }, 500); // small extra delay so we batch rapid edits
       }
-    }, 1500);
+    }, 500);
   }, [editorRef, titleRef, entryIdRef, isSharedEntryRef, userRef, lastLocalEditRef, setDraftStatus]);
 
   return { scheduleAutosave, autoSaveTimerRef, liveShareTimerRef, skipFirstSaveRef };
