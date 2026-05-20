@@ -85,7 +85,7 @@ export default function Layout({
             unreadCount={unreadCount}
             onMarkRead={onMarkRead || (() => {})}
             onMarkAllRead={onMarkAllRead || (() => {})}
-            onNavigateToTasks={() => navigate('/tasks')}
+            onNavigateToTask={(taskId) => navigate(taskId ? `/tasks?task=${encodeURIComponent(taskId)}` : '/tasks')}
           />
           {user && (
             <Avatar

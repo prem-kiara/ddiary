@@ -90,6 +90,7 @@ export function useTasks() {
           priority: task.priority || 'medium',
           ownerName: user.displayName || user.email,
           ownerUid: user.uid,
+          taskId:   ref.id,
         }).catch(err => log(err, { action: 'notifyTaskAssigned' }));
       });
 
@@ -164,6 +165,7 @@ export function useTasks() {
           priority:      resolvedPriority,
           ownerName:     user.displayName || user.email,
           ownerUid:      user.uid,
+          taskId:        id,
         }).catch(err => log(err, { action: 'notifyTaskAssigned' }));
       });
 
@@ -212,6 +214,7 @@ export function useTasks() {
                 assigneeName:  user.displayName  || user.email,
                 taskText:      task.text         || 'A task',
                 completedAt,
+                taskId:        id,
               }).catch(err => log(err, { action: 'notifyTaskCompleted' }));
             });
           } else {
@@ -222,6 +225,7 @@ export function useTasks() {
                 assigneeName: user.displayName  || user.email,
                 taskText:     task.text         || 'A task',
                 newStatus:    'open',
+                taskId:       id,
               }).catch(err => log(err, { action: 'notifyStatusChanged' }));
             });
           }
@@ -439,6 +443,7 @@ export async function addComment(ownerUid, taskId, { authorUid, authorName, text
         commenterName: authorName,
         taskText: taskText || 'A task',
         commentText: text,
+        taskId,
       }).catch(err => logError(err, { location: 'addComment', action: 'notify' }));
     });
 
@@ -479,6 +484,7 @@ export async function updateTaskStatus(ownerUid, taskId, { status, actorUid, act
           assigneeName: assigneeName || actorName,
           taskText: taskText || 'A task',
           completedAt,
+          taskId,
         }).catch(err => logError(err, { location: 'updateTaskStatus', action: 'notify' }));
       });
     } else {
@@ -489,6 +495,7 @@ export async function updateTaskStatus(ownerUid, taskId, { status, actorUid, act
           assigneeName: assigneeName || actorName,
           taskText: taskText || 'A task',
           newStatus: status,
+          taskId,
         }).catch(err => logError(err, { location: 'updateTaskStatus', action: 'notify' }));
       });
     }
@@ -577,6 +584,7 @@ export async function reassignAssignedTask(ownerUid, taskId, {
       taskText:      taskText || 'A task',
       ownerName:     actor.displayName || actor.email,
       ownerUid,
+      taskId,
     }).catch(err => console.warn('reassignAssignedTask:notifyTaskAssigned', err));
   } catch { /* non-fatal */ }
 

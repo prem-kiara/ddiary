@@ -155,6 +155,7 @@ function DiaryApp() {
   // ─── Invite highlight IDs (from deep links) ──────────────────────────────
   const [highlightInviteId,       setHighlightInviteId]       = useState(null);
   const [highlightDiaryInviteId,  setHighlightDiaryInviteId]  = useState(null);
+  const [highlightTaskId,         setHighlightTaskId]         = useState(null);
 
   // ─── Handle ?workspace= and ?invite= deep links for already-auth'd users ───
   // Auth.jsx handles these for unauthenticated users.  For users who are already
@@ -187,6 +188,20 @@ function DiaryApp() {
       window.history.replaceState({}, '', window.location.pathname);
       setHighlightDiaryInviteId(diaryInviteParam);
       if (window.location.pathname !== '/') navigate('/');
+    }
+
+    // Task deep link — navigate to /tasks?task=<id>[&wsId=<id>]; TasksPage reads it via useSearchParams
+    const taskParam = params.get('task');
+    const wsIdParam = params.get('wsId');
+    if (taskParam) {
+      // Only navigate if not already on /tasks (avoid double-navigation)
+      if (window.location.pathname !== '/tasks') {
+        const q = wsIdParam
+          ? `?task=${encodeURIComponent(taskParam)}&wsId=${encodeURIComponent(wsIdParam)}`
+          : `?task=${encodeURIComponent(taskParam)}`;
+        navigate(`/tasks${q}`);
+      }
+      // If already on /tasks, the URL still has the params so TasksPage's useSearchParams picks them up
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]); // run once per sign-in, not on every render
@@ -391,6 +406,8 @@ function DiaryApp() {
                 onDelete={deleteTask}
                 onClearCompleted={clearCompleted}
                 showToast={showToast}
+                highlightTaskId={highlightTaskId}
+                onHighlightConsumed={() => setHighlightTaskId(null)}
                 onWorkspaceCreated={setWorkspaceId}
               />
             }

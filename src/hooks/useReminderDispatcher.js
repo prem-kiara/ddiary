@@ -237,11 +237,15 @@ async function dispatchOne(taskRef, user, log) {
       ownerName:     r.creatorName || t.createdByName || t.ownerName || user.displayName || user.email,
       notes:         t.notes || null,
       scheduleLabel: describeSchedule(r),
-      // Deep link back — for workspace tasks the path starts with "workspaces",
-      // for personal tasks it starts with "users". Append #/ so React Router
-      // routes to the right view. Hosts that don't route deep will land on
-      // the home page, which is fine.
-      taskUrl: window.location.origin,
+      // Deep link directly to the task. For workspace tasks (path = "workspaces/{wsId}/tasks/{id}")
+      // include the wsId so the app opens the Team Board and expands the right workspace.
+      taskUrl: (() => {
+        const parts = taskRef.path.split('/');
+        const wsIdx = parts.indexOf('workspaces');
+        const wsId  = wsIdx >= 0 ? parts[wsIdx + 1] : null;
+        const base  = `${window.location.origin}/tasks?task=${encodeURIComponent(taskRef.id)}`;
+        return wsId ? `${base}&wsId=${encodeURIComponent(wsId)}` : base;
+      })(),
     });
   } catch (err) {
     log(err, { action: 'dispatchOne:sendMail', path: taskRef.path });

@@ -10,7 +10,7 @@
  * Required environment variables (set as GitHub Actions secrets):
  *   FIREBASE_SERVICE_ACCOUNT_B64  — base64-encoded service account JSON
  *   SENDGRID_API_KEY              — SendGrid API key
- *   SENDGRID_FROM                 — sender address (default: noreply@dhanam.finance)
+ *   SENDGRID_FROM                 — sender address (default: tech@dhanam.finance)
  */
 
 'use strict';
@@ -36,7 +36,7 @@ const serviceAccount = JSON.parse(
 admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
 const db        = admin.firestore();
-const FROM      = process.env.SENDGRID_FROM || 'noreply@dhanam.finance';
+const FROM      = process.env.SENDGRID_FROM || 'tech@dhanam.finance';
 const COOLDOWN  = 23 * 60 * 60 * 1000; // 23 h
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY);

@@ -217,6 +217,8 @@ export default function MoveToBoard({
             priority:      movePriority || 'medium',
             ownerName:     ownerName,
             ownerUid:      user.uid,
+            taskId:        newTaskRef?.id,
+            workspaceId:   selectedWsId,
           });
         } catch (mailErr) { console.warn('notifyTaskAssigned failed', mailErr); }
       }

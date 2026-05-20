@@ -33,18 +33,24 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
   // When the Dashboard navigated to a task in this workspace, auto-expand
   // the card and scroll it to the top of the viewport so the user lands at
   // the right place. Children (CategorySection / TaskCard) handle the rest.
-  const { openWorkspaceId } = useContext(DeepLinkContext);
+  const { openWorkspaceId, openTaskId } = useContext(DeepLinkContext);
+  // Latch openTaskId into local state the moment this workspace becomes the
+  // target. This survives the context cleanup timeout so DeepLinkContext's
+  // openTaskId can be re-injected for task cards that mount after Firestore
+  // finishes loading (which can take longer than the cleanup window).
+  const [latchedTaskId, setLatchedTaskId] = useState(null);
   const wsScrollRef = useRef(null);
   useEffect(() => {
     if (openWorkspaceId && openWorkspaceId === workspace.id) {
       setExpanded(true);
+      if (openTaskId) setLatchedTaskId(openTaskId);
       // Defer scroll to next tick so the expanded body has measured.
       const t = setTimeout(() => {
         wsScrollRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }, 250);
       return () => clearTimeout(t);
     }
-  }, [openWorkspaceId, workspace.id]);
+  }, [openWorkspaceId, openTaskId, workspace.id]);
   const [showInvite,      setShowInvite]      = useState(false);
   const [showAddTask,     setShowAddTask]     = useState(false);
   const [showAddCategory, setShowAddCategory] = useState(false);
@@ -574,6 +580,8 @@ function WorkspaceItem({ workspace, showToast, user, workspaces, onWorkspaceCrea
             showAddCategoryInitial={showAddCategory}
             onAddCategoryClose={() => setShowAddCategory(false)}
             isAdmin={isAdmin}
+            highlightTaskId={latchedTaskId}
+            onHighlightTaskConsumed={() => setLatchedTaskId(null)}
           />
 
           {/* Workspace delete — moved here from the header so it's deliberate.

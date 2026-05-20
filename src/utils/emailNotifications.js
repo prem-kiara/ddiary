@@ -1,12 +1,12 @@
 /**
- * Email notifications via Microsoft Graph API (Mail.Send)
- * Sends from the signed-in user's M365 mailbox — no third-party service needed.
+ * Email notifications via EC2 /api/notify endpoint → Amazon SES
+ * Authenticates with Firebase ID token (Bearer). MS Graph is no longer used
+ * for email — only SharePoint file access and people search still use it.
  */
 
-import { tryRefreshMsToken } from './msTokenRefresh';
+import { auth } from '../firebase';
 
-const MS_TOKEN_KEY = 'ddiary_ms_access_token';
-const APP_URL = 'https://dhanamdiary.web.app';
+const APP_URL = 'https://diary.dhanamfinance.com';
 
 // SharePoint drive ID — same one used for drawing uploads (kept duplicated here
 // so this module has no cross-import on useFirestore). If the env var changes,
@@ -24,54 +24,30 @@ function escapeHtml(s) {
 }
 
 // ─── Core send function ─────────────────────────────────────────────────────
-// Auto-refreshes the Microsoft access token on 401 (token expired during a
-// long browser session). Without this, every email failure required a manual
-// log-out / log-in. See src/utils/msTokenRefresh.js for the refresh bridge.
+// Calls the EC2 Express /api/notify endpoint, authenticated with a Firebase
+// ID token. EC2 server verifies the token and sends via Amazon SES.
+// MS Graph is no longer used for email (still used for SharePoint + people search).
 async function sendEmail({ to, subject, htmlBody }) {
-  const payload = JSON.stringify({
-    message: {
-      subject,
-      body: { contentType: 'HTML', content: htmlBody },
-      toRecipients: to.split(',').map(email => ({
-        emailAddress: { address: email.trim() },
-      })),
-    },
-  });
-
-  const doSend = (token) => fetch('https://graph.microsoft.com/v1.0/me/sendMail', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: payload,
-  });
-
-  let token = sessionStorage.getItem(MS_TOKEN_KEY);
-  if (!token) {
-    token = await tryRefreshMsToken();
-    if (!token) {
-      console.warn('Email not sent — no Microsoft token available');
+  try {
+    const idToken = await auth.currentUser?.getIdToken();
+    if (!idToken) {
+      console.warn('Email not sent — user not signed in');
       return false;
     }
-  }
 
-  try {
-    let res = await doSend(token);
-    if (res.status === 401) {
-      // Token expired mid-session — refresh and retry once
-      const newToken = await tryRefreshMsToken();
-      if (!newToken) {
-        console.warn('Email not sent — token expired and refresh failed');
-        return false;
-      }
-      res = await doSend(newToken);
-    }
+    const res = await fetch('/api/notify', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${idToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ to, subject, html: htmlBody }),
+    });
 
-    if (res.status === 202 || res.ok) return true;
+    if (res.ok) return true;
 
     const err = await res.json().catch(() => ({}));
-    console.error('Email send failed:', res.status, err?.error?.message);
+    console.error('Email send failed:', res.status, err?.error);
     return false;
   } catch (err) {
     console.error('Email send error:', err);
@@ -85,7 +61,7 @@ const LOGO_URL = `${APP_URL}/logo-email.png`;
 function wrapHtml(title, bodyContent) {
   return `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 24px;">
-      <div style="background: linear-gradient(135deg, #6d28d9 0%, #a78bfa 100%); padding: 20px 24px; border-radius: 12px 12px 0 0; display: flex; align-items: center; gap: 12px;">
+      <div style="background-color: #6d28d9; background: linear-gradient(135deg, #6d28d9 0%, #a78bfa 100%); padding: 20px 24px; border-radius: 12px 12px 0 0; display: flex; align-items: center; gap: 12px;">
         <img src="${LOGO_URL}" alt="Dhanam" width="40" height="40" style="display: inline-block; vertical-align: middle; background: #ffffff; border-radius: 8px; padding: 4px; margin-right: 10px;" />
         <h2 style="margin: 0; color: #fff; font-size: 18px; display: inline-block; vertical-align: middle;">${title}</h2>
       </div>
@@ -124,11 +100,15 @@ function formatDue(dueDate) {
 /**
  * 1. Task Assigned — sent to the assignee when a task is assigned to them.
  */
-export async function notifyTaskAssigned({ assigneeEmail, assigneeName, taskText, notes, dueDate, priority, ownerName, ownerUid }) {
+export async function notifyTaskAssigned({ assigneeEmail, assigneeName, taskText, notes, dueDate, priority, ownerName, ownerUid, taskId, workspaceId }) {
   if (!assigneeEmail) return false;
 
   const title    = (taskText || '').trim() || 'Untitled Task';
-  const joinLink = `${APP_URL}?join=${encodeURIComponent(ownerUid || '')}`;
+  const joinLink = taskId
+    ? workspaceId
+      ? `${APP_URL}/tasks?task=${encodeURIComponent(taskId)}&wsId=${encodeURIComponent(workspaceId)}`
+      : `${APP_URL}/tasks?task=${encodeURIComponent(taskId)}`
+    : `${APP_URL}/tasks`;
 
   const notesHtml = notes?.trim()
     ? `<p style="font-size: 14px; color: #334155; margin: 10px 0 0; white-space: pre-wrap; line-height: 1.6;">${escapeHtml(notes.trim())}</p>`
@@ -152,7 +132,7 @@ export async function notifyTaskAssigned({ assigneeEmail, assigneeName, taskText
       Open DDiary to view and update your task:
     </p>
     <a href="${joinLink}" style="display: inline-block; background: #6d28d9; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
-      Open DDiary
+      View Task
     </a>
   `;
 
@@ -166,7 +146,7 @@ export async function notifyTaskAssigned({ assigneeEmail, assigneeName, taskText
 /**
  * 2. Status Changed — sent to the task owner when assignee updates status.
  */
-export async function notifyStatusChanged({ ownerEmail, ownerName, assigneeName, taskText, newStatus, oldStatus }) {
+export async function notifyStatusChanged({ ownerEmail, ownerName, assigneeName, taskText, newStatus, oldStatus, taskId }) {
   if (!ownerEmail) return false;
 
   const statusLabels = { open: 'Open', in_progress: 'In Progress', review: 'Review', done: 'Done' };
@@ -187,8 +167,8 @@ export async function notifyStatusChanged({ ownerEmail, ownerName, assigneeName,
         Status: <span style="display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 13px; font-weight: 600; color: #fff; background: ${color};">${label}</span>
       </p>
     </div>
-    <a href="${APP_URL}" style="display: inline-block; background: #6d28d9; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
-      View in DDiary
+    <a href="${taskId ? `${APP_URL}/tasks?task=${encodeURIComponent(taskId)}` : `${APP_URL}/tasks`}" style="display: inline-block; background: #6d28d9; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+      View Task
     </a>
   `;
 
@@ -202,7 +182,7 @@ export async function notifyStatusChanged({ ownerEmail, ownerName, assigneeName,
 /**
  * 3. Task Completed — sent to the task owner when a task is marked done.
  */
-export async function notifyTaskCompleted({ ownerEmail, ownerName, assigneeName, taskText, completedAt }) {
+export async function notifyTaskCompleted({ ownerEmail, ownerName, assigneeName, taskText, completedAt, taskId }) {
   if (!ownerEmail) return false;
 
   const completedDate = completedAt
@@ -222,8 +202,8 @@ export async function notifyTaskCompleted({ ownerEmail, ownerName, assigneeName,
         ✓ Completed — ${completedDate}
       </p>
     </div>
-    <a href="${APP_URL}" style="display: inline-block; background: #15803d; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
-      View in DDiary
+    <a href="${taskId ? `${APP_URL}/tasks?task=${encodeURIComponent(taskId)}` : `${APP_URL}/tasks`}" style="display: inline-block; background: #15803d; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+      View Task
     </a>
   `;
 
@@ -273,9 +253,14 @@ export async function notifyWorkspaceInvite({ inviteeEmail, inviteeName, inviter
  */
 export async function notifyTaskReassigned({
   assigneeEmail, assigneeName, taskText, dueDate, priority,
-  reassignedByName, latestComment, workspaceUrl,
+  reassignedByName, latestComment, workspaceId, taskId,
 }) {
   if (!assigneeEmail) return false;
+  const taskUrl = taskId
+    ? workspaceId
+      ? `${APP_URL}/tasks?task=${encodeURIComponent(taskId)}&wsId=${encodeURIComponent(workspaceId)}`
+      : `${APP_URL}/tasks?task=${encodeURIComponent(taskId)}`
+    : `${APP_URL}/tasks`;
 
   const commentBlock = latestComment
     ? `<div style="background: #eff6ff; border-left: 4px solid #7c3aed; padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0;">
@@ -301,8 +286,8 @@ export async function notifyTaskReassigned({
     <p style="font-size: 14px; color: #0f172a; margin: 0 0 16px;">
       Open DDiary to view your task, add comments, and update the status:
     </p>
-    <a href="${workspaceUrl || 'https://dhanamdiary.web.app'}" style="display: inline-block; background: #7c3aed; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
-      Open in DDiary
+    <a href="${taskUrl}" style="display: inline-block; background: #7c3aed; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+      View Task
     </a>
   `;
 
@@ -381,8 +366,10 @@ export async function notifyTaskReminder({
 /**
  * 6. New Comment — sent to the other party when someone comments on a task.
  */
-export async function notifyNewComment({ recipientEmail, recipientName, commenterName, taskText, commentText }) {
+export async function notifyNewComment({ recipientEmail, recipientName, commenterName, taskText, commentText, taskId }) {
   if (!recipientEmail) return false;
+
+  const taskUrl = taskId ? `${APP_URL}/tasks?task=${encodeURIComponent(taskId)}` : `${APP_URL}/tasks`;
 
   const body = `
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
@@ -397,8 +384,8 @@ export async function notifyNewComment({ recipientEmail, recipientName, commente
         <p style="font-size: 14px; color: #0f172a; margin: 0; font-style: italic;">"${escapeHtml(commentText)}"</p>
       </div>
     </div>
-    <a href="${APP_URL}" style="display: inline-block; background: #6d28d9; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
-      Reply in DDiary
+    <a href="${taskUrl}" style="display: inline-block; background: #6d28d9; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+      View Task
     </a>
   `;
 
@@ -734,5 +721,44 @@ export async function shareDiaryEntry({ entry, recipients, senderName, personalN
     to: toLine,
     subject: title,
     htmlBody: wrapHtml('Diary Entry Shared', body),
+  });
+}
+
+/**
+ * On-Demand Task Email — fired by the "Email Now" button on a task card.
+ * Sends directly via Microsoft Graph (no email app needed).
+ */
+export async function sendTaskEmailNow({ toEmail, toName, taskText, taskId, dueDate, priority, notes, senderName }) {
+  if (!toEmail) return false;
+
+  const title = (taskText || '').trim() || 'Task';
+  const taskUrl = taskId ? `${APP_URL}/tasks?task=${encodeURIComponent(taskId)}` : `${APP_URL}/tasks`;
+
+  const body = `
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
+      Hi${toName ? ' <strong>' + escapeHtml(toName) + '</strong>' : ''},
+    </p>
+    <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
+      This is a reminder from <strong>${escapeHtml(senderName || 'your manager')}</strong>:
+    </p>
+    <div style="background: #f5f3ff; border-left: 4px solid #6d28d9; padding: 16px 18px; border-radius: 0 8px 8px 0; margin: 0 0 16px;">
+      <p style="font-size: 17px; font-weight: 700; color: #1e293b; margin: 0 0 10px;">${escapeHtml(title)}</p>
+      ${notes?.trim() ? `<p style="font-size: 14px; color: #334155; margin: 0 0 10px; white-space: pre-wrap; line-height: 1.6;">${escapeHtml(notes.trim())}</p>` : ''}
+      <p style="font-size: 13px; color: #475569; margin: 0;">
+        ${priorityBadge(priority)} &nbsp; Due: ${formatDue(dueDate)}
+      </p>
+    </div>
+    <p style="font-size: 14px; color: #0f172a; margin: 0 0 16px;">
+      Please action this at your earliest convenience.
+    </p>
+    <a href="${taskUrl}" style="display:inline-block;background:#6d28d9;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">
+      View Task
+    </a>
+  `;
+
+  return sendEmail({
+    to: toEmail,
+    subject: `Reminder: ${title.slice(0, 60)}`,
+    htmlBody: wrapHtml('Task Reminder', body),
   });
 }

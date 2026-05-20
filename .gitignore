@@ -20,6 +20,7 @@ dist-check*/
 
 # Service account key — NEVER commit this
 scripts/serviceAccountKey.json
+sa.json
 firebase-debug.log
 firestore-debug.log
 storage-debug.log

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Bell, Mail, Calendar, CheckCircle, Clock, UserPlus, Send, X, Edit2, MessageCircle, Link, ChevronDown, ChevronRight } from 'lucide-react';
+import { Bell, Mail, Calendar, CheckCircle, Clock, UserPlus, Send, X, Edit2, MessageCircle, Link, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useUserDirectory } from '../hooks/useFirestore';
 import { StatusBadge } from './TaskCollabPanel';
@@ -21,6 +21,7 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
   // userDirectory gives us the real Firebase UIDs for anyone who has signed up,
   // even if the auto-link in TeamMembers hasn't run yet.
   const { directory } = useUserDirectory(user?.uid);
+  const [sendingEmailTaskId, setSendingEmailTaskId] = useState(null);
   const [assigningTaskId, setAssigningTaskId] = useState(null);
   const [assigneeName, setAssigneeName] = useState('');
   const [assigneeEmail, setAssigneeEmail] = useState('');
@@ -104,45 +105,36 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
     }
   };
 
-  // Opens Outlook if available, falls back to the device's default email app
-  const sendEmailNow = (task) => {
+  // Sends email directly via Microsoft Graph API — no email app needed.
+  const sendEmailNow = async (task) => {
     const recipient = task.assigneeEmail;
     if (!recipient) { showToast('No email set for this task.', 'warning'); return; }
+    if (sendingEmailTaskId) return; // prevent double-send
 
-    const greeting = task.assigneeName ? `Hi ${task.assigneeName},` : 'Hi,';
-    const due = task.dueDate ? `\nDue: ${formatDate(task.dueDate)}` : '';
-    const priority = task.priority ? `\nPriority: ${task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}` : '';
-    const from = user?.displayName || 'Suren';
-    const subject = `Task: ${task.text}`;
-    const body = `${greeting}\n\nYou have been assigned the following task:\n\n📋 ${task.text}${due}${priority}\n\nPlease action this at your earliest convenience.\n\nRegards,\n${from}`;
-
-    const mailtoUrl = `mailto:${recipient}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    // ms-outlook:// is the registered URL scheme for Microsoft Outlook on Windows/Mac
-    const outlookUrl = `ms-outlook://compose?to=${encodeURIComponent(recipient)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-
-    // Detect if Outlook opened by listening for the window losing focus
-    let outlookHandled = false;
-    const onBlur = () => { outlookHandled = true; };
-    window.addEventListener('blur', onBlur, { once: true });
-
-    // Trigger Outlook via a hidden link (silently ignored if scheme not registered)
-    const a = document.createElement('a');
-    a.href = outlookUrl;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-    // After a short window, if Outlook didn't open, fall back to mailto:
-    setTimeout(() => {
-      window.removeEventListener('blur', onBlur);
-      if (!outlookHandled) {
-        window.location.href = mailtoUrl;
-        showToast('Opening your email app...', 'success');
+    setSendingEmailTaskId(task.id);
+    try {
+      const { sendTaskEmailNow } = await import('../utils/emailNotifications');
+      const ok = await sendTaskEmailNow({
+        toEmail:    recipient,
+        toName:     task.assigneeName || null,
+        taskText:   task.text || '',
+        taskId:     task.id || null,
+        dueDate:    task.dueDate || null,
+        priority:   task.priority || 'medium',
+        notes:      task.notes || null,
+        senderName: user?.displayName || user?.email || 'Your manager',
+      });
+      if (ok) {
+        showToast(`Email sent to ${task.assigneeName || recipient}`, 'success');
+      } else {
+        showToast('Email failed — please check your Microsoft 365 sign-in', 'warning');
       }
-    }, 750);
-
-    showToast('Opening Outlook...', 'success');
+    } catch (err) {
+      console.error('sendEmailNow error:', err);
+      showToast('Email failed — please try again', 'warning');
+    } finally {
+      setSendingEmailTaskId(null);
+    }
   };
 
   const sendWhatsApp = (task) => {
@@ -231,8 +223,16 @@ export default function Reminders({ tasks, teamMembers = [], onToggle, onUpdate,
             {/* Action buttons */}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
               {hasAssignee && task.assigneeEmail && (
-                <button className="btn btn-sm btn-blue" onClick={e => { e.stopPropagation(); sendEmailNow(task); }}>
-                  <Mail size={13} /> Email Now
+                <button
+                  className="btn btn-sm btn-blue"
+                  onClick={e => { e.stopPropagation(); sendEmailNow(task); }}
+                  disabled={sendingEmailTaskId === task.id}
+                  style={{ opacity: sendingEmailTaskId === task.id ? 0.7 : 1 }}
+                >
+                  {sendingEmailTaskId === task.id
+                    ? <><Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> Sending…</>
+                    : <><Mail size={13} /> Email Now</>
+                  }
                 </button>
               )}
               {hasAssignee && task.assigneePhone && (

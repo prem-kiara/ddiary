@@ -27,35 +27,41 @@ import { AddTaskModal } from './AddTaskModal';
 export { AddTaskModal };
 
 // ── Main KanbanBoard ──────────────────────────────────────────────────────────
-export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
+export default function KanbanBoard({
+  onWorkspaceCreated, showToast,
+  // Email deep-link props: passed from TasksPage when URL had ?task=&wsId=
+  highlightTaskId, highlightWorkspaceId, onHighlightConsumed,
+}) {
   const { user } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const { workspaces: rawWorkspaces, loading: wsListLoading } = useMyWorkspaces();
 
   // ── Deep-link consumption ────────────────────────────────────────────────
-  // The Dashboard navigates here with router state when a user clicks a task.
-  // We expose the values via DeepLinkContext so nested components can react,
-  // then clear the state after a short delay so back/forward + refresh don't
-  // re-trigger.
+  // Two sources feed the context:
+  //  1. location.state  — Dashboard "click task" navigation (existing)
+  //  2. highlightTaskId / highlightWorkspaceId props — email link via TasksPage (new)
+  // Props take precedence; state is the fallback.
   const deepLink = location.state || {};
   const deepLinkValue = useMemo(() => ({
-    openWorkspaceId:   deepLink.openWorkspaceId   || null,
+    openWorkspaceId:   highlightWorkspaceId || deepLink.openWorkspaceId   || null,
     openCategoryId:    deepLink.openCategoryId    || null,
     openSubcategoryId: deepLink.openSubcategoryId || null,
-    openTaskId:        deepLink.openTaskId        || null,
-  }), [deepLink.openWorkspaceId, deepLink.openCategoryId, deepLink.openSubcategoryId, deepLink.openTaskId]);
+    openTaskId:        highlightTaskId      || deepLink.openTaskId        || null,
+  }), [highlightTaskId, highlightWorkspaceId, deepLink.openWorkspaceId, deepLink.openCategoryId, deepLink.openSubcategoryId, deepLink.openTaskId]);
 
   useEffect(() => {
     if (deepLinkValue.openTaskId || deepLinkValue.openWorkspaceId) {
-      // Children consume the state on mount (fast). 1500 ms gives slow loads
-      // a chance and avoids the state surviving a refresh.
+      // Children consume the context on mount. 6000 ms gives Firestore async
+      // task loads a chance to complete before context is cleared.
+      // (workspace expands → Firestore fetches tasks → TaskCards mount → check context)
       const t = setTimeout(() => {
         navigate(location.pathname, { replace: true, state: null });
-      }, 1500);
+        onHighlightConsumed?.();
+      }, 6000);
       return () => clearTimeout(t);
     }
-  }, [deepLinkValue.openTaskId, deepLinkValue.openWorkspaceId, navigate, location.pathname]);
+  }, [deepLinkValue.openTaskId, deepLinkValue.openWorkspaceId, navigate, location.pathname, onHighlightConsumed]);
   // Sort workspaces alphabetically by name (case-insensitive, locale-aware).
   // Using a stable shallow copy so we don't mutate the hook's array.
   const workspaces = [...(rawWorkspaces || [])].sort((a, b) =>
@@ -127,24 +133,26 @@ export default function KanbanBoard({ onWorkspaceCreated, showToast }) {
     }
     if (wsId) {
       try {
-        await addWorkspaceTask(wsId, taskData, {
+        const newTaskRef = await addWorkspaceTask(wsId, taskData, {
           uid: user.uid, email: user.email, displayName: user.displayName || user.email,
         });
+        if (taskData.assigneeEmail) {
+          notifyTaskAssigned({
+            assigneeEmail: taskData.assigneeEmail,
+            assigneeName:  taskData.assigneeName,
+            taskText:      taskData.text,
+            notes:         taskData.notes || null,
+            dueDate:       taskData.dueDate,
+            priority:      taskData.priority,
+            ownerName:     user.displayName || user.email,
+            ownerUid:      user.uid,
+            taskId:        newTaskRef?.id,
+            workspaceId:   wsId,
+          }).catch(() => {});
+        }
       } catch (e) {
         e.message = `Workspace created, but task add failed: ${e?.message || e}`;
         throw e;
-      }
-      if (taskData.assigneeEmail) {
-        notifyTaskAssigned({
-          assigneeEmail: taskData.assigneeEmail,
-          assigneeName:  taskData.assigneeName,
-          taskText:      taskData.text,
-          notes:         taskData.notes || null,
-          dueDate:       taskData.dueDate,
-          priority:      taskData.priority,
-          ownerName:     user.displayName || user.email,
-          ownerUid:      user.uid,
-        }).catch(() => {});
       }
     }
   };

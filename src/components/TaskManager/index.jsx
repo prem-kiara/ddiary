@@ -12,6 +12,7 @@ import TaskCard from './TaskCard';
 export default function TaskManager({
   tasks, members = [], loading,
   onAdd, onToggle, onUpdate, onDelete, onClearCompleted, showToast,
+  highlightTaskId, onHighlightConsumed,
 }) {
   const { user } = useAuth();
   const { directory } = useUserDirectory(user?.uid);
@@ -143,6 +144,8 @@ export default function TaskManager({
     hasWorkspace:     workspaces.length > 0,
     orgAssignees:     assigneeOptions,
     saveContactPhone,
+    highlightTaskId,
+    onHighlightConsumed,
   };
 
   return (

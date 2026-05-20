@@ -31,7 +31,7 @@ function timeAgo(ts) {
   }
 }
 
-export default function NotificationBell({ notifications, unreadCount, onMarkRead, onMarkAllRead, onNavigateToTasks }) {
+export default function NotificationBell({ notifications, unreadCount, onMarkRead, onMarkAllRead, onNavigateToTask }) {
   const [open, setOpen] = useState(false);
   const ref = useRef();
 
@@ -94,7 +94,7 @@ export default function NotificationBell({ notifications, unreadCount, onMarkRea
                   key={n.id}
                   onClick={() => {
                     if (!n.read) onMarkRead(n.id);
-                    if (onNavigateToTasks) onNavigateToTasks();
+                    if (onNavigateToTask) onNavigateToTask(n.taskId || null);
                     setOpen(false);
                   }}
                   className={`px-4 py-3 cursor-pointer border-b border-slate-50 last:border-b-0 transition-colors ${n.read ? 'hover:bg-slate-50' : ''}`}

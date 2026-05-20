@@ -1331,17 +1331,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
           outline: 2px solid var(--gold-light);
           outline-offset: -1px;
         }
-        .diary-html-content [data-indent="1"] { padding-left: 24px; }
-        .diary-html-content [data-indent="2"] { padding-left: 48px; }
-        .diary-html-content [data-indent="3"] { padding-left: 72px; }
-        .diary-html-content table { border-collapse: collapse; width: 100%; margin: 8px 0; }
-        .diary-html-content td, .diary-html-content th {
-          border: 1px solid #e2e8f0;
-          padding: 4px 6px;
-          min-width: 0;
-          vertical-align: top;
-          overflow: hidden;
-        }
+        /* diary-html-content table/indent rules live in diary.css — always loaded */
       `}</style>
 
       <h2 className="section-title">

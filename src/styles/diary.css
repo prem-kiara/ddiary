@@ -395,6 +395,29 @@ body {
 .diary-html-content u      { text-decoration: underline; }
 .diary-html-content s      { text-decoration: line-through; }
 
+/* ── Table styles — must live here (not inside DiaryEditor) so they apply
+      in view mode (DiaryView) even when the editor is not mounted ── */
+.diary-html-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+}
+.diary-html-content td,
+.diary-html-content th {
+  border: 1px solid #e2e8f0;
+  padding: 4px 8px;
+  min-width: 0;
+  vertical-align: top;
+}
+.diary-html-content th {
+  font-weight: 600;
+  background: #f8fafc;
+}
+/* Indent support */
+.diary-html-content [data-indent="1"] { padding-left: 24px; }
+.diary-html-content [data-indent="2"] { padding-left: 48px; }
+.diary-html-content [data-indent="3"] { padding-left: 72px; }
+
 .input-title {
   font-family: var(--font-body);
   font-size: 20px;

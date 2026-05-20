@@ -153,7 +153,8 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
           priority:         task.priority,
           reassignedByName: user.displayName || user.email,
           latestComment:    reassignComment.trim() || null,
-          workspaceUrl:     window.location.origin,
+          taskId:           task.id,
+          workspaceId,
         }).catch(() => {});
       });
 

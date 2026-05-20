@@ -9,7 +9,7 @@
  * 2. Store the key as a Cloud Secret:
  *      firebase functions:secrets:set SENDGRID_API_KEY
  *      (paste the key when prompted — stored encrypted in Secret Manager)
- * 3. Sender address lives in functions/.env (already set to noreply@dhanam.finance)
+ * 3. Sender address lives in functions/.env (already set to tech@dhanam.finance)
  * 4. Deploy: firebase deploy --only functions
  */
 
@@ -174,7 +174,7 @@ exports.sendTaskReminders = onSchedule(
   { schedule: '*/5 * * * *', timeZone: 'UTC', secrets: [sendgridApiKey], timeoutSeconds: 300, memory: '512MiB', serviceAccount: SA },
   async (event) => {
     const sgMail    = require('@sendgrid/mail');
-    const fromEmail = process.env.SENDGRID_FROM || 'noreply@dhanam.finance';
+    const fromEmail = process.env.SENDGRID_FROM || 'tech@dhanam.finance';
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
 
     const nowIso = new Date().toISOString();
@@ -359,7 +359,11 @@ exports.sendTaskReminders = onSchedule(
       <strong>Notes:</strong><br>${notes}
     </div>` : ''}
 
-    <p style="margin:20px 0 0;font-size:12px;color:#94a3b8;text-align:center">
+    <a href="https://dhanamdiary.web.app/tasks?task=${encodeURIComponent(taskRef.id)}" style="display:inline-block;background:#6d28d9;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;margin-bottom:20px">
+      View Task
+    </a>
+
+    <p style="margin:0;font-size:12px;color:#94a3b8;text-align:center">
       This is an automated reminder from Dhanam Workspace.<br>
       To stop, open the task and turn off its reminder.
     </p>
@@ -503,7 +507,7 @@ exports.sendSheetRowReminders = onSchedule(
     try {
       const sgMail = require('@sendgrid/mail');
       sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-      const fromEmail = process.env.SENDGRID_FROM || 'noreply@dhanam.finance';
+      const fromEmail = process.env.SENDGRID_FROM || 'tech@dhanam.finance';
 
       const snap = await db.collection('sheetRowReminders')
         .where('active', '==', true)
@@ -641,7 +645,7 @@ exports.sendDailyReminders = onSchedule(
     try {
       const sgMail = require('@sendgrid/mail');
       sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-      const fromEmail = process.env.SENDGRID_FROM || 'noreply@dhanam.finance';
+      const fromEmail = process.env.SENDGRID_FROM || 'tech@dhanam.finance';
 
       const nowUtc = new Date();
 
@@ -772,7 +776,7 @@ exports.sendReminderNow = onCall({ secrets: [sendgridApiKey], serviceAccount: SA
 
     await sgMail.send({
       to: email,
-      from: process.env.SENDGRID_FROM || 'noreply@dhanam.finance',
+      from: process.env.SENDGRID_FROM || 'tech@dhanam.finance',
       subject: `📖 Diary Reminder: ${tasks.length} pending task${tasks.length > 1 ? 's' : ''}`,
       text: buildReminderText(overdue, upcoming),
       html: buildReminderEmail(userData?.displayName || 'there', overdue, upcoming),
@@ -989,7 +993,7 @@ exports.testEmail = onCall({ secrets: [sendgridApiKey], serviceAccount: SA }, as
   try {
     const sgMail = require('@sendgrid/mail');
     sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-    const fromEmail = process.env.SENDGRID_FROM || 'noreply@dhanam.finance';
+    const fromEmail = process.env.SENDGRID_FROM || 'tech@dhanam.finance';
     const now = new Date().toLocaleString('en-IN', {
       timeZone: 'Asia/Kolkata',
       dateStyle: 'full',

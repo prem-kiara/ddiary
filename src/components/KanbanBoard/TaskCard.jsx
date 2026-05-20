@@ -28,7 +28,7 @@ function CommentCountBadge({ workspaceId, taskId }) {
 // Clicking the card opens the full TaskDetailModal (status controls,
 // category move, notes, reassign, comments, activity — with all existing
 // notifications intact).
-function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid, isAdmin, user, showToast }) {
+function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid, isAdmin, user, showToast, highlightTaskId, onHighlightTaskConsumed }) {
   const [open, setOpen] = useState(false);
   const isOverdue = task.dueDate && task.status !== 'done' && new Date(task.dueDate) < new Date();
   const assignee     = members.find(m => m.uid === task.assigneeUid);
@@ -37,14 +37,17 @@ function TaskCard({ task, workspace, workspaceId, members, onDelete, currentUid,
 
   // ── Deep-link auto-open ──────────────────────────────────────────────────
   // When the Dashboard navigated to this exact task, open the detail modal.
-  // The parent WorkspaceItem + CategorySection + SubcategorySection have
-  // already auto-expanded by the time this card mounts.
+  // Two sources: DeepLinkContext (clears after 6s) and highlightTaskId prop
+  // (latched by WorkspaceItem when workspace expanded, survives context cleanup).
   const { openTaskId, openWorkspaceId } = useContext(DeepLinkContext);
   useEffect(() => {
-    if (openTaskId && openTaskId === task.id && openWorkspaceId === workspaceId) {
+    const matchViaContext = openTaskId && openTaskId === task.id && openWorkspaceId === workspaceId;
+    const matchViaProp    = highlightTaskId && highlightTaskId === task.id;
+    if (matchViaContext || matchViaProp) {
       setOpen(true);
+      if (matchViaProp && onHighlightTaskConsumed) onHighlightTaskConsumed();
     }
-  }, [openTaskId, openWorkspaceId, task.id, workspaceId]);
+  }, [openTaskId, openWorkspaceId, highlightTaskId, task.id, workspaceId, onHighlightTaskConsumed]);
 
   // ── Make this card draggable for cross-workspace moves ─────────────────────
   // Drag is gated by an 8 px movement threshold (set on the global sensor),

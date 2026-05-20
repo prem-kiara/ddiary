@@ -409,7 +409,7 @@ export default function Dashboard({ showToast } = {}) {
     const wsId = taskData.workspaceId;
     if (!wsId || !taskData.text) return;
     const actor = { uid: user.uid, email: user.email, displayName: user.displayName || user.email };
-    await addWorkspaceTask(wsId, {
+    const newTaskRef = await addWorkspaceTask(wsId, {
       text:          taskData.text,
       status:        taskData.status   || 'open',
       priority:      'medium',
@@ -431,6 +431,8 @@ export default function Dashboard({ showToast } = {}) {
         priority:      'medium',
         ownerName:     user.displayName || user.email,
         ownerUid:      user.uid,
+        taskId:        newTaskRef?.id,
+        workspaceId:   wsId,
       }).catch((err) => logError(err, { location: 'Dashboard:notifyTaskAssigned' }));
     }
     if (showToast) showToast('Task added', 'success');

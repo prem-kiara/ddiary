@@ -10,7 +10,7 @@ import { AddTaskModal } from './AddTaskModal';
 
 // ── WorkspaceBoardContent ─────────────────────────────────────────────────────
 // The actual kanban board — rendered only when a workspace is expanded.
-function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspaces, onWorkspaceCreated, showAddTaskInitial, onAddTaskClose, showAddCategoryInitial, onAddCategoryClose, isAdmin }) {
+function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspaces, onWorkspaceCreated, showAddTaskInitial, onAddTaskClose, showAddCategoryInitial, onAddCategoryClose, isAdmin, highlightTaskId, onHighlightTaskConsumed }) {
   const { workspace } = useWorkspace(workspaceId);
   const { tasks, loading: tasksLoading, error } = useWorkspaceTasks(workspaceId);
   const [filterAssignee, setFilterAssignee] = useState('all');
@@ -51,7 +51,7 @@ function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspac
         targetWsId = wsOptions.targetWorkspaceId;
       }
 
-      await addWorkspaceTask(targetWsId, taskData, {
+      const newTaskRef = await addWorkspaceTask(targetWsId, taskData, {
         uid: user.uid, email: user.email, displayName: user.displayName || user.email,
       });
 
@@ -70,6 +70,8 @@ function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspac
           priority:      taskData.priority,
           ownerName:     user.displayName || user.email,
           ownerUid:      user.uid,
+          taskId:        newTaskRef?.id,
+          workspaceId,
         }).catch(() => {});
       });
     } catch (e) {
@@ -150,6 +152,8 @@ function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspac
             setFilterStatus={setFilterStatus}
             showAddCategoryInitial={showAddCategoryInitial}
             onAddCategoryClose={onAddCategoryClose}
+            highlightTaskId={highlightTaskId}
+            onHighlightTaskConsumed={onHighlightTaskConsumed}
           />
         )
       }

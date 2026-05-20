@@ -1,8 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Bell, Calendar, Edit2, Check, X,
   User, Link, Mail, MessageCircle, ChevronDown, ChevronRight,
-  CheckCircle, UserPlus, ArrowUpRight, Clock,
+  CheckCircle, UserPlus, ArrowUpRight, Clock, Loader2,
 } from 'lucide-react';
 import { formatDate, isOverdue, isDueToday, formatShortStamp, elapsedSince } from '../../utils/dates';
 import { useAuth } from '../../contexts/AuthContext';
@@ -39,6 +39,7 @@ export default function TaskCard({
   showToast, ownerUid,
   workspaces, hasWorkspace, orgAssignees,
   saveContactPhone,   // used to silently persist phone overrides from the Assign panel
+  highlightTaskId, onHighlightConsumed,
 }) {
   const { user } = useAuth();
   const overdue   = !task.completed && isOverdue(task.dueDate);
@@ -47,10 +48,27 @@ export default function TaskCard({
   const isLinked  = !!task.assigneeUid;
   const hasAssignee = task.assigneeEmail || task.assigneePhone;
 
+  const cardRef = useRef(null);
+  const isHighlighted = highlightTaskId === task.id;
+
   // Expand / collapse
   const [expanded,    setExpanded]    = useState(false);
+
+  // When this card is the deep-link target: expand it and scroll it into view
+  useEffect(() => {
+    if (!isHighlighted) return;
+    setExpanded(true);
+    // Allow the DOM to paint the expanded content before scrolling
+    const t = setTimeout(() => {
+      cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      onHighlightConsumed?.();
+    }, 120);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHighlighted]);
   // Which panel is open inside the expanded area
   const [panel,       setPanel]       = useState(null); // 'edit' | 'assign' | 'collab' | 'move' | 'reminder'
+  const [sendingEmail, setSendingEmail] = useState(false);
   // Reminder editor state (live-edits the reminder object until user saves it)
   // Guard against legacy `reminder: true` boolean value on old task docs.
   const taskReminder = task.reminder && typeof task.reminder === 'object' ? task.reminder : null;
@@ -143,15 +161,32 @@ export default function TaskCard({
     setAssignSaving(false);
   };
 
-  const handleEmail = () => {
+  const handleEmail = async () => {
     if (!task.assigneeEmail) { showToast('No email set for this task.', 'warning'); return; }
-    const from    = user?.displayName || user?.email || 'Your manager';
-    const due     = task.dueDate ? `\nDue: ${formatDate(task.dueDate)}` : '';
-    const pri     = task.priority ? `\nPriority: ${task.priority.charAt(0).toUpperCase() + task.priority.slice(1)}` : '';
-    const subject = `Task: ${task.text}`;
-    const body    = `Hi ${task.assigneeName || task.assigneeEmail.split('@')[0]},\n\nYou have been assigned the following task:\n\n📋 ${task.text}${due}${pri}\n\nPlease action this at your earliest convenience.\n\nRegards,\n${from}`;
-    window.location.href = `mailto:${task.assigneeEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-    showToast('Opening email app…', 'success');
+    if (sendingEmail) return;
+    setSendingEmail(true);
+    try {
+      const { sendTaskEmailNow } = await import('../../utils/emailNotifications');
+      const ok = await sendTaskEmailNow({
+        toEmail:    task.assigneeEmail,
+        toName:     task.assigneeName || null,
+        taskText:   task.text || '',
+        taskId:     task.id || null,
+        dueDate:    task.dueDate || null,
+        priority:   task.priority || 'medium',
+        notes:      task.notes || null,
+        senderName: user?.displayName || user?.email || 'Your manager',
+      });
+      showToast(ok
+        ? `Email sent to ${task.assigneeName || task.assigneeEmail}`
+        : 'Email failed — check your Microsoft 365 sign-in',
+        ok ? 'success' : 'warning');
+    } catch (err) {
+      console.error('handleEmail error:', err);
+      showToast('Email failed — please try again', 'warning');
+    } finally {
+      setSendingEmail(false);
+    }
   };
 
   const handleWhatsApp = () => {
@@ -167,12 +202,17 @@ export default function TaskCard({
   };
 
   return (
-    <div style={{
-      borderRadius: 10, overflow: 'hidden',
-      border: `1px solid ${overdue ? '#dc262644' : '#e2e8f0'}`,
-      marginBottom: 8,
-      boxShadow: expanded ? '0 2px 8px rgba(0,0,0,0.06)' : 'none',
-    }}>
+    <div
+      ref={cardRef}
+      style={{
+        borderRadius: 10, overflow: 'hidden',
+        border: `1px solid ${isHighlighted ? '#7c3aed' : overdue ? '#dc262644' : '#e2e8f0'}`,
+        marginBottom: 8,
+        boxShadow: isHighlighted
+          ? '0 0 0 3px #7c3aed33, 0 2px 8px rgba(0,0,0,0.08)'
+          : expanded ? '0 2px 8px rgba(0,0,0,0.06)' : 'none',
+        transition: 'box-shadow 0.3s, border-color 0.3s',
+      }}>
       {/* ── Header row (always visible) ───────────────────────────────── */}
       <div
         onClick={() => setExpanded(v => !v)}
@@ -295,8 +335,16 @@ export default function TaskCard({
           {!task.completed && (
             <div className="task-action-row" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 12px 8px' }}>
               {task.assigneeEmail && (
-                <button className="btn btn-sm btn-blue" onClick={handleEmail}>
-                  <Mail size={12} /> Email Now
+                <button
+                  className="btn btn-sm btn-blue"
+                  onClick={handleEmail}
+                  disabled={sendingEmail}
+                  style={{ opacity: sendingEmail ? 0.7 : 1 }}
+                >
+                  {sendingEmail
+                    ? <><Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> Sending…</>
+                    : <><Mail size={12} /> Email Now</>
+                  }
                 </button>
               )}
               {task.assigneePhone && (

@@ -52,6 +52,7 @@ function SubcategorySection({
   category, subcategory, tasks, workspace, workspaceId, members,
   onDelete, currentUid, isAdmin, user, showToast,
   onAddTaskHere, onRename, onDeleteSub,
+  highlightTaskId, onHighlightTaskConsumed,
 }) {
   const storageKey = `ddiary_sub_${workspaceId}_${category.id}_${subcategory.id}_expanded`;
   const [expanded, setExpanded] = useState(() => {
@@ -65,11 +66,15 @@ function SubcategorySection({
     });
   };
 
-  // Auto-expand when the Dashboard deep-linked to a task in this subcategory
+  // Auto-expand when the Dashboard deep-linked to a task in this subcategory,
+  // OR when the email deep-link prop matches a task in this subcategory.
   const { openSubcategoryId } = useContext(DeepLinkContext);
+  const hasHighlightedTask = highlightTaskId && tasks.some(t => t.id === highlightTaskId);
   useEffect(() => {
-    if (openSubcategoryId && openSubcategoryId === subcategory.id) setExpanded(true);
-  }, [openSubcategoryId, subcategory.id]);
+    if ((openSubcategoryId && openSubcategoryId === subcategory.id) || hasHighlightedTask) {
+      setExpanded(true);
+    }
+  }, [openSubcategoryId, subcategory.id, hasHighlightedTask]);
 
   const [renaming,   setRenaming]   = useState(false);
   const [renameText, setRenameText] = useState(subcategory.name);
@@ -179,6 +184,8 @@ function SubcategorySection({
                 isAdmin={isAdmin}
                 user={user}
                 showToast={showToast}
+                highlightTaskId={highlightTaskId}
+                onHighlightTaskConsumed={onHighlightTaskConsumed}
               />
             ))
           )}
@@ -201,14 +208,10 @@ function CategorySection({
   category, allTasks, workspace, workspaceId, members,
   onDelete, currentUid, isAdmin, user, showToast,
   onAddTaskHere, // (categoryId, subcategoryId) => void
+  highlightTaskId, onHighlightTaskConsumed,
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  // Auto-expand when the Dashboard deep-linked to a task in this category
-  const { openCategoryId } = useContext(DeepLinkContext);
-  useEffect(() => {
-    if (openCategoryId && openCategoryId === category.id) setExpanded(true);
-  }, [openCategoryId, category.id]);
   const [renaming,   setRenaming]   = useState(false);
   const [renameText, setRenameText] = useState(category.name || '');
   const [addingSub,  setAddingSub]  = useState(false);
@@ -220,6 +223,17 @@ function CategorySection({
   const catTasks  = isUncategorized
     ? allTasks.filter(t => !t.categoryId)
     : allTasks.filter(t => t.categoryId === category.id);
+
+  // Auto-expand when the Dashboard deep-linked to a task in this category,
+  // OR when the email deep-link prop matches any task in this category.
+  // catTasks MUST be declared before this line (temporal dead zone fix).
+  const { openCategoryId } = useContext(DeepLinkContext);
+  const hasHighlightedTask = highlightTaskId && catTasks.some(t => t.id === highlightTaskId);
+  useEffect(() => {
+    if ((openCategoryId && openCategoryId === category.id) || hasHighlightedTask) {
+      setExpanded(true);
+    }
+  }, [openCategoryId, category.id, hasHighlightedTask]);
 
   const subs = category.subcategories || [];
   const tasksNoSub = isUncategorized
@@ -376,6 +390,8 @@ function CategorySection({
                     isAdmin={isAdmin}
                     user={user}
                     showToast={showToast}
+                    highlightTaskId={highlightTaskId}
+                    onHighlightTaskConsumed={onHighlightTaskConsumed}
                   />
                 ))}
               </div>
@@ -402,6 +418,8 @@ function CategorySection({
                   onAddTaskHere={() => onAddTaskHere(category.id, sub.id)}
                   onRename={handleRenameSubcategory(sub.id)}
                   onDeleteSub={() => handleDeleteSubcategory(sub.id)}
+                  highlightTaskId={highlightTaskId}
+                  onHighlightTaskConsumed={onHighlightTaskConsumed}
                 />
               </div>
             );
@@ -461,6 +479,7 @@ function CategoryBoard({
   filterAssignee, setFilterAssignee,
   filterStatus,   setFilterStatus,
   showAddCategoryInitial, onAddCategoryClose,
+  highlightTaskId, onHighlightTaskConsumed,
 }) {
   const categories = (workspace?.categories || []);
   const [addingCategory, setAddingCategory] = useState(false);
@@ -606,6 +625,8 @@ function CategoryBoard({
           user={user}
           showToast={showToast}
           onAddTaskHere={onAddTaskHere}
+          highlightTaskId={highlightTaskId}
+          onHighlightTaskConsumed={onHighlightTaskConsumed}
         />
       ))}
 
@@ -622,6 +643,8 @@ function CategoryBoard({
           user={user}
           showToast={showToast}
           onAddTaskHere={onAddTaskHere}
+          highlightTaskId={highlightTaskId}
+          onHighlightTaskConsumed={onHighlightTaskConsumed}
         />
       )}
 

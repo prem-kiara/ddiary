@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   CheckSquare, Calendar, User, ChevronDown, ChevronRight, Clock, CheckCircle,
   UserPlus, ArrowUpRight, Check, X,
@@ -247,11 +247,26 @@ function ReassignPanel({ task, orgAssignees, onClose, showToast }) {
 }
 
 /* ── Single task card ────────────────────────────────────────────────────── */
-function TaskCard({ task, workspaces, orgAssignees, showToast }) {
+function TaskCard({ task, workspaces, orgAssignees, showToast, highlightTaskId, onHighlightConsumed }) {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   // 'reassign' | 'move' | null — which inline action panel is expanded
   const [panel, setPanel] = useState(null);
+
+  const cardRef = useRef(null);
+  const isHighlighted = highlightTaskId === task.id;
+
+  // Auto-expand and scroll into view when this card is the deep-link target
+  useEffect(() => {
+    if (!isHighlighted) return;
+    setOpen(true);
+    const t = setTimeout(() => {
+      cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      onHighlightConsumed?.();
+    }, 120);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHighlighted]);
 
   const overdue  = isOverdue(task.dueDate) && task.status !== 'done';
   const isDone   = task.status === 'done' || task.completed;
@@ -277,13 +292,17 @@ function TaskCard({ task, workspaces, orgAssignees, showToast }) {
   };
 
   return (
-    <div style={{
-      border: '1px solid #cbd5e1',
-      borderRadius: 10,
-      marginBottom: 10,
-      overflow: 'hidden',
-      opacity: isDone ? 0.65 : 1,
-    }}>
+    <div
+      ref={cardRef}
+      style={{
+        border: `1px solid ${isHighlighted ? '#7c3aed' : '#cbd5e1'}`,
+        borderRadius: 10,
+        marginBottom: 10,
+        overflow: 'hidden',
+        opacity: isDone ? 0.65 : 1,
+        boxShadow: isHighlighted ? '0 0 0 3px #7c3aed33, 0 2px 8px rgba(0,0,0,0.08)' : 'none',
+        transition: 'box-shadow 0.3s, border-color 0.3s',
+      }}>
       {/* ── Header row ─────────────────────────────────────────────────── */}
       <button
         onClick={() => setOpen(v => !v)}
@@ -429,7 +448,7 @@ function TaskCard({ task, workspaces, orgAssignees, showToast }) {
 }
 
 /* ── TeamTaskView — shows tasks assigned to me by others ─────────────────── */
-export default function TeamTaskView({ showToast } = {}) {
+export default function TeamTaskView({ showToast, highlightTaskId, onHighlightConsumed } = {}) {
   const { user } = useAuth();
   const { tasks, loading, error } = useAssignedTasks();
   const { workspaces } = useMyWorkspaces();
@@ -465,7 +484,7 @@ export default function TeamTaskView({ showToast } = {}) {
   const [showPending, setShowPending] = useState(true);
   const [showDone,    setShowDone]    = useState(false);
 
-  const cardProps = { workspaces, orgAssignees, showToast };
+  const cardProps = { workspaces, orgAssignees, showToast, highlightTaskId, onHighlightConsumed };
 
   // Don't render anything if there are no assigned tasks and we're not loading
   if (!loading && tasks.length === 0 && !error) return null;
