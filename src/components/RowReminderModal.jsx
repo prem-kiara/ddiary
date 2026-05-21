@@ -102,7 +102,7 @@ export default function RowReminderModal({
         sheetTitle,
         rowIndex,
         rowData:        Object.fromEntries(rowSummary.map(x => [x.col, x.val])),
-        columnHeaders:  {},
+        columnHeaders:  headerData || {},
         assigneeEmail,
         assigneeName,
         remarks,
