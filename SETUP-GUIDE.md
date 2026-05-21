@@ -81,15 +81,19 @@ firebase deploy --only firestore:rules,storage
 
 ### Step 5: Deploy the App
 
+**Dhanam production (since 2026-05-19):** hosting is on EC2 (`ubuntu@15.206.55.165`), not Firebase Hosting. Build locally, then `scp` `dist/` to the box — nginx picks up the new files instantly.
+
 ```bash
-# Build the frontend
+# Build the frontend (Vite bakes .env values into the bundle here)
 npm run build
 
-# Deploy everything
-firebase deploy
+# Upload to EC2 (requires dhanam-finops.pem SSH key)
+scp -i ~/tools/dhanam-finops.pem -r dist/* ubuntu@15.206.55.165:/var/www/ddiary/
 ```
 
-Your app will be live at: `https://your-project-id.web.app`
+The app is live at `https://diary.dhanamfinance.com`. No `pm2 restart` is needed for frontend-only changes; only restart the EC2 server when `ec2/server.js` or `ec2/crons.js` change. See the "EC2 Server Layout" section of `CLAUDE.md` for full details and the `AWS_Migration_Guide.docx` for the full migration record.
+
+> **Note:** `firebase deploy --only hosting` is no longer valid for prod. The `firebase.json` hosting block is dormant and kept only for emergency rollback.
 
 ---
 
@@ -141,7 +145,7 @@ digital-diary/
 ├── index.html                  # Entry HTML
 ├── package.json                # Dependencies
 ├── vite.config.js              # Vite + PWA config
-├── firebase.json               # Firebase hosting config
+├── firebase.json               # Firebase config (Firestore rules / Functions; hosting block dormant)
 ├── firestore.rules             # Database security rules
 ├── storage.rules               # File storage security rules
 ├── .env.example                # Environment variables template
@@ -173,9 +177,16 @@ digital-diary/
 │   └── styles/
 │       └── diary.css           # Complete warm paper-like theme
 │
-├── functions/
+├── functions/                  # Firebase Cloud Functions (legacy/fallback — primary path is ec2/)
 │   ├── package.json            # Cloud Functions dependencies
 │   └── index.js                # Daily email reminders + welcome email
+│
+├── ec2/                        # Production hosting + email backend (since 2026-05-19)
+│   ├── server.js               # Express API on 127.0.0.1:3002 — POST /api/notify → Amazon SES
+│   ├── crons.js                # node-cron: task / sheet / daily reminders
+│   ├── ecosystem.config.js     # PM2 process manager config
+│   ├── nginx-diary.dhanamfinance.com.conf  # nginx server block (SPA + /api/ proxy)
+│   └── .env.template           # Env var template for the EC2 box
 │
 └── public/
     └── icons/

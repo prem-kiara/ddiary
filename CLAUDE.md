@@ -187,17 +187,18 @@ npm run dev
 # Production build (output to dist/)
 npm run build
 
-# Deploy hosting only (most common)
-firebase deploy --only hosting
+# Deploy frontend to EC2 (hosting moved off Firebase on 2026-05-19 — see "EC2 Server Layout" below)
+npm run build
+scp -i ~/tools/dhanam-finops.pem -r dist/* ubuntu@15.206.55.165:/var/www/ddiary/
 
-# Deploy Cloud Functions only
+# Deploy Firestore security rules (still on Firebase)
+firebase deploy --only firestore:rules
+
+# Deploy Cloud Functions (kept as fallback only — primary email path is EC2 crons + SES)
 firebase deploy --only functions
-
-# Deploy everything
-firebase deploy
 ```
 
-The Firebase project is `ddiary-a72ca`. Hosting target is `prod` (set in `.firebaserc`).
+The Firebase project is `ddiary-a72ca` (still used for Firestore + Auth). Frontend hosting now runs on EC2 (`ubuntu@15.206.55.165`); see "EC2 Server Layout" below.
 
 ---
 
@@ -242,7 +243,7 @@ Two parallel systems:
 - **Email requires M365 session** — client-side email only works when the user is logged in and has an active Microsoft token. If the token expires, `msTokenRefresh.js` silently refreshes; if that fails, the email is silently dropped (logged to console as a warning). Cloud Functions email (SendGrid) has no such constraint.
 - **Firestore rules** — `firestore.rules` controls read/write access. Any new collection needs rules before it works in production.
 - **`addWorkspaceTask` return value** — always returns the new task `DocumentReference`. Callers must capture it (`const newTaskRef = await addWorkspaceTask(...)`) to get `newTaskRef.id` for deep links in notification emails.
-- **SPA routing** — Firebase Hosting has `"**" → "/index.html"` rewrite. Any static host replacement must also handle this or React Router 404s on direct URL access.
+- **SPA routing** — nginx on EC2 handles this via `try_files $uri $uri/ /index.html;` in `ec2/nginx-diary.dhanamfinance.com.conf`. Any future host replacement must also map unmatched paths to `index.html` or React Router 404s on direct URL access.
 - **Cloud Functions service account** — uses `firebase-adminsdk-fbsvc@ddiary-a72ca.iam.gserviceaccount.com` explicitly. If the project changes, update the `SA` constant in `functions/index.js`.
 - **`localStorage` key prefix** — `ddiary_*` is used throughout for persisted UI state (view toggles, expanded workspace state, etc.).
 
