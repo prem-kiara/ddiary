@@ -674,6 +674,9 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
     if (mod && key === 'c') { e.preventDefault(); handleCopy(); return; }
     if (mod && key === 'x') { e.preventDefault(); handleCut(); return; }
     if (mod && key === 'v') { e.preventDefault(); handlePaste(); return; }
+    // Formatting shortcuts (Word-style) — toggle bold/italic on selected cells
+    if (mod && key === 'b') { e.preventDefault(); toggleFmt('b'); return; }
+    if (mod && key === 'i') { e.preventDefault(); toggleFmt('i'); return; }
 
     if (editCell) return;
 
@@ -688,7 +691,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
     else if (key === 'Delete' || key === 'Backspace') { clearRange(); }
     else if (key.length === 1 && !mod) { setEditCell(sel); setEditVal(key === '=' ? '=' : key); }
   }, [editCell, moveSel, sel, selectedRaw, clearRange, formulaSuggestions, suggIdx,
-      applySuggestion, undo, redo, handleCopy, handleCut, handlePaste]);
+      applySuggestion, undo, redo, handleCopy, handleCut, handlePaste, toggleFmt]);
 
   // ── Cell input keydown ─────────────────────────────────────────────────────
   const onCellKeyDown = useCallback((e) => {
@@ -858,7 +861,18 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
         )}
       </div>
 
-      {/* ── Toolbar ── */}
+      {/* ── Toolbar (sticky — stays visible when scrolling large sheets) ── */}
+      <div style={{
+        position:     'sticky',
+        top:          'var(--header-h)',
+        zIndex:       40,
+        background:   '#ffffff',
+        paddingTop:   4,
+        paddingBottom: 4,
+        borderBottom: '1px solid var(--paper-line)',
+        boxShadow:    '0 2px 6px rgba(0,0,0,0.05)',
+        marginBottom: 8,
+      }}>
       <GridToolbar
         selCell={selCell}
         toggleFmt={toggleFmt}
@@ -897,6 +911,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
         gridRef={gridRef}
         fbarRef={fbarRef}
       />
+      </div>
 
       {/* Formula pointing indicator */}
       {inFormulaMode && (
@@ -1232,7 +1247,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
 
       {/* ── Hint bar ── */}
       <p style={{ fontSize: 11, color: 'var(--ink-lighter)', marginTop: 6, fontFamily: 'var(--font-body)' }}>
-        Click+drag to select · Opt+Enter for new line in cell · 💬 to comment on a row · 🔔 to set daily reminder · Ctrl+C/X/V · Ctrl+Z/Y
+        Click+drag to select · Opt+Enter for new line · 💬 comment · 🔔 reminder · Ctrl+C/X/V · Ctrl+Z/Y · Ctrl+B bold · Ctrl+I italic
       </p>
 
       {/* ── Row Reminder Modal ── */}

@@ -6,307 +6,11 @@ import { useAuth } from '../../contexts/AuthContext';
 import EditorToolbar from './EditorToolbar';
 import { useAutosave } from './hooks/useAutosave';
 import { useEditorSync } from './hooks/useEditorSync';
+import { useUndoStack } from './hooks/useUndoStack';
 import { HIGHLIGHT_COLORS, TD_STYLE } from './constants';
-
-// ── Pure helpers (no React deps) ──────────────────────────────────────────────
-
-function getIndentLevel(block) {
-  return parseInt(block?.dataset?.indent || '0');
-}
-
-function setIndentLevel(block, level) {
-  if (!block) return;
-  level = Math.max(0, Math.min(3, level));
-  if (level === 0) {
-    delete block.dataset.indent;
-  } else {
-    block.dataset.indent = String(level);
-  }
-}
-
-// Get the <td> or <th> ancestor of a node within the editor, if any.
-function getCurrentCell(node, editorEl) {
-  let n = node;
-  while (n && n !== editorEl) {
-    if (n.nodeName === 'TD' || n.nodeName === 'TH') return n;
-    n = n.parentNode;
-  }
-  return null;
-}
-
-// Select all content in a cell and move cursor to end.
-function selectCell(cell) {
-  if (!cell) return;
-  const sel = window.getSelection();
-  const range = document.createRange();
-  range.selectNodeContents(cell);
-  range.collapse(false);
-  sel.removeAllRanges();
-  sel.addRange(range);
-}
-
-/**
- * Detect list prefix on a block.
- * Supports:
- *   - Nested numbered:  1.   /  1.1.  /  1.1.1.  etc.
- *   - Bullets:          - text  /  * text  /  • text
- *
- * The trailing space after the last digit+dot is optional so that blocks
- * where the cursor landed mid-prefix (and the space is missing) are still
- * detected and can be renumbered / continued correctly.
- */
-function detectListPrefix(text) {
-  // Allow zero or one space after the final period so mis-formatted prefixes
-  // (e.g. "3.1.Test Entry" missing the trailing space) are still recognised.
-  const numbered = text.match(/^([\d]+(?:\.[\d]+)*\. ?)(.*)/s);
-  if (numbered) {
-    const rawPrefix = numbered[1];
-    // Normalise: ensure exactly one trailing space
-    const prefix = rawPrefix.trimEnd() + '. ';
-    const nums = (prefix.match(/\d+/g) || []).map(Number);
-    const num  = nums[nums.length - 1] || 1;
-    return { type: 'numbered', prefix, nums, num, sep: '. ', body: numbered[2] };
-  }
-  const bullet = text.match(/^([-*•]\s+)(.*)/s);
-  if (bullet) {
-    return { type: 'bullet', prefix: bullet[1], body: bullet[2] };
-  }
-  return null;
-}
-
-/**
- * Wrap any bare text-node direct children of the editor in <p> elements.
- *
- * Why this matters: when a contentEditable is cleared via `innerHTML = ''`
- * and the user starts typing, Chrome inserts the first characters as a raw
- * text node — not wrapped in a <p>.  Raw text nodes are NOT included in
- * `element.children` (which only returns element nodes), so
- * fixNumberedListsInDOM never sees them, the counter starts at 0 for the
- * first real <p>, and every numbered block gets the wrong number.
- *
- * Call this before any logic that iterates `editorEl.children`.
- */
-function normalizeBareTextNodes(editorEl) {
-  if (!editorEl) return;
-  // Snapshot childNodes first — modifying the DOM while iterating a live
-  // NodeList produces unexpected results.
-  Array.from(editorEl.childNodes).forEach(node => {
-    if (node.nodeType === Node.TEXT_NODE && node.nodeValue.trim()) {
-      const p = document.createElement('p');
-      editorEl.insertBefore(p, node);
-      p.appendChild(node); // moves the text node into the new <p>
-    }
-  });
-}
-
-/**
- * Walk every direct-child block in the contentEditable and fix sequential
- * numbering across all indent levels.
- * Counters are maintained per-level: [level0, level1, level2, level3]
- * Prefix format: 1. / 2.1. / 2.1.3. etc.
- */
-function fixNumberedListsInDOM(editorEl) {
-  if (!editorEl) return;
-
-  // Normalise bare text nodes into <p> elements first so they participate in
-  // the renumber sequence (see normalizeBareTextNodes for the full explanation).
-  normalizeBareTextNodes(editorEl);
-
-  // ── Snapshot cursor before any DOM mutations ──────────────────────────────
-  // Mutating ANY text node's nodeValue (even in a block the cursor is NOT in)
-  // can invalidate the browser's Selection and silently move the cursor to
-  // offset 0, especially in Firefox.  We save the range endpoints by their
-  // (node, offset) references and restore them after all rewrites are done.
-  const sel = window.getSelection();
-  let savedStart = null, savedStartOff = 0;
-  let savedEnd   = null, savedEndOff   = 0;
-  let hadSelection = false;
-  if (sel?.rangeCount) {
-    const r = sel.getRangeAt(0);
-    savedStart    = r.startContainer;
-    savedStartOff = r.startOffset;
-    savedEnd      = r.endContainer;
-    savedEndOff   = r.endOffset;
-    hadSelection  = true;
-  }
-
-  const blocks  = Array.from(editorEl.children);
-  const counters = [0, 0, 0, 0];
-
-  blocks.forEach(block => {
-    // ── Skip tables entirely — a table in the middle of a numbered list
-    // should not break the sequence; counters carry through unmodified.
-    if (block.nodeName === 'TABLE') return;
-
-    const level = getIndentLevel(block);
-    const text  = block.textContent;
-
-    // ── Skip empty blocks (<p><br></p>, whitespace-only paragraphs) ──────
-    // An empty line between list items should not reset the counter; only
-    // a block that actually contains non-list non-empty text resets it.
-    if (!text.trim()) return;
-
-    // Allow missing trailing space so stale/mis-formatted blocks are
-    // still detected and healed (e.g. "3.1.Text" → "3.1. Text").
-    const isNumbered = /^[\d]+(?:\.[\d]+)*\. ?/.test(text);
-
-    if (isNumbered) {
-      const body = text.replace(/^[\d]+(?:\.[\d]+)*\. ?/, '').trim();
-
-      // Prefix-only block (no body content) — only count it if it was freshly
-      // created by Enter (data-empty-new="true").  Blocks that became
-      // prefix-only because the user deleted their body content should be
-      // skipped so subsequent numbered blocks renumber correctly.
-      if (!body && !block.dataset.emptyNew) return;
-
-      // If the block carries a restart marker, reset this level and all
-      // deeper levels so numbering begins at 1 again from this point.
-      if (block.dataset.restart === 'true') {
-        counters[level] = 0;
-        for (let i = level + 1; i < counters.length; i++) counters[i] = 0;
-      }
-      counters[level]++;
-      // Reset all deeper levels
-      for (let i = level + 1; i < counters.length; i++) counters[i] = 0;
-
-      // Always emit a prefix with exactly one trailing space for consistency.
-      const expectedPrefix = counters.slice(0, level + 1).join('.') + '. ';
-
-      const walker   = document.createTreeWalker(block, NodeFilter.SHOW_TEXT, null);
-      const firstTxt = walker.nextNode();
-      if (firstTxt) {
-        const updated = firstTxt.nodeValue.replace(/^[\d]+(?:\.[\d]+)*\. ?/, expectedPrefix);
-        if (updated !== firstTxt.nodeValue) {
-          // When the prefix length changes, adjust saved cursor offsets if the
-          // cursor lives inside this text node so the restore lands correctly.
-          const oldPrefixLen = (firstTxt.nodeValue.match(/^[\d]+(?:\.[\d]+)*\. ?/) || [''])[0].length;
-          const newPrefixLen = expectedPrefix.length;
-          const delta        = newPrefixLen - oldPrefixLen;
-          if (delta !== 0) {
-            if (savedStart === firstTxt)
-              savedStartOff = Math.max(newPrefixLen, savedStartOff + delta);
-            if (savedEnd === firstTxt)
-              savedEndOff   = Math.max(newPrefixLen, savedEndOff + delta);
-          }
-          firstTxt.nodeValue = updated;
-        }
-      }
-
-      // Once the block has real body content, the "new empty" marker is no
-      // longer needed — clear it so future empty-block logic works correctly.
-      if (body && block.dataset.emptyNew) delete block.dataset.emptyNew;
-    } else {
-      // Non-empty, non-numbered block: reset this level and deeper counters
-      counters[level] = 0;
-      for (let i = level + 1; i < counters.length; i++) counters[i] = 0;
-    }
-  });
-
-  // ── Restore cursor after all mutations ───────────────────────────────────
-  if (hadSelection && savedStart?.isConnected) {
-    try {
-      const clamp = (node, off) =>
-        node.nodeType === Node.TEXT_NODE
-          ? Math.min(off, node.length)
-          : Math.min(off, node.childNodes.length);
-      const newRange = document.createRange();
-      newRange.setStart(savedStart, clamp(savedStart, savedStartOff));
-      newRange.setEnd(
-        savedEnd?.isConnected ? savedEnd : savedStart,
-        clamp(savedEnd?.isConnected ? savedEnd : savedStart, savedEndOff)
-      );
-      sel.removeAllRanges();
-      sel.addRange(newRange);
-    } catch { /* node detached or invalid — leave cursor where browser put it */ }
-  }
-}
-
-/**
- * Convert a legacy plain-text (or markdown-marker) entry to HTML so it can
- * be loaded into the contentEditable editor.  Already-HTML content is passed
- * through unchanged.
- */
-function legacyTextToHtml(text) {
-  if (!text) return '';
-  if (/<[a-zA-Z]/.test(text)) return text; // already HTML
-
-  let s = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-
-  s = s
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/__(.+?)__/g,     '<u>$1</u>')
-    .replace(/~~(.+?)~~/g,     '<s>$1</s>')
-    .replace(/\*(.+?)\*/g,     '<em>$1</em>');
-
-  return s
-    .split('\n')
-    .map(line => (line ? `<p>${line}</p>` : '<p><br></p>'))
-    .join('');
-}
-
-/**
- * Returns true when `range` is collapsed at the very beginning of `block`
- * (before any text or child elements).
- */
-function isAtBlockStart(range, block) {
-  if (!range || !range.collapsed || !block) return false;
-  if (range.startContainer === block && range.startOffset === 0) return true;
-  if (range.startOffset !== 0) return false;
-  // Walk up from the start container: every ancestor up to the block must
-  // have no previous sibling (i.e., we are on the leftmost path).
-  let node = range.startContainer;
-  while (node && node !== block) {
-    if (node.previousSibling) return false;
-    node = node.parentNode;
-  }
-  return node === block;
-}
-
-/**
- * Place the cursor at the very end of a block.
- * We walk into the deepest last child so the cursor is inside the final
- * text node (not at element-level offset N), which makes the next Backspace
- * delete a character rather than an element node.
- */
-function placeCursorAtEnd(block, sel) {
-  if (!block || !sel) return;
-  function deepLast(node) {
-    return node.lastChild ? deepLast(node.lastChild) : node;
-  }
-  const target = deepLast(block);
-  const r = document.createRange();
-  if (target.nodeType === Node.TEXT_NODE) {
-    r.setStart(target, target.length);
-    r.setEnd(target, target.length);
-  } else if (target.nodeName === 'BR') {
-    // Place cursor right before the <br> (= end of visible content)
-    r.setStartBefore(target);
-    r.collapse(true);
-  } else {
-    r.selectNodeContents(block);
-    r.collapse(false);
-  }
-  sel.removeAllRanges();
-  sel.addRange(r);
-}
-
-/**
- * Set all cells in the table to the same fractional width so columns are
- * uniform after adding or removing a column.
- */
-function equalizeColumns(table) {
-  const firstRow = table.querySelector('tr');
-  if (!firstRow) return;
-  const colCount = firstRow.children.length;
-  if (colCount === 0) return;
-  const pct = `${(100 / colCount).toFixed(2)}%`;
-  Array.from(table.querySelectorAll('td, th')).forEach(cell => {
-    cell.style.width = pct;
-  });
-}
+import { getIndentLevel, setIndentLevel, isAtBlockStart, placeCursorAtEnd } from './utils/cursorUtils';
+import { getCurrentCell, selectCell, equalizeColumns } from './utils/tableUtils';
+import { detectListPrefix, fixNumberedListsInDOM, normalizeBareTextNodes, legacyTextToHtml } from './utils/listUtils';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast }) {
@@ -353,6 +57,11 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     lastLocalEditRef,
     setDraftStatus,
   });
+
+  // ── Custom undo/redo stack (owns Ctrl+Z / Ctrl+Y — replaces browser undo) ──
+  // The editor mixes execCommand with direct DOM mutations, so browser undo
+  // partially reverts changes and leaves corrupted state.  We own the full stack.
+  const { pushUndo, handleUndoKey, onBeforeInput } = useUndoStack({ editorRef, scheduleAutosave });
 
   // ── Real-time shared-diary sync (receive changes from collaborators) ──────
   const { remoteUpdateInfo } = useEditorSync({
@@ -906,24 +615,35 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
       return;
     }
 
-    // ── Inside a numbered list block → show list menu ──────────────────
+    // ── Any non-table block → show numbering menu ─────────────────────
     let node = e.target;
     let block = null;
     while (node && node !== editorRef.current) {
       if (node.parentNode === editorRef.current) { block = node; break; }
       node = node.parentNode;
     }
-    if (block) {
-      const list = detectListPrefix(block.textContent);
-      if (list && list.type === 'numbered') {
-        e.preventDefault();
-        setListMenu({
-          x: e.clientX,
-          y: e.clientY,
-          block,
-          hasRestart: block.dataset.restart === 'true',
-        });
+    if (block && block.nodeName !== 'TABLE') {
+      e.preventDefault();
+      const list      = detectListPrefix(block.textContent);
+      const isNumbered = !!(list && list.type === 'numbered');
+      // For non-numbered blocks (headings, plain text), check the next
+      // numbered sibling so the checkmarks reflect the current state.
+      let flagBlock = block;
+      if (!isNumbered) {
+        let sib = block.nextElementSibling;
+        while (sib) {
+          if (detectListPrefix(sib.textContent)?.type === 'numbered') { flagBlock = sib; break; }
+          sib = sib.nextElementSibling;
+        }
       }
+      setListMenu({
+        x:          e.clientX,
+        y:          e.clientY,
+        block,
+        isNumbered,
+        hasRestart:  flagBlock.dataset.restart  === 'true',
+        hasContinue: flagBlock.dataset.continue === 'true',
+      });
     }
   }, []);
 
@@ -995,22 +715,74 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
   // ── List right-click actions (restart / continue numbering) ──────────────
   const handleListMenuAction = useCallback((action) => {
     if (!listMenu) return;
-    const { block } = listMenu;
+    const { block, isNumbered } = listMenu;
     setListMenu(null);
+
+    // If the right-clicked block is not already a numbered item (e.g. a section
+    // heading like "Equity"), CONVERT it into a numbered item by prepending
+    // "1. " then letting fixNumberedListsInDOM assign the correct number.
+    // data-continue → sequence continues from the previous list above
+    // data-restart  → sequence restarts at 1
+    if (!isNumbered) {
+      pushUndo();
+      // Strip any leading <br> nodes — they're empty-line placeholders and
+      // would push "1. " onto its own line separate from the heading text.
+      let insertRef = block.firstChild;
+      while (insertRef && insertRef.nodeName === 'BR') {
+        const next = insertRef.nextSibling;
+        insertRef.remove();
+        insertRef = next;
+      }
+      // Prepend "1. " as a plain text node before existing content so any
+      // inline formatting (bold, colour) on the heading is preserved.
+      const prefixNode = document.createTextNode('1. ');
+      if (insertRef) block.insertBefore(prefixNode, insertRef);
+      else           block.appendChild(prefixNode);
+      if (action === 'restart') {
+        block.dataset.restart = 'true';
+        delete block.dataset.continue;
+      } else {
+        block.dataset.continue = 'true';
+        delete block.dataset.restart;
+      }
+      fixNumberedListsInDOM(editorRef.current);
+      scheduleAutosave();
+      return;
+    }
+
     if (action === 'restart') {
       block.dataset.restart = 'true';
+      delete block.dataset.continue;
     } else if (action === 'continue') {
+      block.dataset.continue = 'true';
       delete block.dataset.restart;
     }
     fixNumberedListsInDOM(editorRef.current);
     scheduleAutosave();
-  }, [listMenu, scheduleAutosave]);
+  }, [listMenu, scheduleAutosave, pushUndo]);
 
   // ── Keyboard handler ─────────────────────────────────────────────────────
   const handleEditorKeyDown = useCallback((e) => {
+    // ── Undo / Redo — our custom stack owns Ctrl+Z / Ctrl+Y ──────────────
+    // We intercept BEFORE any other handler so browser undo never fires.
+    // (Browser undo only knows about execCommand; our direct DOM mutations
+    //  are invisible to it and would leave the editor in a corrupted state.)
+    if (handleUndoKey(e)) return;
+
     const sel = window.getSelection();
     if (!sel?.rangeCount) return;
     const range = sel.getRangeAt(0);
+
+    // ── Formatting shortcuts (Word-style) ─────────────────────────────────
+    // Ctrl/Cmd+B → Bold   Ctrl/Cmd+I → Italic   Ctrl/Cmd+U → Underline
+    // Ctrl/Cmd+Shift+S → Strikethrough
+    if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'b' && !e.shiftKey) { e.preventDefault(); document.execCommand('bold');          scheduleAutosave(); return; }
+      if (k === 'i' && !e.shiftKey) { e.preventDefault(); document.execCommand('italic');        scheduleAutosave(); return; }
+      if (k === 'u' && !e.shiftKey) { e.preventDefault(); document.execCommand('underline');     scheduleAutosave(); return; }
+      if (k === 's' &&  e.shiftKey) { e.preventDefault(); document.execCommand('strikeThrough'); scheduleAutosave(); return; }
+    }
 
     // ── Home / End constrained to the current block ───────────────────────
     // In a contenteditable the browser treats the entire div as one long line,
@@ -1085,20 +857,48 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     // user's intent on pressing Backspace or Delete is always "get rid of this
     // prefix".  Character-by-character deletion races with fixNumberedListsInDOM
     // and the cursor-restore.  We short-circuit: one keypress → empty block.
+    // ── Prefix-only block: Backspace / Delete removes the entire block ──────
+    // When a numbered/bullet block has no body text (e.g. "2.3. " with nothing
+    // after the prefix) any Backspace or Delete removes the whole block and
+    // places the cursor at the end of the previous block (or start of the next
+    // if there is no previous).
+    //
+    // WHY remove instead of clearing to <br>:
+    //   Clearing to <br> leaves an orphaned empty block.  The user then needs a
+    //   SECOND Backspace to actually get rid of it, and the intermediate state
+    //   confuses the numbering.  Removing in one step is simpler and matches
+    //   the behaviour users expect (same as pressing Backspace on an empty
+    //   paragraph in Word / Google Docs).
     if ((e.key === 'Backspace' || e.key === 'Delete') && range.collapsed) {
       const block = getBlock(range.startContainer);
       if (block) {
         const listCheck = detectListPrefix(block.textContent);
         if (listCheck && !listCheck.body.trim()) {
           e.preventDefault();
-          block.innerHTML = '<br>';
-          // Place cursor at start of the now-empty block
-          const r2 = document.createRange();
-          r2.setStart(block, 0);
-          r2.collapse(true);
-          sel.removeAllRanges();
-          sel.addRange(r2);
-          requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
+          pushUndo(); // snapshot before the removal so Ctrl+Z brings it back
+          const prevBlock = block.previousElementSibling;
+          const nextBlock = block.nextElementSibling;
+          block.remove();
+          if (prevBlock && prevBlock.nodeName !== 'TABLE') {
+            placeCursorAtEnd(prevBlock, sel);
+          } else if (nextBlock) {
+            const r2 = document.createRange();
+            r2.setStart(nextBlock, 0);
+            r2.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(r2);
+          } else {
+            // Editor is now empty — insert a placeholder so it stays editable
+            const placeholder = document.createElement('p');
+            placeholder.innerHTML = '<br>';
+            editorRef.current.appendChild(placeholder);
+            const r2 = document.createRange();
+            r2.setStart(placeholder, 0);
+            r2.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(r2);
+          }
+          fixNumberedListsInDOM(editorRef.current);
           scheduleAutosave();
           return;
         }
@@ -1111,6 +911,8 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
       if (block && isAtBlockStart(range, block)) {
         const prevBlock = block.previousElementSibling;
         if (prevBlock) {
+          // Snapshot before a block-start merge so Ctrl+Z restores cleanly
+          pushUndo();
           // Don't merge into a table — just delete empty blocks above tables
           if (prevBlock.nodeName === 'TABLE') {
             const isEmpty2 =
@@ -1272,6 +1074,8 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     if (!list) return;
 
     e.preventDefault();
+    // Snapshot BEFORE we touch the DOM so Ctrl+Z perfectly restores this state
+    pushUndo();
     const level = getIndentLevel(block);
 
     if (!list.body.trim()) {
@@ -1284,12 +1088,22 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
         fixNumberedListsInDOM(editorRef.current);
         placeCursorAtEnd(block, sel);
       } else {
-        block.innerHTML = '<br>';
-        const r = document.createRange();
-        r.setStart(block, 0);
-        r.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(r);
+        // Level-0 empty numbered/bullet item: remove the block entirely so the
+        // items below renumber correctly (e.g. "5. Escrow" becomes "4.").
+        const nextBlock = block.nextElementSibling;
+        const prevBlock = block.previousElementSibling;
+        block.remove();
+        fixNumberedListsInDOM(editorRef.current);
+        // Place cursor at start of next block, or end of previous block.
+        if (nextBlock?.isConnected) {
+          const r = document.createRange();
+          r.setStart(nextBlock, 0);
+          r.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(r);
+        } else if (prevBlock?.isConnected) {
+          placeCursorAtEnd(prevBlock, sel);
+        }
       }
       scheduleAutosave();
       return;
@@ -1308,21 +1122,38 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
       const newBlock = getBlock(newSel.getRangeAt(0).startContainer);
       if (newBlock && newBlock !== block) {
         if (level > 0) newBlock.dataset.indent = String(level);
-        // Set a placeholder prefix directly (any valid numbered prefix works —
-        // fixNumberedListsInDOM will renumber everything correctly in one pass).
-        newBlock.textContent = list.type === 'numbered' ? '1. ' : list.prefix;
-        // Mark as freshly-created empty block so fixNumberedListsInDOM counts
-        // it (prefix-only) but skips body-deleted prefix-only blocks.
-        if (list.type === 'numbered') newBlock.dataset.emptyNew = 'true';
-        // Renumber synchronously so numbering is correct before the next render
-        fixNumberedListsInDOM(editorRef.current);
-        // Place cursor deep inside the last text node for reliable Backspace
-        placeCursorAtEnd(newBlock, newSel);
+        const existingText = newBlock.textContent;
+        if (detectListPrefix(existingText)) {
+          // Cursor was at position 0: Chrome moved ALL content (prefix + body)
+          // to newBlock.  The user's intent here is to insert a blank line ABOVE
+          // the numbered item (e.g. add breathing room between a table and the
+          // first numbered heading).  Convert the orphaned empty `block` into a
+          // plain blank paragraph and leave `newBlock` with the full original
+          // content so numbering is undisturbed.
+          block.innerHTML = '<br>';
+          delete block.dataset.indent;
+          delete block.dataset.emptyNew;
+          fixNumberedListsInDOM(editorRef.current);
+          placeCursorAtEnd(block, window.getSelection());
+        } else if (existingText.trim()) {
+          // Cursor was mid-body: Chrome split the text, leaving body tail in newBlock.
+          // Prepend the correct prefix so it becomes a valid list item.
+          newBlock.textContent = (list.type === 'numbered' ? '1. ' : list.prefix) + existingText;
+          if (list.type === 'numbered') newBlock.dataset.emptyNew = 'true';
+          fixNumberedListsInDOM(editorRef.current);
+          placeCursorAtEnd(newBlock, newSel);
+        } else {
+          // Normal case: cursor was at end, newBlock is empty — just set prefix.
+          newBlock.textContent = list.type === 'numbered' ? '1. ' : list.prefix;
+          if (list.type === 'numbered') newBlock.dataset.emptyNew = 'true';
+          fixNumberedListsInDOM(editorRef.current);
+          placeCursorAtEnd(newBlock, newSel);
+        }
       }
     }
 
     scheduleAutosave();
-  }, [getBlock, scheduleAutosave]);
+  }, [getBlock, scheduleAutosave, handleUndoKey, pushUndo]);
 
   // ── Quick-keys (adapted for contentEditable) ──────────────────────────────
   const insertAtCursor = useCallback((action) => {
@@ -1427,18 +1258,34 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
           </div>
         )}
 
-        {/* ── Formatting toolbar ── */}
-        <EditorToolbar
-          onFormat={handleFormat}
-          onHighlight={handleHighlight}
-          onToggleList={toggleList}
-          onIndent={handleIndent}
-          onInsertTable={handleInsertTable}
-          onCellBgColor={(scope, color) => handleCellBgColor(scope, color, null)}
-          onInsertAtCursor={insertAtCursor}
-          cellBgPicker={cellBgPicker}
-          setCellBgPicker={setCellBgPicker}
-        />
+        {/* ── Formatting toolbar (sticky — stays visible when scrolling long entries) ── */}
+        <div style={{
+          position:     'sticky',
+          top:          'var(--header-h)',
+          zIndex:       40,
+          background:   '#ffffff',
+          marginLeft:   -20,
+          marginRight:  -20,
+          paddingLeft:  20,
+          paddingRight: 20,
+          paddingTop:   6,
+          paddingBottom: 6,
+          borderBottom: '1px solid var(--paper-line)',
+          boxShadow:    '0 2px 6px rgba(0,0,0,0.05)',
+          marginBottom: 12,
+        }}>
+          <EditorToolbar
+            onFormat={handleFormat}
+            onHighlight={handleHighlight}
+            onToggleList={toggleList}
+            onIndent={handleIndent}
+            onInsertTable={handleInsertTable}
+            onCellBgColor={(scope, color) => handleCellBgColor(scope, color, null)}
+            onInsertAtCursor={insertAtCursor}
+            cellBgPicker={cellBgPicker}
+            setCellBgPicker={setCellBgPicker}
+          />
+        </div>
 
         {/* ── Editor area + Quick-Keys ── */}
         <div className="editor-layout" style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
@@ -1469,6 +1316,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
               ref={editorRef}
               contentEditable
               suppressContentEditableWarning
+              onBeforeInput={onBeforeInput}
               onInput={handleEditorInput}
               onKeyDown={handleEditorKeyDown}
               onContextMenu={handleContextMenu}
@@ -1604,27 +1452,28 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
             Numbering
           </div>
           <div style={{ height: 1, background: 'var(--paper-line)', margin: '2px 0 4px' }} />
-          {listMenu.hasRestart ? (
-            <button
-              onMouseDown={e => { e.preventDefault(); handleListMenuAction('continue'); }}
-              style={{ display:'block', width:'100%', padding:'8px 16px', background:'none',
-                border:'none', cursor:'pointer', textAlign:'left', fontSize:13, color:'var(--ink)' }}
-              onMouseEnter={e => e.currentTarget.style.background = 'var(--paper-dark)'}
-              onMouseLeave={e => e.currentTarget.style.background = 'none'}
-            >
-              ↩ Continue from previous sequence
-            </button>
-          ) : (
-            <button
-              onMouseDown={e => { e.preventDefault(); handleListMenuAction('restart'); }}
-              style={{ display:'block', width:'100%', padding:'8px 16px', background:'none',
-                border:'none', cursor:'pointer', textAlign:'left', fontSize:13, color:'#7c3aed' }}
-              onMouseEnter={e => e.currentTarget.style.background = '#f5f3ff'}
-              onMouseLeave={e => e.currentTarget.style.background = 'none'}
-            >
-              ↺ Restart numbering from here
-            </button>
-          )}
+          <button
+            onMouseDown={e => { e.preventDefault(); handleListMenuAction('continue'); }}
+            style={{ display:'block', width:'100%', padding:'8px 16px', background:'none',
+              border:'none', cursor:'pointer', textAlign:'left', fontSize:13,
+              color: listMenu.hasContinue ? '#7c3aed' : 'var(--ink)',
+              fontWeight: listMenu.hasContinue ? 600 : 400 }}
+            onMouseEnter={e => e.currentTarget.style.background = listMenu.hasContinue ? '#f5f3ff' : 'var(--paper-dark)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+          >
+            {listMenu.hasContinue ? '✓ ' : ''}↩ Continue from previous sequence
+          </button>
+          <button
+            onMouseDown={e => { e.preventDefault(); handleListMenuAction('restart'); }}
+            style={{ display:'block', width:'100%', padding:'8px 16px', background:'none',
+              border:'none', cursor:'pointer', textAlign:'left', fontSize:13,
+              color: listMenu.hasRestart ? '#7c3aed' : 'var(--ink)',
+              fontWeight: listMenu.hasRestart ? 600 : 400 }}
+            onMouseEnter={e => e.currentTarget.style.background = listMenu.hasRestart ? '#f5f3ff' : 'var(--paper-dark)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'none'}
+          >
+            {listMenu.hasRestart ? '✓ ' : ''}↺ Restart numbering from here
+          </button>
         </div>
       )}
     </div>

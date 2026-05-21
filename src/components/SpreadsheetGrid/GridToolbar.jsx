@@ -70,7 +70,7 @@ export default function GridToolbar({
   return (
     <div
       style={{
-        display: 'flex', alignItems: 'center', gap: 4, marginBottom: 8,
+        display: 'flex', alignItems: 'center', gap: 4, marginBottom: 0,
         padding: '4px 8px', background: 'var(--paper-dark)',
         border: '1px solid var(--paper-line)', borderRadius: 8, flexWrap: 'wrap',
       }}

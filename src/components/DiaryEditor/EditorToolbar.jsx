@@ -35,7 +35,7 @@ export default function EditorToolbar({
       alignItems:    'center',
       flexWrap:      'wrap',
       gap:           4,
-      marginBottom:  8,
+      marginBottom:  0,
       padding:       '4px 6px',
       background:    'var(--paper-dark)',
       border:        '1px solid var(--paper-line)',

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Bell, Calendar, Edit2, Check, X,
-  User, Link, Mail, MessageCircle, ChevronDown, ChevronRight,
-  CheckCircle, UserPlus, ArrowUpRight, Clock, Loader2,
+  User, Link, Mail, MessageCircle, ChevronRight,
+  CheckCircle, UserPlus, ArrowUpRight, Clock, Loader2, ExternalLink,
 } from 'lucide-react';
 import { formatDate, isOverdue, isDueToday, formatShortStamp, elapsedSince } from '../../utils/dates';
 import { useAuth } from '../../contexts/AuthContext';
@@ -16,6 +17,7 @@ import MoveToBoard from './MoveToBoard';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const priorityColors = { high: '#dc2626', medium: '#d97706', low: '#15803d' };
+const priorityLabels = { high: '🔴 High', medium: '🟡 Medium', low: '🟢 Low' };
 
 // ── Comment count badge ────────────────────────────────────────────────────────
 function CommentBadge({ ownerUid, taskId }) {
@@ -32,57 +34,35 @@ function CommentBadge({ ownerUid, taskId }) {
   );
 }
 
-// ── Individual task card ───────────────────────────────────────────────────────
-export default function TaskCard({
+// ── Task Detail Modal ─────────────────────────────────────────────────────────
+function TaskDetailModal({
   task, members, directory,
   onToggle, onUpdate, onDelete,
   showToast, ownerUid,
   workspaces, hasWorkspace, orgAssignees,
-  saveContactPhone,   // used to silently persist phone overrides from the Assign panel
-  highlightTaskId, onHighlightConsumed,
+  saveContactPhone,
+  onClose,
 }) {
   const { user } = useAuth();
-  const overdue   = !task.completed && isOverdue(task.dueDate);
-  const dueToday  = !task.completed && isDueToday(task.dueDate);
-  const assignee  = task.assigneeName || (task.assigneeEmail ? task.assigneeEmail.split('@')[0] : null);
+  const overdue  = !task.completed && isOverdue(task.dueDate);
+  const dueToday = !task.completed && isDueToday(task.dueDate);
+  const assignee = task.assigneeName || (task.assigneeEmail ? task.assigneeEmail.split('@')[0] : null);
   const isLinked  = !!task.assigneeUid;
   const hasAssignee = task.assigneeEmail || task.assigneePhone;
 
-  const cardRef = useRef(null);
-  const isHighlighted = highlightTaskId === task.id;
-
-  // Expand / collapse
-  const [expanded,    setExpanded]    = useState(false);
-
-  // When this card is the deep-link target: expand it and scroll it into view
-  useEffect(() => {
-    if (!isHighlighted) return;
-    setExpanded(true);
-    // Allow the DOM to paint the expanded content before scrolling
-    const t = setTimeout(() => {
-      cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      onHighlightConsumed?.();
-    }, 120);
-    return () => clearTimeout(t);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHighlighted]);
-  // Which panel is open inside the expanded area
-  const [panel,       setPanel]       = useState(null); // 'edit' | 'assign' | 'collab' | 'move' | 'reminder'
+  const [panel, setPanel] = useState(null); // 'edit' | 'assign' | 'collab' | 'move' | 'reminder'
   const [sendingEmail, setSendingEmail] = useState(false);
-  // Reminder editor state (live-edits the reminder object until user saves it)
-  // Guard against legacy `reminder: true` boolean value on old task docs.
+
   const taskReminder = task.reminder && typeof task.reminder === 'object' ? task.reminder : null;
   const [reminderDraft, setReminderDraft] = useState(taskReminder);
   const [reminderSaving, setReminderSaving] = useState(false);
 
-  // Edit state
   const [editText,     setEditText]     = useState(task.text);
   const [editDue,      setEditDue]      = useState(task.dueDate ? task.dueDate.slice(0, 10) : '');
   const [editPriority, setEditPriority] = useState(task.priority || 'medium');
   const [editAssignee, setEditAssignee] = useState(task.assigneeEmail || '');
   const [editSaving,   setEditSaving]   = useState(false);
 
-  // Assign panel state
   const [assignName,    setAssignName]    = useState(task.assigneeName  || '');
   const [assignEmail,   setAssignEmail]   = useState(task.assigneeEmail || '');
   const [assignPhone,   setAssignPhone]   = useState(task.assigneePhone || '');
@@ -92,9 +72,22 @@ export default function TaskCard({
 
   const memberByEmail = (email) => members.find(m => m.email?.toLowerCase() === email?.toLowerCase());
 
+  // Close on Escape
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [onClose]);
+
+  // Lock body scroll while modal is open
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
   const openPanel = (p) => {
     if (panel === p) { setPanel(null); return; }
-    // Reset state when switching panels
     if (p === 'edit') {
       setEditText(task.text);
       setEditDue(task.dueDate ? task.dueDate.slice(0, 10) : '');
@@ -109,7 +102,6 @@ export default function TaskCard({
       setSelectedMember(null);
     }
     setPanel(p);
-    setExpanded(true);
   };
 
   const handleSaveEdit = async () => {
@@ -136,10 +128,10 @@ export default function TaskCard({
       showToast('Please enter an email or phone number.', 'warning'); return;
     }
     setAssignSaving(true);
-    const emailKey = assignEmail.trim().toLowerCase();
+    const emailKey  = assignEmail.trim().toLowerCase();
     const trimmedPhone = assignPhone.trim();
-    const linked   = selectedMember || members.find(m => m.email?.toLowerCase() === emailKey);
-    const dirEntry = directory.find(d => d.email?.toLowerCase() === emailKey);
+    const linked    = selectedMember || members.find(m => m.email?.toLowerCase() === emailKey);
+    const dirEntry  = directory.find(d => d.email?.toLowerCase() === emailKey);
     const assigneeUid = linked?.uid || dirEntry?.uid || null;
     try {
       await onUpdate(task.id, {
@@ -149,9 +141,6 @@ export default function TaskCard({
         scheduledEmailTime: scheduleTime || null,
         assigneeUid,
       });
-      // Silently persist the phone as an override in the personal Contacts list
-      // so future assignments to the same person auto-fill with this number
-      // instead of the stale Graph directory value.
       if (emailKey && trimmedPhone && saveContactPhone) {
         saveContactPhone(emailKey, assignName.trim() || emailKey, trimmedPhone).catch(() => {});
       }
@@ -184,9 +173,7 @@ export default function TaskCard({
     } catch (err) {
       console.error('handleEmail error:', err);
       showToast('Email failed — please try again', 'warning');
-    } finally {
-      setSendingEmail(false);
-    }
+    } finally { setSendingEmail(false); }
   };
 
   const handleWhatsApp = () => {
@@ -201,139 +188,149 @@ export default function TaskCard({
     color: '#0f172a', outline: 'none',
   };
 
-  return (
-    <div
-      ref={cardRef}
-      style={{
-        borderRadius: 10, overflow: 'hidden',
-        border: `1px solid ${isHighlighted ? '#7c3aed' : overdue ? '#dc262644' : '#e2e8f0'}`,
-        marginBottom: 8,
-        boxShadow: isHighlighted
-          ? '0 0 0 3px #7c3aed33, 0 2px 8px rgba(0,0,0,0.08)'
-          : expanded ? '0 2px 8px rgba(0,0,0,0.06)' : 'none',
-        transition: 'box-shadow 0.3s, border-color 0.3s',
-      }}>
-      {/* ── Header row (always visible) ───────────────────────────────── */}
+  const priorityColor = priorityColors[task.priority] || '#d97706';
+
+  return createPortal(
+    <>
+      {/* Backdrop */}
       <div
-        onClick={() => setExpanded(v => !v)}
+        onClick={onClose}
         style={{
-          display: 'flex', alignItems: 'center', gap: 8,
-          padding: '10px 12px', cursor: 'pointer', userSelect: 'none',
-          background: task.completed ? '#f9f6f0' : expanded ? '#ffffff' : '#fff',
-          borderLeft: `3px solid ${overdue ? '#dc2626' : priorityColors[task.priority] || '#d97706'}`,
+          position: 'fixed', inset: 0,
+          background: 'rgba(0,0,0,0.45)',
+          zIndex: 1000,
+          animation: 'fadeInBg 0.15s ease',
+        }}
+      />
+
+      {/* Modal panel */}
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          position: 'fixed',
+          top: '50%', left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: 'min(640px, 96vw)',
+          maxHeight: '88vh',
+          overflowY: 'auto',
+          background: '#ffffff',
+          borderRadius: 14,
+          boxShadow: '0 24px 64px rgba(0,0,0,0.22)',
+          zIndex: 1001,
+          fontFamily: 'var(--font-body)',
+          animation: 'slideUpModal 0.18s ease',
         }}
       >
-        {/* Checkbox */}
-        <input
-          type="checkbox"
-          className="task-checkbox"
-          checked={task.completed}
-          onChange={e => { e.stopPropagation(); onToggle(task.id, task.completed); }}
-          style={{ flexShrink: 0 }}
-        />
+        {/* ── Modal header strip ── */}
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 12,
+          padding: '18px 20px 14px',
+          borderBottom: '1px solid #e2e8f0',
+          borderLeft: `4px solid ${priorityColor}`,
+          borderRadius: '14px 14px 0 0',
+          background: '#fafafa',
+        }}>
+          {/* Checkbox */}
+          <input
+            type="checkbox"
+            className="task-checkbox"
+            checked={task.completed}
+            onChange={e => { e.stopPropagation(); onToggle(task.id, task.completed); }}
+            style={{ flexShrink: 0, marginTop: 3 }}
+          />
 
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Title line */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <span style={{
-              fontWeight: 600, fontSize: 14, lineHeight: 1.4,
-              color: task.completed ? '#94a3b8' : overdue ? '#dc2626' : '#0f172a',
-              textDecoration: task.completed ? 'line-through' : 'none',
-            }}>
-              {task.text}
-            </span>
-            {task.status && task.status !== 'open' && <StatusBadge status={task.status} />}
-            {taskReminder?.enabled && !taskReminder?.paused && (
-              <span
-                style={{
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              <span style={{
+                fontWeight: 700, fontSize: 16, lineHeight: 1.4,
+                color: task.completed ? '#94a3b8' : overdue ? '#dc2626' : '#0f172a',
+                textDecoration: task.completed ? 'line-through' : 'none',
+              }}>
+                {task.text}
+              </span>
+              {task.status && task.status !== 'open' && <StatusBadge status={task.status} />}
+            </div>
+
+            {/* Meta row */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+              {task.dueDate && (
+                <span className={`task-due ${overdue ? 'overdue' : ''}`} style={{ fontSize: 12, margin: 0 }}>
+                  <Calendar size={11} />
+                  {overdue ? 'Was due:' : dueToday ? 'Due today:' : 'Due:'} {formatDate(task.dueDate)}
+                  {overdue  && <span className="overdue-badge">OVERDUE</span>}
+                  {dueToday && !overdue && <span className="overdue-badge" style={{ background: '#d97706' }}>TODAY</span>}
+                </span>
+              )}
+              {assignee && (
+                <span style={{ fontSize: 12, color: isLinked ? '#7c3aed' : '#475569', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                  <User size={11} /> {assignee}
+                </span>
+              )}
+              <span style={{
+                fontSize: 11, fontWeight: 600, padding: '2px 7px', borderRadius: 8,
+                background: `${priorityColor}18`, color: priorityColor, border: `1px solid ${priorityColor}44`,
+              }}>
+                {priorityLabels[task.priority] || '🟡 Medium'}
+              </span>
+              {isLinked && (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                  background: '#e8f8f5', color: '#7c3aed',
+                  fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
+                  border: '1px solid #7c3aed44',
+                }}>
+                  <Link size={9} /> Linked
+                </span>
+              )}
+              {taskReminder?.enabled && !taskReminder?.paused && (
+                <span style={{
                   display: 'inline-flex', alignItems: 'center', gap: 3,
                   background: '#ede9fe', color: '#6d28d9',
                   fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
                   border: '1px solid #c4b5fd55',
                 }}
-                title={`${describeSchedule(taskReminder)}${taskReminder.nextSendAt ? ` · next ${describeNextSend(taskReminder.nextSendAt, taskReminder.timezone)}` : ''}`}
-              >
-                <Bell size={9} /> {taskReminder.nextSendAt ? describeNextSend(taskReminder.nextSendAt, taskReminder.timezone) : 'scheduled'}
-              </span>
-            )}
-            <CommentBadge ownerUid={ownerUid} taskId={task.id} />
-            {isLinked && (
-              <span style={{
-                display: 'inline-flex', alignItems: 'center', gap: 3,
-                background: '#e8f8f5', color: '#7c3aed',
-                fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
-                border: '1px solid #7c3aed44',
-              }}>
-                <Link size={9} /> Linked
-              </span>
-            )}
-            {/* Shown on the owner's card when the assignee has pushed this
-                task onto a Team Board. Keeps the owner aware that the task
-                is now being tracked on the shared Kanban — click the card to
-                read the activity log for details. */}
-            {task.movedToWorkspace && (
-              <span
-                title={`Moved by ${task.movedToWorkspace.movedByName || 'assignee'} on ${
-                  task.movedToWorkspace.movedAt ? new Date(task.movedToWorkspace.movedAt).toLocaleDateString() : 'an earlier date'
-                }`}
-                style={{
+                title={`${describeSchedule(taskReminder)}${taskReminder.nextSendAt ? ` · next ${describeNextSend(taskReminder.nextSendAt, taskReminder.timezone)}` : ''}`}>
+                  <Bell size={9} /> {taskReminder.nextSendAt ? describeNextSend(taskReminder.nextSendAt, taskReminder.timezone) : 'scheduled'}
+                </span>
+              )}
+              {task.createdAt && (
+                <span style={{ fontSize: 11, color: '#94a3b8', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                  <Clock size={10} />
+                  {formatShortStamp(task.createdAt)}
+                  {!task.completed && (
+                    <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
+                      · {elapsedSince(task.createdAt)} open
+                    </span>
+                  )}
+                </span>
+              )}
+              {task.movedToWorkspace && (
+                <span style={{
                   display: 'inline-flex', alignItems: 'center', gap: 3,
                   background: '#eff6ff', color: '#2563eb',
                   fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
                   border: '1px solid #2563eb44',
-                }}
-              >
-                <ArrowUpRight size={9} /> Moved to {task.movedToWorkspace.workspaceName || 'Team Board'}
-              </span>
-            )}
+                }}>
+                  <ArrowUpRight size={9} /> On {task.movedToWorkspace.workspaceName || 'Team Board'}
+                </span>
+              )}
+            </div>
           </div>
-          {/* Meta: due date + assignee + created stamp */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 2, alignItems: 'center' }}>
-            {task.dueDate && (
-              <span className={`task-due ${overdue ? 'overdue' : ''}`} style={{ fontSize: 12, margin: 0 }}>
-                <Calendar size={11} />
-                {overdue ? 'Was due:' : dueToday ? 'Due today:' : 'Due:'} {formatDate(task.dueDate)}
-                {overdue  && <span className="overdue-badge">OVERDUE</span>}
-                {dueToday && !overdue && <span className="overdue-badge" style={{ background: '#d97706' }}>TODAY</span>}
-              </span>
-            )}
-            {assignee && (
-              <span style={{ fontSize: 12, color: isLinked ? '#7c3aed' : '#475569', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                <User size={11} /> {assignee}
-              </span>
-            )}
-            {task.createdAt && (
-              <span
-                title={`Created ${formatShortStamp(task.createdAt)}`}
-                style={{
-                  fontSize: 11, color: '#94a3b8',
-                  display: 'inline-flex', alignItems: 'center', gap: 3,
-                }}
-              >
-                <Clock size={10} />
-                <span>{formatShortStamp(task.createdAt)}</span>
-                {!task.completed && (
-                  <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
-                    · {elapsedSince(task.createdAt)} open
-                  </span>
-                )}
-              </span>
-            )}
-          </div>
+
+          {/* Close button */}
+          <button
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: 4, flexShrink: 0 }}
+            title="Close (Esc)"
+          >
+            <X size={20} />
+          </button>
         </div>
 
-        <span style={{ color: '#475569', flexShrink: 0 }}>
-          {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-        </span>
-      </div>
-
-      {/* ── Expanded area ─────────────────────────────────────────────── */}
-      {expanded && (
-        <div style={{ borderTop: '1px solid #e2e8f0', background: '#ffffff' }}>
-
-          {/* Action buttons row */}
-          {!task.completed && (
-            <div className="task-action-row" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '10px 12px 8px' }}>
+        {/* ── Action buttons ── */}
+        <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid #f1f5f9' }}>
+          {!task.completed ? (
+            <div className="task-action-row" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {task.assigneeEmail && (
                 <button
                   className="btn btn-sm btn-blue"
@@ -343,8 +340,7 @@ export default function TaskCard({
                 >
                   {sendingEmail
                     ? <><Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> Sending…</>
-                    : <><Mail size={12} /> Email Now</>
-                  }
+                    : <><Mail size={12} /> Email Now</>}
                 </button>
               )}
               {task.assigneePhone && (
@@ -377,6 +373,7 @@ export default function TaskCard({
                 onClick={() => openPanel('collab')}
               >
                 💬 Comments
+                <CommentBadge ownerUid={ownerUid} taskId={task.id} />
               </button>
               {hasWorkspace && (
                 <button
@@ -391,25 +388,25 @@ export default function TaskCard({
               <button
                 className="btn btn-sm task-done-btn"
                 style={{ background: '#15803d', color: '#fff', border: 'none' }}
-                onClick={() => onToggle(task.id, false)}
+                onClick={() => { onToggle(task.id, false); onClose(); }}
               >
                 <CheckCircle size={12} /> Done
               </button>
             </div>
+          ) : (
+            <button className="btn btn-sm btn-outline" onClick={() => onToggle(task.id, true)}>
+              ↩ Mark Incomplete
+            </button>
           )}
+        </div>
 
-          {task.completed && (
-            <div style={{ padding: '8px 12px' }}>
-              <button className="btn btn-sm btn-outline" onClick={() => onToggle(task.id, true)}>
-                ↩ Mark Incomplete
-              </button>
-            </div>
-          )}
+        {/* ── Panel content area ── */}
+        <div style={{ padding: '0 20px 20px' }}>
 
-          {/* ── Edit panel ──────────────────────────────────────────── */}
+          {/* ── Edit panel ── */}
           {panel === 'edit' && (
-            <div style={{ padding: '0 12px 14px' }}>
-              <div style={{ height: 1, background: '#e2e8f0', marginBottom: 12 }} />
+            <div style={{ paddingTop: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#475569', marginBottom: 10 }}>Edit Task</div>
               <textarea
                 className="textarea"
                 rows={2}
@@ -447,11 +444,10 @@ export default function TaskCard({
             </div>
           )}
 
-          {/* ── Assign panel ──────────────────────────────────────── */}
+          {/* ── Assign panel ── */}
           {panel === 'assign' && (
-            <div style={{ padding: '0 12px 14px' }}>
-              <div style={{ height: 1, background: '#e2e8f0', marginBottom: 12 }} />
-              <div style={{ fontWeight: 700, fontSize: 13, color: '#0f172a', marginBottom: 10 }}>
+            <div style={{ paddingTop: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: '#475569', marginBottom: 10 }}>
                 Assign Task — type a name to search your team
               </div>
               <div className="form-grid-3" style={{ marginBottom: 10 }}>
@@ -461,12 +457,7 @@ export default function TaskCard({
                     value={assignName}
                     onChange={setAssignName}
                     onSelect={m => {
-                      // Prefer saved phone override (from Contacts) over the
-                      // value the autocomplete returned. This is how the
-                      // "refreshed" numbers stick across assignments.
-                      const override = members.find(
-                        mm => mm.email?.toLowerCase() === m.email?.toLowerCase()
-                      )?.phone;
+                      const override = members.find(mm => mm.email?.toLowerCase() === m.email?.toLowerCase())?.phone;
                       setSelectedMember(m);
                       setAssignName(m.name);
                       setAssignEmail(m.email || '');
@@ -498,10 +489,9 @@ export default function TaskCard({
             </div>
           )}
 
-          {/* ── Collab / Comments panel ────────────────────────────── */}
+          {/* ── Collab / Comments panel ── */}
           {panel === 'collab' && (
-            <div style={{ padding: '0 12px 14px' }}>
-              <div style={{ height: 1, background: '#e2e8f0', marginBottom: 4 }} />
+            <div style={{ paddingTop: 16 }}>
               <TaskCollabPanel
                 ownerUid={ownerUid}
                 task={task}
@@ -511,10 +501,9 @@ export default function TaskCard({
             </div>
           )}
 
-          {/* ── Reminder panel ─────────────────────────────────────── */}
+          {/* ── Reminder panel ── */}
           {panel === 'reminder' && (
-            <div style={{ padding: '0 12px 14px' }}>
-              <div style={{ height: 1, background: '#e2e8f0', marginBottom: 12 }} />
+            <div style={{ paddingTop: 16 }}>
               <ReminderEditor
                 value={reminderDraft}
                 onChange={setReminderDraft}
@@ -534,7 +523,6 @@ export default function TaskCard({
                   onClick={async () => {
                     setReminderSaving(true);
                     try {
-                      // Normalize + compute next-send one more time before persisting.
                       let payload = reminderDraft ? normalizeReminder(reminderDraft, {
                         timezone: user?.settings?.timezone,
                         creatorEmail: user?.email,
@@ -544,9 +532,7 @@ export default function TaskCard({
                       await onUpdate(task.id, { reminder: payload });
                       showToast('Reminder saved!', 'success');
                       setPanel(null);
-                    } catch {
-                      showToast('Failed to save reminder.', 'warning');
-                    }
+                    } catch { showToast('Failed to save reminder.', 'warning'); }
                     setReminderSaving(false);
                   }}
                 >
@@ -556,20 +542,190 @@ export default function TaskCard({
             </div>
           )}
 
-          {/* ── Move to Team Board panel ───────────────────────────── */}
+          {/* ── Move to Team Board panel ── */}
           {panel === 'move' && (
-            <MoveToBoard
-              task={task}
-              workspaces={workspaces}
-              orgAssignees={orgAssignees}
-              onDelete={onDelete}
-              showToast={showToast}
-              onClose={() => setPanel(null)}
-              user={user}
-            />
+            <div style={{ paddingTop: 16 }}>
+              <MoveToBoard
+                task={task}
+                workspaces={workspaces}
+                orgAssignees={orgAssignees}
+                onDelete={onDelete}
+                showToast={showToast}
+                onClose={() => setPanel(null)}
+                user={user}
+              />
+            </div>
           )}
         </div>
+      </div>
+
+      <style>{`
+        @keyframes fadeInBg    { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes slideUpModal { from { opacity: 0; transform: translate(-50%, calc(-50% + 18px)) } to { opacity: 1; transform: translate(-50%, -50%) } }
+      `}</style>
+    </>,
+    document.body
+  );
+}
+
+// ── Individual task card (compact row — opens detail modal on click) ──────────
+export default function TaskCard({
+  task, members, directory,
+  onToggle, onUpdate, onDelete,
+  showToast, ownerUid,
+  workspaces, hasWorkspace, orgAssignees,
+  saveContactPhone,
+  highlightTaskId, onHighlightConsumed,
+}) {
+  const overdue  = !task.completed && isOverdue(task.dueDate);
+  const dueToday = !task.completed && isDueToday(task.dueDate);
+  const assignee = task.assigneeName || (task.assigneeEmail ? task.assigneeEmail.split('@')[0] : null);
+  const isLinked = !!task.assigneeUid;
+  const taskReminder = task.reminder && typeof task.reminder === 'object' ? task.reminder : null;
+
+  const cardRef      = useRef(null);
+  const isHighlighted = highlightTaskId === task.id;
+  const [modalOpen, setModalOpen] = useState(false);
+
+  // Deep link: open modal immediately and scroll card into view
+  useEffect(() => {
+    if (!isHighlighted) return;
+    setModalOpen(true);
+    const t = setTimeout(() => {
+      cardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      onHighlightConsumed?.();
+    }, 80);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHighlighted]);
+
+  return (
+    <>
+      {/* ── Compact card row ── */}
+      <div
+        ref={cardRef}
+        style={{
+          borderRadius: 10, overflow: 'hidden',
+          border: `1px solid ${isHighlighted ? '#7c3aed' : overdue ? '#dc262644' : '#e2e8f0'}`,
+          marginBottom: 8,
+          boxShadow: isHighlighted ? '0 0 0 3px #7c3aed33, 0 2px 8px rgba(0,0,0,0.08)' : 'none',
+          transition: 'box-shadow 0.3s, border-color 0.3s',
+        }}>
+        <div
+          onClick={() => setModalOpen(true)}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            padding: '10px 12px', cursor: 'pointer', userSelect: 'none',
+            background: task.completed ? '#f9f6f0' : '#fff',
+            borderLeft: `3px solid ${overdue ? '#dc2626' : priorityColors[task.priority] || '#d97706'}`,
+          }}
+        >
+          {/* Checkbox — stop propagation so clicking it doesn't open the modal */}
+          <input
+            type="checkbox"
+            className="task-checkbox"
+            checked={task.completed}
+            onChange={e => { e.stopPropagation(); onToggle(task.id, task.completed); }}
+            style={{ flexShrink: 0 }}
+          />
+
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {/* Title line */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <span style={{
+                fontWeight: 600, fontSize: 14, lineHeight: 1.4,
+                color: task.completed ? '#94a3b8' : overdue ? '#dc2626' : '#0f172a',
+                textDecoration: task.completed ? 'line-through' : 'none',
+              }}>
+                {task.text}
+              </span>
+              {task.status && task.status !== 'open' && <StatusBadge status={task.status} />}
+              {taskReminder?.enabled && !taskReminder?.paused && (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                  background: '#ede9fe', color: '#6d28d9',
+                  fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
+                  border: '1px solid #c4b5fd55',
+                }}
+                title={`${describeSchedule(taskReminder)}${taskReminder.nextSendAt ? ` · next ${describeNextSend(taskReminder.nextSendAt, taskReminder.timezone)}` : ''}`}>
+                  <Bell size={9} /> {taskReminder.nextSendAt ? describeNextSend(taskReminder.nextSendAt, taskReminder.timezone) : 'scheduled'}
+                </span>
+              )}
+              <CommentBadge ownerUid={ownerUid} taskId={task.id} />
+              {isLinked && (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                  background: '#e8f8f5', color: '#7c3aed',
+                  fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
+                  border: '1px solid #7c3aed44',
+                }}>
+                  <Link size={9} /> Linked
+                </span>
+              )}
+              {task.movedToWorkspace && (
+                <span style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 3,
+                  background: '#eff6ff', color: '#2563eb',
+                  fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 10,
+                  border: '1px solid #2563eb44',
+                }}>
+                  <ArrowUpRight size={9} /> {task.movedToWorkspace.workspaceName || 'Team Board'}
+                </span>
+              )}
+            </div>
+
+            {/* Meta: due + assignee + stamp */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 2, alignItems: 'center' }}>
+              {task.dueDate && (
+                <span className={`task-due ${overdue ? 'overdue' : ''}`} style={{ fontSize: 12, margin: 0 }}>
+                  <Calendar size={11} />
+                  {overdue ? 'Was due:' : dueToday ? 'Due today:' : 'Due:'} {formatDate(task.dueDate)}
+                  {overdue  && <span className="overdue-badge">OVERDUE</span>}
+                  {dueToday && !overdue && <span className="overdue-badge" style={{ background: '#d97706' }}>TODAY</span>}
+                </span>
+              )}
+              {assignee && (
+                <span style={{ fontSize: 12, color: isLinked ? '#7c3aed' : '#475569', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                  <User size={11} /> {assignee}
+                </span>
+              )}
+              {task.createdAt && (
+                <span style={{ fontSize: 11, color: '#94a3b8', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                  <Clock size={10} />
+                  <span>{formatShortStamp(task.createdAt)}</span>
+                  {!task.completed && (
+                    <span style={{ color: '#7c3aed', fontWeight: 600, marginLeft: 2 }}>
+                      · {elapsedSince(task.createdAt)} open
+                    </span>
+                  )}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Open modal indicator */}
+          <ExternalLink size={14} style={{ color: '#94a3b8', flexShrink: 0, opacity: 0.6 }} />
+        </div>
+      </div>
+
+      {/* ── Detail modal (portal) ── */}
+      {modalOpen && (
+        <TaskDetailModal
+          task={task}
+          members={members}
+          directory={directory}
+          onToggle={onToggle}
+          onUpdate={onUpdate}
+          onDelete={onDelete}
+          showToast={showToast}
+          ownerUid={ownerUid}
+          workspaces={workspaces}
+          hasWorkspace={hasWorkspace}
+          orgAssignees={orgAssignees}
+          saveContactPhone={saveContactPhone}
+          onClose={() => setModalOpen(false)}
+        />
       )}
-    </div>
+    </>
   );
 }
