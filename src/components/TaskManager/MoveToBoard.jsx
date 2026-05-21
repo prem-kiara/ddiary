@@ -460,12 +460,12 @@ export default function MoveToBoard({
             className="btn btn-sm"
             style={{
               background: '#2563eb', color: '#fff', border: 'none',
-              opacity: (!moveAssigneeEmail || moveSaving) ? 0.5 : 1,
-              cursor:  (!moveAssigneeEmail || moveSaving) ? 'not-allowed' : 'pointer',
+              opacity: (!moveAssigneeEmails.length || moveSaving) ? 0.5 : 1,
+              cursor:  (!moveAssigneeEmails.length || moveSaving) ? 'not-allowed' : 'pointer',
             }}
             onClick={handleMove}
-            disabled={moveSaving || !moveAssigneeEmail}
-            title={!moveAssigneeEmail ? 'Pick an assignee first' : undefined}
+            disabled={moveSaving || !moveAssigneeEmails.length}
+            title={!moveAssigneeEmails.length ? 'Pick an assignee first' : undefined}
           >
             {moveSaving ? 'Moving…' : <><ArrowUpRight size={13} /> Move to Team Board</>}
           </button>
