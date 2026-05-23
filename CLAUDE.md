@@ -2,7 +2,7 @@
 
 ## What This App Is
 
-Internal workspace tool for Dhanam Investment and Finance. Combines a personal diary/journal, a collaborative task management system (personal tasks + shared kanban boards), and collaborative spreadsheets. Accessed at `https://dhanamdiary.web.app`.
+Internal workspace tool for Dhanam Investment and Finance. Combines a personal diary/journal, a collaborative task management system (personal tasks + shared kanban boards), and collaborative spreadsheets. Accessed at `https://diary.dhanamfinance.com` (EC2-hosted since 2026-05-19; legacy Firebase Hosting URL `https://dhanamdiary.web.app` still works as fallback).
 
 ---
 
@@ -13,10 +13,10 @@ Internal workspace tool for Dhanam Investment and Finance. Combines a personal d
 | Frontend | React 18 + Vite, React Router v6, Tailwind CSS, @dnd-kit |
 | Database | Firebase Firestore (NoSQL, real-time) |
 | Auth | Firebase Auth with "Sign in with Microsoft" (M365 OAuth) |
-| Hosting | Firebase Hosting (serves `dist/`) |
-| Server-side functions | Firebase Cloud Functions v2 (Node.js) |
-| Client-side email | Microsoft Graph API (uses user's M365 session token) |
-| Server-side email | SendGrid (used by Cloud Functions for scheduled reminders) |
+| Hosting | nginx on AWS EC2 (serves `dist/`) |
+| Server-side functions | node-cron on EC2 (PM2) + Firebase Cloud Functions v2 (kept as fallback) |
+| Client-side email | EC2 Express `/api/notify` → Amazon SES |
+| Server-side email | EC2 crons → Amazon SES (replaces Firebase Cloud Functions + SendGrid) |
 | File storage | SharePoint (Dhanam Legal Repository, via MS Graph) |
 | People search | Microsoft Graph API (`/v1.0/users`) |
 
@@ -24,7 +24,7 @@ Internal workspace tool for Dhanam Investment and Finance. Combines a personal d
 
 ## Firebase Services in Use
 
-**Firebase Hosting** — serves the Vite-built static SPA (`dist/`). Configured in `firebase.json` with SPA rewrite (`**` → `/index.html`), cache headers for assets.
+**Firebase Hosting** — legacy; frontend now served by nginx on EC2. Firebase Hosting config kept in `firebase.json` as fallback only.
 
 **Firebase Firestore** — the entire data layer. Key collections:
 - `users/{uid}/entries` — diary entries
@@ -80,14 +80,23 @@ Used for: scheduled/recurring task reminders — fires even when no user has the
 
 Email notification links use URL params to open the app at the right task:
 
-- Personal task: `https://dhanamdiary.web.app/tasks?task=<taskId>`
-- Workspace task: `https://dhanamdiary.web.app/tasks?task=<taskId>&wsId=<workspaceId>`
+- Personal task: `https://diary.dhanamfinance.com/tasks?task=<taskId>`
+- Workspace task: `https://diary.dhanamfinance.com/tasks?task=<taskId>&wsId=<workspaceId>`
 
-**Flow:** URL params → `TasksPage.jsx` reads and stores in `useState` → clears URL (no refresh loop) → routes to list view (personal) or board view (workspace) → passes `highlightTaskId` + `highlightWorkspaceId` down → matching `TaskCard` auto-expands + scrolls into view with purple glow ring → `onHighlightConsumed` clears state.
+**Flow:** URL params → `App.jsx` intercepts on load → calls `tabCoordinator.tryHandOff()` → if an existing tab with no unsaved work responds, that tab navigates and the new tab closes; otherwise the current tab handles it → `TasksPage.jsx` reads URL params, clears URL (no refresh loop), routes to list view (personal) or board view (workspace) → passes `highlightTaskId` + `highlightWorkspaceId` down → matching `TaskCard` auto-expands + scrolls into view with purple glow ring → `onHighlightConsumed` clears state.
 
 For workspace tasks, `KanbanBoard` accepts `highlightTaskId` and `highlightWorkspaceId` props, which feed into `DeepLinkContext`. `WorkspaceItem` reads `openWorkspaceId` from context and auto-expands.
 
 In-app notification bell also navigates to `/tasks?task=<id>` (or with `&wsId=`) using `useNavigate`.
+
+### Tab Reuse (BroadcastChannel Handshake)
+
+When a deep link URL is opened in a new tab, `tabCoordinator.tryHandOff(taskId, wsId)` broadcasts a `CLAIM_REQUEST` to all open tabs. Each tab responds with `CLAIM_RESPONSE{canHandle: bool}` based on `unsavedState.hasUnsaved()`. If any tab responds `canHandle: true`, the new tab sends `NAVIGATE{targetTabId}` to the winning tab, waits 150 ms for it to navigate, then closes itself. If no tabs respond or all are busy, the new tab handles the deep link locally.
+
+- `src/utils/tabCoordinator.js` — BroadcastChannel coordinator; exports `init`, `tryHandOff`, `destroy`, `_reset`
+- `src/utils/unsavedState.js` — module-level lock registry (Set); exports `register`, `unregister`, `hasUnsaved`, `_reset`
+- Per-tab identity stored in `sessionStorage` under `ddiary_tab_id`
+- Handshake timeout: 300 ms; post-navigate close grace: 150 ms
 
 ---
 
@@ -134,17 +143,22 @@ src/
     useReminderDispatcher.js     — Client-side reminder send fallback (pairs with Cloud Functions)
     useTeamMembers.js            — Org user directory for task assignment autocomplete
   utils/
-    emailNotifications.js        — All email templates + MS Graph sendMail calls
-    msTokenRefresh.js            — Silent M365 token refresh on 401
+    emailNotifications.js        — All email templates + EC2 /api/notify calls (SES)
+    msTokenRefresh.js            — Silent M365 token refresh on 401 (still used for SharePoint/people search)
     writeNotification.js         — Writes in-app notifications to Firestore
     graphPeopleSearch.js         — Searches org users via MS Graph /v1.0/users
     exportUtils.js               — Export to Excel (.xlsx) and PDF
     errorLogger.js               — Firestore error logging
+    unsavedState.js              — Module-level unsaved-work lock registry (Set); register/unregister/hasUnsaved
+    tabCoordinator.js            — BroadcastChannel handshake for deep link tab reuse
+    __tests__/
+      unsavedState.test.js       — Vitest unit tests for unsavedState
+      tabCoordinator.test.js     — Vitest integration tests for tabCoordinator (MockBroadcastChannel)
   contexts/
     AuthContext.jsx              — useAuth hook, wraps Firebase Auth
     DeepLinkContext.jsx          — Passes openWorkspaceId/openTaskId through KanbanBoard tree
 functions/
-  index.js                       — All Cloud Functions (schedulers + callables)
+  index.js                       — All Cloud Functions (schedulers + callables; kept as fallback)
 ```
 
 ---
@@ -181,13 +195,16 @@ SENDER_EMAIL=tech@dhanam.finance
 # Install
 npm install
 
-# Dev server (localhost:5173)
+# Dev server (localhost:3000)
 npm run dev
+
+# Run unit + integration tests (Vitest + jsdom)
+npm test
 
 # Production build (output to dist/)
 npm run build
 
-# Deploy frontend to EC2 (hosting moved off Firebase on 2026-05-19 — see "EC2 Server Layout" below)
+# Deploy frontend to EC2
 npm run build
 scp -i ~/tools/dhanam-finops.pem -r dist/* ubuntu@15.206.55.165:/var/www/ddiary/
 
@@ -240,12 +257,35 @@ Two parallel systems:
 
 ## Known Constraints / Watch Out For
 
-- **Email requires M365 session** — client-side email only works when the user is logged in and has an active Microsoft token. If the token expires, `msTokenRefresh.js` silently refreshes; if that fails, the email is silently dropped (logged to console as a warning). Cloud Functions email (SendGrid) has no such constraint.
+- **Email requires Firebase ID token** — client-side email (`emailNotifications.js`) calls EC2 `/api/notify` with a Firebase ID token in the Authorization header. The server verifies it. If `auth.currentUser` is null (not signed in), the email is silently dropped.
+- **`msTokenRefresh.js` still required** — even after EC2 migration, MS Graph tokens are still needed for SharePoint file access and people search. `msTokenRefresh.js` handles silent refresh of the `ddiary_ms_access_token` in `sessionStorage`.
 - **Firestore rules** — `firestore.rules` controls read/write access. Any new collection needs rules before it works in production.
 - **`addWorkspaceTask` return value** — always returns the new task `DocumentReference`. Callers must capture it (`const newTaskRef = await addWorkspaceTask(...)`) to get `newTaskRef.id` for deep links in notification emails.
 - **SPA routing** — nginx on EC2 handles this via `try_files $uri $uri/ /index.html;` in `ec2/nginx-diary.dhanamfinance.com.conf`. Any future host replacement must also map unmatched paths to `index.html` or React Router 404s on direct URL access.
 - **Cloud Functions service account** — uses `firebase-adminsdk-fbsvc@ddiary-a72ca.iam.gserviceaccount.com` explicitly. If the project changes, update the `SA` constant in `functions/index.js`.
 - **`localStorage` key prefix** — `ddiary_*` is used throughout for persisted UI state (view toggles, expanded workspace state, etc.).
+- **Tab coordinator does not URL-clean before handoff** — `App.jsx` intentionally does NOT call `window.history.replaceState` before `tryHandOff()` because if the handoff fails, `navigate(q)` is called with the full path and TasksPage needs the params intact via `useSearchParams`.
+- **Vitest sandbox build** — `npm install` and `npm run build` must be run on the local Mac. The EC2 sandbox has no disk space for node_modules installation.
+
+---
+
+## Known Bugs (Identified 2026-05-22 — Pending Fixes)
+
+These bugs were identified in a full codebase audit. None are yet patched in production.
+
+| Priority | File | Bug | Impact |
+|---|---|---|---|
+| Critical | `emailNotifications.js` | `MS_TOKEN_KEY` constant referenced but never declared | ReferenceError crashes diary share with drawings |
+| High | `useWorkspace.js` `deleteWorkspace()` | Reads tasks subcollection after workspace doc is already deleted | Firestore permission-denied error; orphaned subcollections |
+| High | `ec2/crons.js` | Transaction `proceed = false` guard is inside the tx body | Reminder can send email without committing the "sent" lock — potential double-send |
+| High | `useNotifications.js` | `onNewNotification` callback captured in stale closure inside Firestore listener | Notification bell callback fires with stale state |
+| Medium | `useMyWorkspaces` hook | `inMemberSnap` check always returns true for removed docs | Deleted workspaces never disappear from UI without page refresh |
+| Medium | `useReminderDispatcher.js` | `user` captured at interval creation; stale after sign-out/sign-in | Reminder may fire against wrong user or fail silently |
+| Medium | `ec2/crons.js` `sendDailyReminders` | Assumes `reminder.nextSendAt` is an ISO string; Firestore stores Timestamps | `new Date(timestamp)` produces `Invalid Date`; daily reminders silently skipped |
+| Medium | `useEditorSync.js` | Firestore real-time listener not re-attached when a personal diary entry is converted to shared mid-session | Collaborator changes invisible until page refresh |
+| Low/Security | `ec2/server.js` `/api/notify` | No recipient domain restriction — any authenticated user can send email to any address | Open internal email relay; low risk but should be hardened |
+| Low | `DiaryEditor/index.jsx` | `unregisterUnsaved('diary-editor')` called in both the `useEffect` body and its cleanup | Double unregister on every `draftStatus` change (harmless due to Set semantics, but logic error) |
+| Low | `tabCoordinator.js` | `window.close()` fires even if the winning tab's navigate failed | Stray closed tab with no navigation; user loses context |
 
 ---
 
@@ -396,3 +436,7 @@ pm2 restart ddiary-server   # or ddiary-crons
 | 2026-05-19 | Deep link fix: workspace task emails now include `&wsId=` param; `TasksPage` switches to board view when `wsId` present | `TasksPage.jsx`, `KanbanBoard/index.jsx`, `emailNotifications.js`, `WorkspaceBoardContent.jsx`, `WorkspaceCollabPanel.jsx`, `Dashboard.jsx`, `MoveToBoard.jsx`, `useTasks.js`, `useReminderDispatcher.js` |
 | 2026-05-19 | Replaced all `noreply@dhanam.finance` with `tech@dhanam.finance` | `emailNotifications.js`, `functions/index.js`, `scripts/sendSheetRowReminders.js`, `.github/workflows/sheet-reminders.yml` |
 | 2026-05-19 | AWS EC2 migration guide created | `AWS_Migration_Guide.docx` |
+| 2026-05-22 | Tab reuse for email deep links — BroadcastChannel handshake routes to existing tab if no unsaved work | `unsavedState.js` (new), `tabCoordinator.js` (new), `App.jsx`, `DiaryEditor/index.jsx`, `TaskManager/index.jsx` |
+| 2026-05-22 | DiaryEditor numbering fixes: empty-block Enter removes and renumbers; Enter at pos-0 inserts blank line not numbered item; right-click context menu on any block (not just numbered); "Continue numbering" after table now shows correct number (TABLE was not updating `preResetCounters` in `fixNumberedListsInDOM`); leading `<br>` stripped before inserting numbered prefix | `DiaryEditor/index.jsx`, `DiaryEditor/utils/listUtils.js` |
+| 2026-05-22 | Vitest test suite added — unit tests for `unsavedState`, integration tests for `tabCoordinator` with MockBroadcastChannel | `unsavedState.test.js` (new), `tabCoordinator.test.js` (new), `vite.config.js`, `package.json` |
+| 2026-05-22 | Full codebase bug audit — 11 bugs identified (see Known Bugs section); none yet patched | — |

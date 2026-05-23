@@ -116,20 +116,35 @@ export function useMyWorkspaces() {
       where('createdBy', '==', user.uid)
     );
 
+    // Track which IDs were added by this listener so we can remove them when
+    // they leave the snapshot. (The previous approach checked wsMapRef.current.keys()
+    // which always returns true for every item we're iterating — so deleted workspaces
+    // never disappeared from the UI without a page refresh.)
+    const createdByIds = new Set();
+
     const unsubCreated = onSnapshot(createdByQuery, (snap) => {
+      const snapIds = new Set(snap.docs.map(d => d.id));
+
+      // Add workspaces newly found in this snap
       snap.docs.forEach(d => {
+        createdByIds.add(d.id);
         // Member query is authoritative for role; don't overwrite if already present
         if (!wsMapRef.current.has(d.id)) {
           wsMapRef.current.set(d.id, { id: d.id, role: 'admin', ...d.data() });
         }
       });
-      // Remove workspace from map if it was only here and has now been deleted
-      wsMapRef.current.forEach((_, id) => {
-        const inThisSnap   = snap.docs.some(d => d.id === id);
-        const inMemberSnap = innerUnsubsRef.current.length > 0 &&
-                             Array.from(wsMapRef.current.keys()).includes(id);
-        if (!inThisSnap && !inMemberSnap) wsMapRef.current.delete(id);
+
+      // Remove workspaces that previously came from this query but are no longer here.
+      // The inner listeners (set up by the members query) independently handle removal
+      // when the workspace doc is deleted, but for the createdBy-only path we must do
+      // this ourselves.
+      createdByIds.forEach(id => {
+        if (!snapIds.has(id)) {
+          wsMapRef.current.delete(id);
+          createdByIds.delete(id);
+        }
       });
+
       flush(); // update immediately — don't wait for member query
     }, (err) => {
       logError(err, { location: 'useMyWorkspaces', action: 'createdByQuery' });
@@ -571,17 +586,14 @@ export async function removeWorkspaceMember(workspaceId, uid) {
 export async function deleteWorkspace(workspaceId) {
   const wsRef = doc(db, 'workspaces', workspaceId);
 
-  // IMPORTANT ORDER: delete the workspace doc FIRST while the user is still a
-  // member. isWorkspaceMember() checks for the member subdoc — if we deleted
-  // member docs first the workspace-doc delete would be denied.
-  // Subcollections can exist without their parent doc in Firestore, so we clean
-  // them up afterwards.
+  // IMPORTANT: Read all subcollections BEFORE deleting the workspace doc.
+  // Firestore rules for subcollections check membership — once the workspace doc
+  // is gone those reads may be denied. We snapshot everything first while the
+  // caller is still a member, then delete the workspace doc, then clean up
+  // using the already-fetched refs (no further reads needed).
 
-  // 1. Delete workspace doc — user is still a member (or creator) at this point.
-  //    This is the ONLY step that must succeed; everything after is best-effort cleanup.
-  await deleteDoc(wsRef);
-
-  // 2. Delete every task's subcollections, then the task itself (best-effort)
+  // 1. Read tasks + their subcollections while rules still permit (best-effort)
+  const taskEntries = []; // [{ taskRef, commentRefs[], activityRefs[] }]
   try {
     const tasksSnap = await getDocs(collection(db, 'workspaces', workspaceId, 'tasks'));
     for (const taskDoc of tasksSnap.docs) {
@@ -591,28 +603,48 @@ export async function deleteWorkspace(workspaceId) {
           getDocs(collection(db, 'workspaces', workspaceId, 'tasks', taskId, 'comments')).catch(() => ({ docs: [] })),
           getDocs(collection(db, 'workspaces', workspaceId, 'tasks', taskId, 'activity')).catch(() => ({ docs: [] })),
         ]);
-        await Promise.all([
-          ...commentsSnap.docs.map(d => deleteDoc(d.ref).catch(() => {})),
-          ...activitySnap.docs.map(d => deleteDoc(d.ref).catch(() => {})),
-        ]);
-        await deleteDoc(taskDoc.ref).catch(() => {});
-      } catch { /* individual task cleanup failure is non-fatal */ }
+        taskEntries.push({
+          taskRef: taskDoc.ref,
+          commentRefs: commentsSnap.docs.map(d => d.ref),
+          activityRefs: activitySnap.docs.map(d => d.ref),
+        });
+      } catch { /* non-fatal — task subcollection read failed; task ref still added */ }
     }
-  } catch { /* tasks collection read failure is non-fatal after workspace doc is deleted */ }
+  } catch { /* non-fatal — tasks collection unreadable */ }
 
-  // 3. Delete all members (best-effort — rules may deny after workspace doc is gone)
+  // 2. Read members while rules still permit
+  let memberRefs = [];
   try {
     const membersSnap = await getDocs(collection(db, 'workspaces', workspaceId, 'members'));
-    await Promise.all(membersSnap.docs.map(d => deleteDoc(d.ref).catch(() => {})));
+    memberRefs = membersSnap.docs.map(d => d.ref);
   } catch { /* non-fatal */ }
 
-  // 4. Delete all pending/active invites so invited users don't see a stale prompt
+  // 3. Read pending invites while rules still permit
+  let inviteRefs = [];
   try {
     const invitesSnap = await getDocs(
       query(collection(db, 'workspaceInvites'), where('workspaceId', '==', workspaceId))
     );
-    await Promise.all(invitesSnap.docs.map(d => deleteDoc(d.ref).catch(() => {})));
+    inviteRefs = invitesSnap.docs.map(d => d.ref);
   } catch { /* non-fatal */ }
+
+  // 4. Delete the workspace doc — user is still a member at this point.
+  //    This is the only step that must succeed.
+  await deleteDoc(wsRef);
+
+  // 5. Clean up subcollections using refs already fetched above (no new reads)
+  for (const { taskRef, commentRefs, activityRefs } of taskEntries) {
+    try {
+      await Promise.all([
+        ...commentRefs.map(r => deleteDoc(r).catch(() => {})),
+        ...activityRefs.map(r => deleteDoc(r).catch(() => {})),
+      ]);
+      await deleteDoc(taskRef).catch(() => {});
+    } catch { /* non-fatal */ }
+  }
+
+  await Promise.all(memberRefs.map(r => deleteDoc(r).catch(() => {})));
+  await Promise.all(inviteRefs.map(r => deleteDoc(r).catch(() => {})));
 }
 
 export async function addWorkspaceTask(workspaceId, task, actor) {

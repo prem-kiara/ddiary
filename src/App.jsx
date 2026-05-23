@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useParams, useLocation } from 'react-router-dom';
+import * as tabCoordinator from './utils/tabCoordinator';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { useEntries, useTasks, useTeamMembers, useSheets } from './hooks/useFirestore';
 import { useNotifications } from './hooks/useNotifications';
@@ -135,6 +136,17 @@ function SheetGridPage({ sheets, onSave }) {
 function DiaryApp() {
   const navigate = useNavigate();
   const { user, loading: authLoading, isCollaborator, isSuperAdmin, setWorkspaceId, joinWorkspace } = useAuth();
+
+  // ─── Tab coordinator — init once per mount so this tab can receive NAVIGATE
+  // messages from new tabs that open from email deep links.
+  // The coordinator also lets THIS tab act as the "hand-off sender" when it
+  // detects a ?task= param in the URL on load.
+  useEffect(() => {
+    tabCoordinator.init(navigate);
+    return () => tabCoordinator.destroy();
+  // navigate is stable (React Router guarantees it); eslint may warn, safe to ignore
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const {
     entries, trashedEntries, archivedEntries, loading: entriesLoading,
     addEntry, updateEntry, deleteEntry, restoreEntry, purgeEntry,
@@ -190,18 +202,23 @@ function DiaryApp() {
       if (window.location.pathname !== '/') navigate('/');
     }
 
-    // Task deep link — navigate to /tasks?task=<id>[&wsId=<id>]; TasksPage reads it via useSearchParams
+    // Task deep link — try to hand off to an existing tab first; fall back to
+    // handling locally (existing behaviour) if no suitable tab is found.
+    // NOTE: we do NOT clean the URL here — if we're already on /tasks the URL
+    // params must stay intact so TasksPage's useSearchParams can read them.
     const taskParam = params.get('task');
-    const wsIdParam = params.get('wsId');
+    const wsIdParam = params.get('wsId') || null;
     if (taskParam) {
-      // Only navigate if not already on /tasks (avoid double-navigation)
-      if (window.location.pathname !== '/tasks') {
+      tabCoordinator.tryHandOff(taskParam, wsIdParam).then((handedOff) => {
+        if (handedOff) return; // another tab took it; this tab will close itself
+
+        // No suitable existing tab — navigate (or re-navigate) to show the task.
+        // navigate() is idempotent if already on /tasks with the same params.
         const q = wsIdParam
-          ? `?task=${encodeURIComponent(taskParam)}&wsId=${encodeURIComponent(wsIdParam)}`
-          : `?task=${encodeURIComponent(taskParam)}`;
-        navigate(`/tasks${q}`);
-      }
-      // If already on /tasks, the URL still has the params so TasksPage's useSearchParams picks them up
+          ? `/tasks?task=${encodeURIComponent(taskParam)}&wsId=${encodeURIComponent(wsIdParam)}`
+          : `/tasks?task=${encodeURIComponent(taskParam)}`;
+        navigate(q);
+      });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.uid]); // run once per sign-in, not on every render

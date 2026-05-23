@@ -13,6 +13,9 @@ const APP_URL = 'https://diary.dhanamfinance.com';
 // update useFirestore.js and here together.
 const SP_DRIVE_ID = import.meta.env.VITE_SHAREPOINT_DRIVE_ID || '';
 
+// sessionStorage key for the M365 access token (set by Firebase Auth Microsoft sign-in)
+const MS_TOKEN_KEY = 'ddiary_ms_access_token';
+
 // ─── HTML escaping (used by the diary-share template) ───────────────────────
 function escapeHtml(s) {
   return String(s ?? '')

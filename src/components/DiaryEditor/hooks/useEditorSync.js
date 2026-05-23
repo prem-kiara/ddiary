@@ -11,7 +11,11 @@ import { db } from '../../../firebase';
  *
  * @param {object} opts
  * @param {string|undefined}  opts.entryId             - the Firestore document id
- * @param {React.RefObject}   opts.isSharedEntryRef    - ref: true when entry is a shared diary
+ * @param {boolean}           opts.isShared            - derived from state/props; true when entry is shared.
+ *                                                       Must be a state value (not a ref) so the effect
+ *                                                       re-runs when a personal entry is converted to shared
+ *                                                       mid-session, re-attaching the Firestore listener.
+ * @param {React.RefObject}   opts.isSharedEntryRef    - ref mirror of isShared (used by other hooks)
  * @param {React.RefObject}   opts.pendingFirstSnapRef - ref: true until first snapshot is consumed
  * @param {React.RefObject}   opts.lastLocalEditRef    - ref: timestamp of last local keystroke
  * @param {React.RefObject}   opts.titleRef            - ref to the current title string
@@ -24,6 +28,7 @@ import { db } from '../../../firebase';
  */
 export function useEditorSync({
   entryId,
+  isShared,
   isSharedEntryRef,
   pendingFirstSnapRef,
   lastLocalEditRef,
@@ -37,7 +42,7 @@ export function useEditorSync({
 
   useEffect(() => {
     if (!entryId || entryId === 'new') return;
-    if (!isSharedEntryRef.current) return;
+    if (!isShared) return;
 
     const unsub = onSnapshot(doc(db, 'sharedDiaries', entryId), (snap) => {
       if (!snap.exists() || snap.metadata.hasPendingWrites) {
@@ -95,7 +100,11 @@ export function useEditorSync({
     });
 
     return () => unsub();
-  }, [entryId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // isShared is a state-derived value: when it flips from false to true
+  // (personal entry converted to shared mid-session) the effect re-runs and
+  // attaches the Firestore listener so collaborator changes become visible
+  // without a page refresh.
+  }, [entryId, isShared]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { remoteUpdateInfo };
 }

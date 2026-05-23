@@ -17,6 +17,11 @@ export function useNotifications({ onNewNotification } = {}) {
   const [loading, setLoading] = useState(true);
   const seenIdsRef = useRef(new Set());
   const initialLoadDone = useRef(false);
+  // Keep a ref to the latest callback so the Firestore listener never captures
+  // a stale version (the listener is only re-attached when user.email changes,
+  // but onNewNotification can change on every parent render).
+  const onNewNotificationRef = useRef(onNewNotification);
+  useEffect(() => { onNewNotificationRef.current = onNewNotification; });
 
   useEffect(() => {
     if (!user?.email) {
@@ -38,10 +43,10 @@ export function useNotifications({ onNewNotification } = {}) {
       setLoading(false);
 
       // After initial load, detect genuinely NEW notifications and fire callback
-      if (initialLoadDone.current && onNewNotification) {
+      if (initialLoadDone.current && onNewNotificationRef.current) {
         data.forEach(n => {
           if (!seenIdsRef.current.has(n.id) && !n.read) {
-            onNewNotification(n);
+            onNewNotificationRef.current(n);
           }
         });
       }

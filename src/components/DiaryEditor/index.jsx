@@ -11,6 +11,7 @@ import { HIGHLIGHT_COLORS, TD_STYLE } from './constants';
 import { getIndentLevel, setIndentLevel, isAtBlockStart, placeCursorAtEnd } from './utils/cursorUtils';
 import { getCurrentCell, selectCell, equalizeColumns } from './utils/tableUtils';
 import { detectListPrefix, fixNumberedListsInDOM, normalizeBareTextNodes, legacyTextToHtml } from './utils/listUtils';
+import { register as registerUnsaved, unregister as unregisterUnsaved } from '../../utils/unsavedState';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast }) {
@@ -47,6 +48,19 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
 
   useEffect(() => { titleRef.current = title; }, [title]);
 
+  // ── Unsaved-work registration ─────────────────────────────────────────────
+  // While a pending autosave is in flight (draftStatus==='saving'), tell the
+  // tab coordinator this tab has unsaved work so it won't hand off a deep link
+  // to us in that window.  The effect cleanup (which runs whenever draftStatus
+  // changes AND on unmount) handles unregistration — no need to call
+  // unregisterUnsaved in the effect body as well.
+  useEffect(() => {
+    if (draftStatus === 'saving') {
+      registerUnsaved('diary-editor');
+    }
+    return () => unregisterUnsaved('diary-editor');
+  }, [draftStatus]);
+
   // ── Autosave hook ────────────────────────────────────────────────────────
   const { scheduleAutosave, autoSaveTimerRef, liveShareTimerRef, skipFirstSaveRef } = useAutosave({
     editorRef,
@@ -66,6 +80,9 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
   // ── Real-time shared-diary sync (receive changes from collaborators) ──────
   const { remoteUpdateInfo } = useEditorSync({
     entryId: editingEntry?.id,
+    // Pass isShared as a boolean derived from props so the effect re-runs
+    // if the entry is converted from personal to shared mid-session.
+    isShared: !!(editingEntry?.isShared || editingEntry?.isSharedWithMe),
     isSharedEntryRef,
     pendingFirstSnapRef,
     lastLocalEditRef,

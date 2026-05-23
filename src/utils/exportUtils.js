@@ -374,10 +374,44 @@ export async function downloadEntryAsPDF(entry) {
     if (y + needed > PH - MB) { doc.addPage(); y = MT; }
   }
 
-  // ── Purple accent bar ────────────────────────────────────────────────────
-  doc.setFillColor(109, 40, 217);
-  doc.rect(ML, y, TW, 1.2, 'F');
-  y += 6;
+  // ── Header: Dhanam Logo (left) + Company Name (page-centered) ───────────
+  const HEADER_H = 14;  // total header block height in mm
+  const LOGO_H   = 10;  // logo height in mm
+
+  // Attempt to load the logo from the public folder
+  try {
+    const logoImg = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload  = () => resolve(img);
+      img.onerror = reject;
+      img.src = '/logo-header.png';
+    });
+    const aspect = logoImg.naturalWidth / Math.max(logoImg.naturalHeight, 1);
+    const logoW  = Math.min(LOGO_H * aspect, 40); // cap at 40 mm wide
+    const canvas = document.createElement('canvas');
+    canvas.width  = logoImg.naturalWidth;
+    canvas.height = logoImg.naturalHeight;
+    canvas.getContext('2d').drawImage(logoImg, 0, 0);
+    // Vertically centre the logo within the header block
+    doc.addImage(canvas.toDataURL('image/png'), 'PNG', ML, y + (HEADER_H - LOGO_H) / 2, logoW, LOGO_H);
+  } catch {
+    /* logo unavailable — company name still renders below */
+  }
+
+  // Company name — centred on the full page width, vertically centred in header
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(109, 40, 217);
+  doc.text('Dhanam Investment and Finance Private Limited', PW / 2, y + HEADER_H / 2 + 1.5, { align: 'center' });
+
+  y += HEADER_H;
+
+  // ── Thin purple border line (replaces the old solid bar) ─────────────────
+  doc.setDrawColor(109, 40, 217);
+  doc.setLineWidth(0.5);
+  doc.line(ML, y, ML + TW, y);
+  y += 8;  // breathing room between the line and the document title
 
   // ── Title ────────────────────────────────────────────────────────────────
   doc.setFont('helvetica', 'bold');

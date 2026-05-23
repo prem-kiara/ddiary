@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+// Vitest config is inlined here so we don't need a separate vitest.config.js
 
 export default defineConfig({
   plugins: [
@@ -46,5 +47,11 @@ export default defineConfig({
     })
   ],
   server: { host: true, port: 3000 },
-  build: { outDir: 'dist', sourcemap: false, emptyOutDir: false }
+  build: { outDir: 'dist', sourcemap: false, emptyOutDir: false },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    include: ['src/**/__tests__/**/*.test.{js,jsx}'],
+    setupFiles: [],
+  },
 });

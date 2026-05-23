@@ -61,6 +61,18 @@ async function sendViaSES({ to, subject, html }) {
   return toAddresses;
 }
 
+// Allowed recipient domains — only @dhanam.finance addresses are accepted.
+// This prevents the internal relay from being used to send email to arbitrary
+// external addresses by any authenticated Dhanam user.
+const ALLOWED_DOMAINS = (process.env.ALLOWED_EMAIL_DOMAINS || 'dhanam.finance')
+  .split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+
+function isAllowedRecipient(email) {
+  if (!email || typeof email !== 'string') return false;
+  const parts = email.toLowerCase().split('@');
+  return parts.length === 2 && ALLOWED_DOMAINS.includes(parts[1]);
+}
+
 // ── POST /api/notify ──────────────────────────────────────────────────────────
 // Called by the frontend (emailNotifications.js) for all task notifications.
 // Body: { to: string | string[], subject: string, html: string }
@@ -69,6 +81,14 @@ app.post('/api/notify', verifyToken, async (req, res) => {
 
   if (!to || !subject || !html) {
     return res.status(400).json({ error: 'Request body must include to, subject, and html' });
+  }
+
+  // Enforce recipient domain allowlist
+  const toList = Array.isArray(to) ? to : [to];
+  const blocked = toList.filter(addr => !isAllowedRecipient(addr));
+  if (blocked.length > 0) {
+    console.warn(`[notify] Blocked disallowed recipient(s): ${blocked.join(', ')} (uid: ${req.firebaseUser.uid})`);
+    return res.status(403).json({ error: `Recipient domain not allowed: ${blocked.join(', ')}` });
   }
 
   try {

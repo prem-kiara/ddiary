@@ -7,6 +7,7 @@ import { useMyWorkspaces } from '../../hooks/useWorkspace';
 import SectionHeader from '../shared/SectionHeader';
 import { fetchAllOrgUsers } from '../../utils/graphPeopleSearch';
 import TaskCard from './TaskCard';
+import { register as registerUnsaved, unregister as unregisterUnsaved } from '../../utils/unsavedState';
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function TaskManager({
@@ -86,6 +87,17 @@ export default function TaskManager({
 
   // ── Add form state (personal tasks — text-only) ─────────────────────────
   const [newText, setNewText] = useState('');
+
+  // Track unsaved work: the quick-add input counts as unsaved while it has text
+  // so the tab coordinator won't redirect a deep link into this tab mid-edit.
+  useEffect(() => {
+    if (newText.trim()) {
+      registerUnsaved('task-add-form');
+    } else {
+      unregisterUnsaved('task-add-form');
+    }
+    return () => unregisterUnsaved('task-add-form');
+  }, [newText]);
 
   // ── Section collapse state ──────────────────────────────────────────────
   const [personalOpen, setPersonalOpen] = useState(true);

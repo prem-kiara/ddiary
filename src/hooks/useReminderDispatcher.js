@@ -38,6 +38,11 @@ import { createLogger } from '../utils/errorLogger';
  */
 export function useReminderDispatcher() {
   const { user } = useAuth();
+  // Always-current ref so the 60-second interval tick never reads a stale user
+  // (e.g. after sign-out / sign-in without the effect re-running yet).
+  const userRef = useRef(user);
+  useEffect(() => { userRef.current = user; });
+
   // Mutable snapshot of every reminder-enabled task currently loaded.
   // Indexed by the DocumentReference path so we can dedupe across the two
   // listeners (a task only ever appears in one of them anyway, but this
@@ -89,7 +94,8 @@ export function useReminderDispatcher() {
     let busy = false;
     const tick = async () => {
       if (busy) return;
-      if (!user?.uid) return;
+      const currentUser = userRef.current;
+      if (!currentUser?.uid) return;
       // Graph token required to send email — skip quietly if missing
       const msToken = sessionStorage.getItem('ddiary_ms_access_token');
       if (!msToken) return;
@@ -130,7 +136,7 @@ export function useReminderDispatcher() {
               });
               continue;
             }
-            await dispatchOne(entry.ref, user, log);
+            await dispatchOne(entry.ref, currentUser, log);
             recentlyDispatched.current.add(entry.ref.path);
             // Clear the cooldown after ~5 minutes so the same task becoming
             // due again in the future will fire normally.

@@ -449,17 +449,19 @@ async function sendTaskReminders() {
         const assigneeEmail = (t.assigneeEmail || '').trim().toLowerCase();
         if (!assigneeEmail) continue;
 
-        // Atomic claim
+        // Atomic claim — return value from transaction avoids stale-flag bug
+        // on Firestore retries (a closure variable set in the callback keeps its
+        // value from a prior retry even if the retry returns early).
+        let proceed;
         try {
-          let proceed = false;
-          await db.runTransaction(async (tx) => {
+          proceed = await db.runTransaction(async (tx) => {
             const fresh = await tx.get(taskDoc.ref);
-            if (!fresh.exists || fresh.data().scheduledEmailSent) return;
+            if (!fresh.exists || fresh.data().scheduledEmailSent) return false;
             tx.update(taskDoc.ref, { scheduledEmailSent: true });
-            proceed = true;
+            return true;
           });
-          if (!proceed) continue;
         } catch { continue; }
+        if (!proceed) continue;
 
         const taskText     = t.text || 'Untitled task';
         const assigneeName = t.assigneeName || null;
@@ -567,18 +569,18 @@ async function sendSheetRowReminders() {
         }
       }
 
-      // Atomic claim
-      let shouldSend = false;
+      // Atomic claim — return value from transaction avoids stale-flag bug on retries
+      let shouldSend;
       try {
-        await db.runTransaction(async (tx) => {
+        shouldSend = await db.runTransaction(async (tx) => {
           const fresh = await tx.get(d.ref);
-          if (!fresh.exists) return;
+          if (!fresh.exists) return false;
           const fd = fresh.data();
-          if (!fd.active) return;
+          if (!fd.active) return false;
           const freshLast = fd.lastSentAt?.toDate?.() ?? null;
-          if (freshLast && freshLast > cutoff) return;
+          if (freshLast && freshLast > cutoff) return false;
           tx.update(d.ref, { lastSentAt: admin.firestore.FieldValue.serverTimestamp() });
-          shouldSend = true;
+          return true;
         });
       } catch (txErr) {
         console.warn(`[sheetReminders] tx failed ${d.id}:`, txErr.message);
@@ -677,9 +679,12 @@ async function sendDailyReminders() {
 
       if (localHour !== prefHour) continue;
 
-      // 23-hour cooldown
+      // 23-hour cooldown — handle both ISO strings and Firestore Timestamps
       const lastDaily = userData.lastDailyReminderAt;
-      if (lastDaily && (Date.now() - new Date(lastDaily).getTime()) < 23 * 60 * 60 * 1000) continue;
+      const lastDailyMs = lastDaily
+        ? (lastDaily.toDate ? lastDaily.toDate().getTime() : new Date(lastDaily).getTime())
+        : 0;
+      if (lastDailyMs && (Date.now() - lastDailyMs) < 23 * 60 * 60 * 1000) continue;
 
       const tasksSnap = await db.collection('users').doc(userDoc.id)
         .collection('tasks').where('completed', '==', false).get();
