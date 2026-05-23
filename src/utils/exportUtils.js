@@ -366,7 +366,7 @@ export async function downloadEntryAsPDF(entry) {
 
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const PW  = 210, PH = 297;
-  const ML  = 18,  MR = 18, MT = 20, MB = 20;
+  const ML  = 18,  MR = 18, MT = 8, MB = 20;   // MT reduced: less top padding
   const TW  = PW - ML - MR;
   let   y   = MT;
 
@@ -374,9 +374,14 @@ export async function downloadEntryAsPDF(entry) {
     if (y + needed > PH - MB) { doc.addPage(); y = MT; }
   }
 
-  // ── Header: Dhanam Logo (left) + Company Name (page-centered) ───────────
-  const HEADER_H = 14;  // total header block height in mm
-  const LOGO_H   = 10;  // logo height in mm
+  // ── Brand colours ─────────────────────────────────────────────────────────
+  const GOLD = [180, 137, 40];  // dark gold matching Dhanam brand
+
+  // ── Header: Dhanam Logo (left) + Company Name (right of logo) ────────────
+  const HEADER_H = 22;  // total header block height in mm
+  const LOGO_H   = 18;  // logo rendered height in mm (taller = bigger logo)
+
+  let logoW = 0;  // track actual rendered width so company name can be positioned beside it
 
   // Attempt to load the logo from the public folder
   try {
@@ -388,7 +393,7 @@ export async function downloadEntryAsPDF(entry) {
       img.src = '/logo-header.png';
     });
     const aspect = logoImg.naturalWidth / Math.max(logoImg.naturalHeight, 1);
-    const logoW  = Math.min(LOGO_H * aspect, 40); // cap at 40 mm wide
+    logoW = Math.min(LOGO_H * aspect, 50);  // proportional width, max 50 mm
     const canvas = document.createElement('canvas');
     canvas.width  = logoImg.naturalWidth;
     canvas.height = logoImg.naturalHeight;
@@ -396,22 +401,24 @@ export async function downloadEntryAsPDF(entry) {
     // Vertically centre the logo within the header block
     doc.addImage(canvas.toDataURL('image/png'), 'PNG', ML, y + (HEADER_H - LOGO_H) / 2, logoW, LOGO_H);
   } catch {
-    /* logo unavailable — company name still renders below */
+    /* logo unavailable — company name will start from left margin */
   }
 
-  // Company name — centred on the full page width, vertically centred in header
+  // Company name — positioned to the right of the logo, vertically centred
+  const nameX = ML + logoW + (logoW > 0 ? 4 : 0);  // 4 mm gap after logo
+  const nameY = y + HEADER_H / 2 + 1.5;
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.setTextColor(109, 40, 217);
-  doc.text('Dhanam Investment and Finance Private Limited', PW / 2, y + HEADER_H / 2 + 1.5, { align: 'center' });
+  doc.setFontSize(12);
+  doc.setTextColor(...GOLD);
+  doc.text('Dhanam Investment and Finance Private Limited', nameX, nameY);
 
   y += HEADER_H;
 
-  // ── Thin purple border line (replaces the old solid bar) ─────────────────
-  doc.setDrawColor(109, 40, 217);
+  // ── Thin gold border line ─────────────────────────────────────────────────
+  doc.setDrawColor(...GOLD);
   doc.setLineWidth(0.5);
   doc.line(ML, y, ML + TW, y);
-  y += 8;  // breathing room between the line and the document title
+  y += 7;  // breathing room between the line and the document title
 
   // ── Title ────────────────────────────────────────────────────────────────
   doc.setFont('helvetica', 'bold');
