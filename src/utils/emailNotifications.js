@@ -716,12 +716,16 @@ export async function shareDiaryEntry({ entry, recipients, senderName, personalN
   `;
 
   const recipientList = recipients.map(r => r.trim()).filter(Boolean);
-  const toLine = copyToSelf && selfEmail
-    ? Array.from(new Set([...recipientList, selfEmail.trim().toLowerCase()])).join(',')
-    : recipientList.join(',');
+  // Build a de-duplicated array — the EC2 server and SES both accept arrays.
+  // Do NOT join into a comma-separated string: SES treats the whole string as
+  // one (invalid) address and rejects the request.
+  const toArray = Array.from(new Set([
+    ...recipientList,
+    ...(copyToSelf && selfEmail ? [selfEmail.trim().toLowerCase()] : []),
+  ]));
 
   return sendEmail({
-    to: toLine,
+    to: toArray,
     subject: title,
     htmlBody: wrapHtml('Diary Entry Shared', body),
   });

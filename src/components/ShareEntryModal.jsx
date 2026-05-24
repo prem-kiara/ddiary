@@ -236,7 +236,7 @@ export default function ShareEntryModal({ entry, onClose, showToast }) {
         showToast(`Entry shared with ${selected.length} recipient${selected.length === 1 ? '' : 's'}.`, 'success');
         onClose();
       } else {
-        showToast('Could not send email — your Microsoft session may have expired.', 'warning');
+        showToast('Could not send email — please try again or contact support if the issue persists.', 'warning');
       }
     } catch (err) {
       console.error('Share send error:', err);

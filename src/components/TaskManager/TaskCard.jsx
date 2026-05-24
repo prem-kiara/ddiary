@@ -70,7 +70,12 @@ function TaskDetailModal({
   const [selectedMember, setSelectedMember] = useState(null);
   const [assignSaving,  setAssignSaving]  = useState(false);
 
-  const memberByEmail = (email) => members.find(m => m.email?.toLowerCase() === email?.toLowerCase());
+  // Look up name/phone by email — check orgAssignees (full M365 + contacts) first,
+  // then fall back to the raw members list in case orgAssignees hasn't loaded yet.
+  const memberByEmail = (email) =>
+    (orgAssignees?.length ? orgAssignees : members)
+      .find(m => m.email?.toLowerCase() === email?.toLowerCase()) ||
+    members.find(m => m.email?.toLowerCase() === email?.toLowerCase());
 
   // Close on Escape
   useEffect(() => {
@@ -428,12 +433,16 @@ function TaskDetailModal({
                   </select>
                 </div>
               </div>
-              {members.length > 0 && (
+              {(orgAssignees?.length > 0 || members.length > 0) && (
                 <div style={{ marginBottom: 10 }}>
                   <label className="label">Assign to</label>
                   <select value={editAssignee} onChange={e => setEditAssignee(e.target.value)} style={inputStyle}>
                     <option value="">— No assignee —</option>
-                    {members.map(m => <option key={m.id} value={m.email || m.id}>{m.name}{m.email ? ` (${m.email})` : ''}{m.uid ? ' ✓' : ''}</option>)}
+                    {(orgAssignees?.length ? orgAssignees : members).map(m => (
+                      <option key={m.email || m.id} value={m.email}>
+                        {m.name}{m.email ? ` (${m.email})` : ''}
+                      </option>
+                    ))}
                   </select>
                 </div>
               )}
