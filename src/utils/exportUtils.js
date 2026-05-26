@@ -34,10 +34,28 @@ function decodeEntities(str) {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&#8377;/g, '₹')
-    .replace(/&hellip;/g, '…')
-    .replace(/&mdash;/g, '—')
-    .replace(/&ndash;/g, '–');
+    .replace(/&#8377;/g, 'Rs.')
+    .replace(/&hellip;/g, '...')
+    .replace(/&mdash;/g, '--')
+    .replace(/&ndash;/g, '-');
+}
+
+// ─── Normalise text for jsPDF (Windows-1252 safe) ────────────────────────────
+// jsPDF's built-in fonts (helvetica, times) use Windows-1252 encoding.
+// Characters outside that range render as boxes or cause cell overflow.
+function normPdf(str) {
+  return (str || '')
+    .replace(/→/g, '->')    // → right arrow
+    .replace(/←/g, '<-')   // ← left arrow
+    .replace(/↔/g, '<->') // ↔ left-right arrow
+    .replace(/[‘’]/g, "'")  // smart single quotes
+    .replace(/[“”]/g, '"')  // smart double quotes
+    .replace(/–/g, '-')    // en-dash
+    .replace(/—/g, '--')   // em-dash
+    .replace(/•/g, '*')    // bullet
+    .replace(/×/g, 'x')    // multiplication sign ×
+    .replace(/ /g, ' ')    // non-breaking space
+    .replace(/[^\x00-\xFF]/g, ' '); // anything else outside Latin-1 → space
 }
 
 // ─── Get clean text content of a node (decodes entities, collapses whitespace)
@@ -65,15 +83,17 @@ function renderHtmlToPdf(htmlStr, doc, autoTable, layout) {
   function addText(text, opts = {}) {
     const { bold = false, italic = false, size = 11, color = [30, 41, 59], indent = 0 } = opts;
     if (!text) return;
-    doc.setFont('helvetica', bold && italic ? 'bolditalic' : bold ? 'bold' : italic ? 'italic' : 'normal');
+    // Use 'times' for elegant professional look; normalise to Windows-1252 safe chars
+    const safeText = normPdf(text);
+    doc.setFont('times', bold && italic ? 'bolditalic' : bold ? 'bold' : italic ? 'italic' : 'normal');
     doc.setFontSize(size);
     doc.setTextColor(...color);
     const maxW = TW - indent;
-    const wrapped = doc.splitTextToSize(text, maxW);
+    const wrapped = doc.splitTextToSize(safeText, maxW);
     wrapped.forEach(line => {
       ensureSpace(size * 0.5 + 2);
       doc.text(line, ML + indent, y);
-      y += size * 0.45 + 1.5;
+      y += size * 0.45 + 2;
     });
   }
 
@@ -82,54 +102,76 @@ function renderHtmlToPdf(htmlStr, doc, autoTable, layout) {
     y += 3;
     ensureSpace(25);
 
-    const allRows  = [...tableNode.querySelectorAll('tr')];
+    const allRows = [...tableNode.querySelectorAll('tr')];
     if (!allRows.length) return;
 
-    // Determine if first row is a header row (contains <th> cells)
     const firstRowHasTh = allRows[0].querySelectorAll('th').length > 0;
 
+    // Normalise all cell text to Windows-1252 safe characters so jsPDF
+    // doesn't hit unrenderable glyphs (→, smart quotes, etc.) that cause
+    // characters to bleed outside cell boundaries.
+    const cleanCell = (el) => normPdf(nodeText(el));
+
     const head = firstRowHasTh
-      ? [[...allRows[0].querySelectorAll('th')].map(th => nodeText(th))]
+      ? [[...allRows[0].querySelectorAll('th')].map(cleanCell)]
       : [];
     const bodyRows = firstRowHasTh ? allRows.slice(1) : allRows;
     const body = bodyRows.map(tr =>
-      [...tr.querySelectorAll('td, th')].map(td => nodeText(td))
+      [...tr.querySelectorAll('td, th')].map(cleanCell)
     );
 
     if (!head.length && !body.length) return;
+
+    // Build proportional column widths.
+    // Detect column count from the first data row (or header row).
+    const sampleRow = (head[0] ?? body[0]) || [];
+    const colCount  = sampleRow.length;
+
+    // Heuristic: give the last column (typically "description / what changed")
+    // more space when the table has 3+ columns. All other columns share a fixed
+    // portion so they stay compact and the long-text column never overflows.
+    let columnStyles = {};
+    if (colCount >= 3) {
+      const fixedW = Math.min(38, (TW * 0.5) / (colCount - 1)); // per fixed col
+      const lastW  = TW - fixedW * (colCount - 1);
+      for (let i = 0; i < colCount - 1; i++) {
+        columnStyles[i] = { cellWidth: fixedW };
+      }
+      columnStyles[colCount - 1] = { cellWidth: lastW };
+    }
 
     autoTable(doc, {
       head,
       body,
       startY: y,
-      margin:  { left: ML, right: ML },
-      tableWidth: TW,
+      margin:       { left: ML, right: ML },
+      tableWidth:   TW,
+      columnStyles,
       styles: {
         fontSize:    9,
-        cellPadding: { top: 3, right: 4, bottom: 3, left: 4 },
+        cellPadding: { top: 4, right: 5, bottom: 4, left: 5 },
         overflow:    'linebreak',
-        font:        'helvetica',
+        font:        'times',       // Times — elegant, professional
         textColor:   [30, 41, 59],
         lineColor:   [203, 213, 225],
         lineWidth:   0.25,
+        valign:      'top',
       },
       headStyles: {
-        fillColor:  [109, 40, 217],
+        fillColor:  [30, 58, 95],   // dark navy (professional, not purple)
         textColor:  [255, 255, 255],
         fontStyle:  'bold',
+        font:       'times',
         fontSize:   9,
       },
       alternateRowStyles: {
         fillColor: [248, 250, 252],
       },
       theme: 'grid',
-      didDrawPage: (_data) => {
-        // After a page break inside a table, reset y to margin
-        y = MT;
-      },
+      didDrawPage: () => { y = MT; },
     });
 
-    y = doc.lastAutoTable.finalY + 5;
+    y = doc.lastAutoTable.finalY + 6;
   }
 
   // ── Recursively render a DOM node ────────────────────────────────────────
