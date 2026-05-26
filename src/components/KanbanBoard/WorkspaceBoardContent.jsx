@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import {
   useWorkspace, useWorkspaceTasks,
   addWorkspaceTask, deleteWorkspaceTask, createWorkspace,
@@ -11,6 +12,7 @@ import { AddTaskModal } from './AddTaskModal';
 // ── WorkspaceBoardContent ─────────────────────────────────────────────────────
 // The actual kanban board — rendered only when a workspace is expanded.
 function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspaces, onWorkspaceCreated, showAddTaskInitial, onAddTaskClose, showAddCategoryInitial, onAddCategoryClose, isAdmin, highlightTaskId, onHighlightTaskConsumed }) {
+  const confirm = useConfirm();
   const { workspace } = useWorkspace(workspaceId);
   const { tasks, loading: tasksLoading, error } = useWorkspaceTasks(workspaceId);
   const [filterAssignee, setFilterAssignee] = useState('all');
@@ -81,7 +83,7 @@ function WorkspaceBoardContent({ workspaceId, members, showToast, user, workspac
   };
 
   const handleDelete = async (taskId) => {
-    if (!window.confirm('Delete this task from the workspace?')) return;
+    if (!await confirm('Delete this task from the workspace?', { danger: true, okText: 'Delete' })) return;
     try {
       await deleteWorkspaceTask(workspaceId, taskId);
     } catch (e) {

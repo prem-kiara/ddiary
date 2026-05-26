@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useConfirm } from '../contexts/ConfirmContext';
 import { X, UserPlus, UserMinus, Users, Clock, CheckCircle2 } from 'lucide-react';
 import {
   useSharedDiaryLive, useDiaryPendingInvites,
@@ -22,6 +23,7 @@ export default function ShareDiaryModal({ diaryId, diaryTitle, currentUser, onCl
   const acTimer   = useRef();
   const inputRef  = useRef();
 
+  const confirm = useConfirm();
   const { diary, members, loading } = useSharedDiaryLive(diaryId);
   const pendingInvites = useDiaryPendingInvites(diaryId);
   const isOwner = members.find(m => m.uid === currentUser?.uid)?.role === 'owner';
@@ -111,7 +113,7 @@ export default function ShareDiaryModal({ diaryId, diaryTitle, currentUser, onCl
   };
 
   const handleRemove = async (uid) => {
-    if (!window.confirm('Remove this person from the diary entry?')) return;
+    if (!await confirm('Remove this person from the diary entry?', { danger: true, okText: 'Remove' })) return;
     setRemoving(uid);
     try { await removeSharedDiaryMember(diaryId, uid); } catch {}
     setRemoving(null);

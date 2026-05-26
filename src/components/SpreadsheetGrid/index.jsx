@@ -25,7 +25,9 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { saveSharedSheet } from '../../hooks/useSharedSheets';
 import { useSheetRowReminders } from '../../utils/sheetReminders';
+import { saveSheetSnapshot } from '../../utils/sheetHistory';
 import RowReminderModal from '../RowReminderModal';
+import SheetHistoryModal from '../SheetHistoryModal';
 
 import { LETTERS, FORMULA_NAMES, DEFAULT_COL_W, DEFAULT_ROW_H, MIN_COL_W, MIN_ROW_H } from './constants';
 import { ck, parseRef, displayVal, insertRowInData, deleteRowFromData, insertColInData, deleteColFromData, shiftRowComments } from './formulaEngine';
@@ -84,6 +86,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
   const [dragCol,    setDragCol]    = useState(null);
   const [downloading,  setDownloading]  = useState(false);
   const [contextMenu,  setContextMenu]  = useState(null); // { x, y, row, col }
+  const [showHistory,  setShowHistory]  = useState(false);
   const [dragOverCol,setDragOverCol]= useState(null);
 
   // ── Comments + Reminders state ─────────────────────────────────────────────
@@ -129,7 +132,11 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
   const rowHeightsRef   = useRef(rowHeights);
   const rowCommentsRef  = useRef(sheet.rowComments || {});
   // Latest save trigger (always up-to-date with current data/cols/rows/title)
-  const triggerSaveRef  = useRef(null);
+  const triggerSaveRef       = useRef(null);
+  // Tracks when we last took a periodic snapshot (ms since epoch)
+  const lastSnapshotTimeRef  = useRef(0);
+  // Minimum gap between periodic snapshots: 5 minutes
+  const SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000;
 
   // Always-fresh refs for the flush-on-back / flush-on-unmount path.
   const titleRef  = useRef(title);
@@ -267,10 +274,43 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
           const events = [...pendingAuditEventsRef.current];
           pendingAuditEventsRef.current = [];
           await saveSharedSheet(sharedSheetId, updates, user, events);
+
+          // Periodic snapshot every 5 minutes for shared sheets
+          const now = Date.now();
+          if (now - lastSnapshotTimeRef.current >= SNAPSHOT_INTERVAL_MS) {
+            lastSnapshotTimeRef.current = now;
+            saveSheetSnapshot({
+              isShared: true,
+              sharedId: sharedSheetId,
+              title:    nt,
+              data:     nd,
+              cols:     nc,
+              rows:     nr,
+              savedBy:  user?.displayName || user?.email || '',
+              type:     'periodic',
+            }).catch(() => {});
+          }
         } else {
           await onSave(sheetId, updates);
           if (sheet?.isShared && sheet?.sharedSheetId && user) {
             saveSharedSheet(sheet.sharedSheetId, updates, user, []).catch(() => {});
+          }
+
+          // Periodic snapshot every 5 minutes for personal sheets too
+          const now = Date.now();
+          if (now - lastSnapshotTimeRef.current >= SNAPSHOT_INTERVAL_MS) {
+            lastSnapshotTimeRef.current = now;
+            saveSheetSnapshot({
+              uid:      user?.uid,
+              sheetId,
+              isShared: false,
+              title:    nt,
+              data:     nd,
+              cols:     nc,
+              rows:     nr,
+              savedBy:  user?.displayName || user?.email || '',
+              type:     'periodic',
+            }).catch(() => {});
           }
         }
         setSaveStatus('saved');
@@ -279,29 +319,48 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
         setSaveStatus('unsaved');
       }
     }, 500);
-  }, [sheetId, onSave, isShared, sharedSheetId, user]);
+  }, [sheetId, onSave, isShared, sharedSheetId, user, SNAPSHOT_INTERVAL_MS]);
 
-  // On unmount: flush any pending debounced save immediately
+  // On unmount: flush any pending debounced save immediately + take a manual snapshot
   useEffect(() => {
     return () => {
       if (!saveTimer.current) return;
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
+      const nt = titleRef.current;
+      const nd = dataRef.current;
+      const nc = colsRef.current;
+      const nr = rowsRef.current;
       const updates = {
-        title:       titleRef.current,
-        data:        dataRef.current,
-        cols:        colsRef.current,
-        rows:        rowsRef.current,
+        title:       nt,
+        data:        nd,
+        cols:        nc,
+        rows:        nr,
         colWidths:   colWidthsRef.current,
         rowHeights:  rowHeightsRef.current,
         rowComments: rowCommentsRef.current,
       };
+      const u = userRef.current;
       if (isShared && sharedSheetId) {
-        saveSharedSheet(sharedSheetId, updates, userRef.current, []).catch(() => {});
+        saveSharedSheet(sharedSheetId, updates, u, []).catch(() => {});
+        // Manual snapshot on close for shared sheets
+        saveSheetSnapshot({
+          isShared: true, sharedId: sharedSheetId,
+          title: nt, data: nd, cols: nc, rows: nr,
+          savedBy: u?.displayName || u?.email || '', type: 'manual',
+        }).catch(() => {});
       } else {
         onSave(sheetId, updates).catch(() => {});
-        if (sheet?.isShared && sheet?.sharedSheetId && userRef.current) {
-          saveSharedSheet(sheet.sharedSheetId, updates, userRef.current, []).catch(() => {});
+        if (sheet?.isShared && sheet?.sharedSheetId && u) {
+          saveSharedSheet(sheet.sharedSheetId, updates, u, []).catch(() => {});
+        }
+        // Manual snapshot on close for personal sheets
+        if (u?.uid) {
+          saveSheetSnapshot({
+            uid: u.uid, sheetId, isShared: false,
+            title: nt, data: nd, cols: nc, rows: nr,
+            savedBy: u?.displayName || u?.email || '', type: 'manual',
+          }).catch(() => {});
         }
       }
     };
@@ -887,6 +946,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
         redo={redo}
         undoStack={undoStack}
         redoStack={redoStack}
+        onShowHistory={() => setShowHistory(true)}
         downloading={downloading}
         setDownloading={setDownloading}
         title={title}
@@ -1282,6 +1342,30 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
           />
         );
       })()}
+
+      {/* ── Sheet Version History Modal ───────────────────────────────────── */}
+      {showHistory && (
+        <SheetHistoryModal
+          isShared={!!(isShared && sharedSheetId) || !!(sheet?.isShared && sheet?.sharedSheetId)}
+          sharedId={sharedSheetId || sheet?.sharedSheetId || null}
+          sheetId={sheetId}
+          uid={user?.uid}
+          onRestore={(snap) => {
+            // Push current state to undo stack so Ctrl+Z can reverse the restore
+            undoStack.current.push({ data, cols, rows });
+            if (undoStack.current.length > 30) undoStack.current.shift();
+            redoStack.current = [];
+            // Apply the snapshot
+            setData(snap.data || {});
+            setCols(snap.cols || cols);
+            setRows(snap.rows || rows);
+            if (snap.title) setTitle(snap.title);
+            // Schedule a save so the restored state is immediately persisted
+            setTimeout(() => triggerSaveRef.current?.(), 0);
+          }}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
     </div>
   );
 }

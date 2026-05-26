@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useConfirm } from '../contexts/ConfirmContext';
 import {
   Users, Plus, Trash2, User, Edit2, Check, X, Link, Copy,
   CheckCircle, ChevronRight, LogOut as Leave, Building2, RefreshCw,
@@ -145,6 +146,7 @@ export default function TeamMembers({ showToast }) {
 // ─── Workspace Detail ─────────────────────────────────────────────────────────
 function WorkspaceDetail({ workspaceId, onBack, showToast }) {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const { workspace, members, loading } = useWorkspace(workspaceId);
   const { tasks: wsTasks } = useWorkspaceTasks(workspaceId);
   const { requests: leaveRequests } = usePendingLeaveRequests(workspaceId);
@@ -225,7 +227,7 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
   };
 
   const handleRemoveMember = async (uid, name) => {
-    if (!confirm(`Remove ${name || 'this member'} from the workspace?`)) return;
+    if (!await confirm(`Remove ${name || 'this member'} from the workspace?`, { danger: true, okText: 'Remove' })) return;
     try {
       await removeWorkspaceMember(workspaceId, uid);
       showToast('Member removed', 'success');
@@ -233,7 +235,7 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
   };
 
   const handleDeleteWorkspace = async () => {
-    if (!confirm('Delete this workspace? All tasks and data will be permanently lost.')) return;
+    if (!await confirm('Delete this workspace? All tasks and data will be permanently lost.', { danger: true, title: 'Delete workspace', okText: 'Delete' })) return;
     setDeleteLoading(true);
     try {
       await deleteWorkspace(workspaceId);
@@ -247,7 +249,7 @@ function WorkspaceDetail({ workspaceId, onBack, showToast }) {
 
   // ── Leave request (member submits, owner approves/denies) ──────────────
   const handleRequestLeave = async () => {
-    if (!confirm(`Request to leave "${workspace?.name}"?\nThe workspace admin must approve before you are removed.`)) return;
+    if (!await confirm(`Request to leave "${workspace?.name}"?\nThe workspace admin must approve before you are removed.`, { okText: 'Send request' })) return;
     setLeaveLoading(true);
     try {
       await requestLeave(workspaceId, workspace.name, user, ownerEmail);

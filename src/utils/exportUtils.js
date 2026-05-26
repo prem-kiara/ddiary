@@ -68,10 +68,96 @@ function nodeText(node) {
 //
 // Walks the parsed DOM tree and calls jsPDF drawing methods directly.
 // Tables use jspdf-autotable for proper column sizing and borders.
+//
+// UNIFORMITY RULE: All tables sharing the same column count receive identical
+// column widths, computed in a pre-pass over the entire document. This ensures
+// visual consistency across sections (e.g. every 6-column action-item table
+// in a Minutes document uses the same proportions).
 // ─────────────────────────────────────────────────────────────────────────────
 function renderHtmlToPdf(htmlStr, doc, autoTable, layout) {
   const { ML, TW, MT, MB, PH } = layout;
   let y = layout.startY;
+
+  // Parse the HTML once so we can (1) pre-scan tables and (2) render in one pass
+  const parser  = new DOMParser();
+  const htmlDoc = parser.parseFromString(htmlStr, 'text/html');
+
+  // ── Pre-pass: build unified column widths grouped by column count ─────────
+  // For each distinct column count we find across all tables in the document,
+  // we measure every cell in every table with that count, then compute a single
+  // shared columnStyles object.  That object is reused for every matching table
+  // during the render pass below.
+  const CELL_PAD_H = 10; // left(5) + right(5) mm padding (matches autoTable styles)
+  doc.setFont('times', 'normal');
+  doc.setFontSize(9); // must match autoTable font/size for accurate measurement
+
+  const cleanCell = (el) => normPdf(nodeText(el));
+
+  // colCount → { minWidths[], idealWidths[] }
+  const globalMeasure = new Map();
+
+  htmlDoc.body.querySelectorAll('table').forEach(tableNode => {
+    const allRows = [...tableNode.querySelectorAll('tr')];
+    if (!allRows.length) return;
+    const firstRowHasTh = allRows[0].querySelectorAll('th').length > 0;
+    const head = firstRowHasTh
+      ? [[...allRows[0].querySelectorAll('th')].map(cleanCell)]
+      : [];
+    const bodyRows = firstRowHasTh ? allRows.slice(1) : allRows;
+    const body = bodyRows.map(tr => [...tr.querySelectorAll('td, th')].map(cleanCell));
+    const sampleRow = (head[0] ?? body[0]) || [];
+    const colCount = sampleRow.length;
+    if (!colCount) return;
+
+    if (!globalMeasure.has(colCount)) {
+      globalMeasure.set(colCount, {
+        minWidths:   new Array(colCount).fill(0),
+        idealWidths: new Array(colCount).fill(0),
+      });
+    }
+    const { minWidths, idealWidths } = globalMeasure.get(colCount);
+    const allData = [...(head[0] ? [head[0]] : []), ...body];
+    allData.forEach(row => {
+      (row || []).forEach((cell, ci) => {
+        if (ci >= colCount) return;
+        const text = normPdf(String(cell || ''));
+        idealWidths[ci] = Math.max(idealWidths[ci], doc.getTextWidth(text) + CELL_PAD_H);
+        text.split(/\s+/).filter(Boolean).forEach(w => {
+          minWidths[ci] = Math.max(minWidths[ci], doc.getTextWidth(w) + CELL_PAD_H);
+        });
+      });
+    });
+  });
+
+  // Convert measurements → columnStyles map (colCount → columnStyles object)
+  // Cap any single column's ideal at 55% of TW so one column can't dominate
+  const globalColumnStyles = new Map();
+  for (const [colCount, { minWidths, idealWidths }] of globalMeasure.entries()) {
+    const maxColW      = TW * 0.55;
+    const clampedIdeal = idealWidths.map(w => Math.min(w, maxColW));
+    const idealTotal   = clampedIdeal.reduce((a, b) => a + b, 0);
+    const totalMin     = minWidths.reduce((a, b) => a + b, 0);
+
+    const styles = {};
+    if (colCount > 1) {
+      if (totalMin >= TW) {
+        // minimums alone exceed page width — scale down proportionally
+        const scale = TW / totalMin;
+        for (let i = 0; i < colCount; i++) {
+          styles[i] = { cellWidth: Math.max(minWidths[i] * scale, 6) };
+        }
+      } else {
+        // distribute remaining space proportionally by ideal width
+        const slack = TW - totalMin;
+        for (let i = 0; i < colCount; i++) {
+          const bonus = idealTotal > 0 ? slack * (clampedIdeal[i] / idealTotal) : slack / colCount;
+          styles[i] = { cellWidth: minWidths[i] + bonus };
+        }
+      }
+    }
+    globalColumnStyles.set(colCount, styles);
+  }
+  // ── End pre-pass ──────────────────────────────────────────────────────────
 
   function ensureSpace(needed = 10) {
     if (y + needed > PH - MB) {
@@ -110,8 +196,6 @@ function renderHtmlToPdf(htmlStr, doc, autoTable, layout) {
     // Normalise all cell text to Windows-1252 safe characters so jsPDF
     // doesn't hit unrenderable glyphs (→, smart quotes, etc.) that cause
     // characters to bleed outside cell boundaries.
-    const cleanCell = (el) => normPdf(nodeText(el));
-
     const head = firstRowHasTh
       ? [[...allRows[0].querySelectorAll('th')].map(cleanCell)]
       : [];
@@ -122,23 +206,12 @@ function renderHtmlToPdf(htmlStr, doc, autoTable, layout) {
 
     if (!head.length && !body.length) return;
 
-    // Build proportional column widths.
-    // Detect column count from the first data row (or header row).
-    const sampleRow = (head[0] ?? body[0]) || [];
-    const colCount  = sampleRow.length;
+    const sampleRow    = (head[0] ?? body[0]) || [];
+    const colCount     = sampleRow.length;
 
-    // Heuristic: give the last column (typically "description / what changed")
-    // more space when the table has 3+ columns. All other columns share a fixed
-    // portion so they stay compact and the long-text column never overflows.
-    let columnStyles = {};
-    if (colCount >= 3) {
-      const fixedW = Math.min(38, (TW * 0.5) / (colCount - 1)); // per fixed col
-      const lastW  = TW - fixedW * (colCount - 1);
-      for (let i = 0; i < colCount - 1; i++) {
-        columnStyles[i] = { cellWidth: fixedW };
-      }
-      columnStyles[colCount - 1] = { cellWidth: lastW };
-    }
+    // Use the pre-computed global column widths for this column count so that
+    // all tables with the same number of columns share identical proportions.
+    const columnStyles = globalColumnStyles.get(colCount) || {};
 
     autoTable(doc, {
       head,
@@ -358,8 +431,7 @@ function renderHtmlToPdf(htmlStr, doc, autoTable, layout) {
     }
   }
 
-  const parser  = new DOMParser();
-  const htmlDoc = parser.parseFromString(htmlStr, 'text/html');
+  // Render using the already-parsed htmlDoc (no second DOMParser call needed)
   [...htmlDoc.body.childNodes].forEach(renderNode);
 
   return y;

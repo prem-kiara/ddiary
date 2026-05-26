@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useConfirm } from '../contexts/ConfirmContext';
 import { ChevronLeft, Edit3, Trash2, Archive, RotateCcw, Share2, Download, Users } from 'lucide-react';
 import { TagBadge } from './shared/Pills';
 import { parseDate } from '../utils/dates';
@@ -118,6 +119,7 @@ function renderContent(content) {
 
 export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, onUnarchive, showToast }) {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const [shareOpen,       setShareOpen]       = useState(false);
   const [collaborateOpen, setCollaborateOpen] = useState(false);
   const [sharingDiary,    setSharingDiary]    = useState(false);
@@ -253,16 +255,16 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
                 <RotateCcw size={14} /> Unarchive
               </button>
             ) : (
-              <button className="btn btn-sm btn-outline" onClick={() => {
-                if (window.confirm('Archive this entry? You can find it in the Archived section anytime.')) {
+              <button className="btn btn-sm btn-outline" onClick={async () => {
+                if (await confirm('Archive this entry? You can find it in the Archived section anytime.', { okText: 'Archive' })) {
                   onArchive(entry.id);
                 }
               }}>
                 <Archive size={14} /> Archive
               </button>
             )}
-            <button className="btn btn-sm btn-red" onClick={() => {
-              if (window.confirm('Are you sure you want to delete this entry?')) {
+            <button className="btn btn-sm btn-red" onClick={async () => {
+              if (await confirm('Are you sure you want to delete this entry?', { danger: true, okText: 'Delete' })) {
                 onDelete(entry.id);
               }
             }}>

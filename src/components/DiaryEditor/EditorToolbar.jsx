@@ -1,4 +1,4 @@
-import { Bold, Italic, Underline, Strikethrough, List, ListOrdered, Table2 } from 'lucide-react';
+import { Bold, Italic, Underline, Strikethrough, List, ListOrdered, Table2, Undo2, Redo2, History } from 'lucide-react';
 import { HIGHLIGHT_COLORS, toolbarBtnStyle, applyHover } from './constants';
 
 /**
@@ -8,6 +8,9 @@ import { HIGHLIGHT_COLORS, toolbarBtnStyle, applyHover } from './constants';
  * All callbacks close over parent state/refs and are passed as props.
  *
  * Props:
+ *   onUndo()                       - undo last action (also Ctrl+Z)
+ *   onRedo()                       - redo last undone action (also Ctrl+Shift+Z)
+ *   onShowHistory()                - open the version history modal
  *   onFormat(cmd)                  - execCommand wrapper (bold/italic/etc.)
  *   onHighlight(color)             - hiliteColor wrapper
  *   onToggleList(type)             - 'numbered' | 'bullet'
@@ -19,6 +22,9 @@ import { HIGHLIGHT_COLORS, toolbarBtnStyle, applyHover } from './constants';
  *   setCellBgPicker(value)         - open/close the colour picker dropdown
  */
 export default function EditorToolbar({
+  onUndo,
+  onRedo,
+  onShowHistory,
   onFormat,
   onHighlight,
   onToggleList,
@@ -42,7 +48,40 @@ export default function EditorToolbar({
       borderRadius:  8,
     }}>
 
-      {/* ── Row 1: inline formatting ── */}
+      {/* ── Undo / Redo ── */}
+      <button
+        onMouseDown={e => { e.preventDefault(); onUndo(); }}
+        title="Undo (Ctrl+Z)"
+        style={toolbarBtnStyle}
+        onMouseEnter={e => applyHover(e, true)}
+        onMouseLeave={e => applyHover(e, false)}
+      >
+        <Undo2 size={15} />
+      </button>
+      <button
+        onMouseDown={e => { e.preventDefault(); onRedo(); }}
+        title="Redo (Ctrl+Shift+Z)"
+        style={toolbarBtnStyle}
+        onMouseEnter={e => applyHover(e, true)}
+        onMouseLeave={e => applyHover(e, false)}
+      >
+        <Redo2 size={15} />
+      </button>
+
+      {/* ── Version history ── */}
+      <button
+        onMouseDown={e => { e.preventDefault(); onShowHistory(); }}
+        title="Version history — restore a previous version"
+        style={toolbarBtnStyle}
+        onMouseEnter={e => applyHover(e, true)}
+        onMouseLeave={e => applyHover(e, false)}
+      >
+        <History size={15} />
+      </button>
+
+      <div style={{ width: 1, height: 18, background: 'var(--paper-line)', margin: '0 2px' }} />
+
+      {/* ── Inline formatting ── */}
       {[
         { icon: <Bold size={15} />,          cmd: 'bold',          label: 'Bold'          },
         { icon: <Italic size={15} />,        cmd: 'italic',        label: 'Italic'        },

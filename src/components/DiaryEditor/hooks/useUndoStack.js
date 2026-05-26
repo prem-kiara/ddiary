@@ -101,5 +101,5 @@ export function useUndoStack({ editorRef, scheduleAutosave }) {
     pushUndoThrottled();
   }, [pushUndoThrottled]);
 
-  return { pushUndo, handleUndoKey, onBeforeInput };
+  return { pushUndo, undo, redo, handleUndoKey, onBeforeInput };
 }

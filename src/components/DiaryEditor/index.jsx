@@ -4,9 +4,11 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import EditorToolbar from './EditorToolbar';
+import DiaryHistoryModal from '../DiaryHistoryModal';
 import { useAutosave } from './hooks/useAutosave';
 import { useEditorSync } from './hooks/useEditorSync';
 import { useUndoStack } from './hooks/useUndoStack';
+import { saveSnapshot } from '../../utils/diaryHistory';
 import { HIGHLIGHT_COLORS, TD_STYLE } from './constants';
 import { getIndentLevel, setIndentLevel, isAtBlockStart, placeCursorAtEnd } from './utils/cursorUtils';
 import { getCurrentCell, selectCell, equalizeColumns } from './utils/tableUtils';
@@ -25,6 +27,8 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
   const [listMenu,      setListMenu]      = useState(null);
   // Row / Col background-color picker open in toolbar: null | 'row' | 'col'
   const [cellBgPicker,  setCellBgPicker]  = useState(null);
+  // Version history modal
+  const [showHistory,   setShowHistory]   = useState(false);
 
   const editorRef         = useRef(null);
   const titleRef          = useRef('');
@@ -75,7 +79,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
   // ── Custom undo/redo stack (owns Ctrl+Z / Ctrl+Y — replaces browser undo) ──
   // The editor mixes execCommand with direct DOM mutations, so browser undo
   // partially reverts changes and leaves corrupted state.  We own the full stack.
-  const { pushUndo, handleUndoKey, onBeforeInput } = useUndoStack({ editorRef, scheduleAutosave });
+  const { pushUndo, undo, redo, handleUndoKey, onBeforeInput } = useUndoStack({ editorRef, scheduleAutosave });
 
   // ── Real-time shared-diary sync (receive changes from collaborators) ──────
   const { remoteUpdateInfo } = useEditorSync({
@@ -254,11 +258,40 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
       try { localStorage.removeItem(`ddiary_draft_${entryIdRef.current}`); } catch {}
       setDraftStatus('idle');
       showToast('Entry saved!', 'success');
+
+      // Take a version snapshot on every manual save (personal + shared)
+      if (entryIdRef.current && entryIdRef.current !== 'new') {
+        saveSnapshot({
+          uid:      user?.uid,
+          entryId:  entryIdRef.current,
+          isShared: isSharedEntryRef.current,
+          title:    title.trim(),
+          content:  html,
+          savedBy:  user?.displayName || user?.email || '',
+          type:     'manual',
+        }).catch(() => {}); // best-effort — never block the save flow
+      }
     } catch {
       showToast('Failed to save entry. Please try again.', 'warning');
     }
     setSaving(false);
   };
+
+  // ── Version history restore ───────────────────────────────────────────────
+  const handleHistoryRestore = useCallback((content, restoredTitle) => {
+    pushUndo(); // snapshot current state first so Ctrl+Z can undo the restore
+    if (editorRef.current) {
+      editorRef.current.innerHTML = content;
+      fixNumberedListsInDOM(editorRef.current);
+      setIsEmpty(!content.replace(/<[^>]+>/g, '').trim());
+    }
+    if (restoredTitle) {
+      setTitle(restoredTitle);
+      titleRef.current = restoredTitle;
+    }
+    scheduleAutosave();
+    showToast('Version restored — click Save Entry to confirm.', 'success');
+  }, [pushUndo, scheduleAutosave, showToast]);
 
   // ── Editor input ──────────────────────────────────────────────────────────
   // fixNumberedListsInDOM is NOT called on every keystroke because rewriting
@@ -400,6 +433,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
 
   // ── Insert a 3×2 table at the cursor position ────────────────────────────
   const handleInsertTable = useCallback(() => {
+    pushUndo();
     editorRef.current?.focus();
     const tr = (cols) =>
       `<tr>${Array.from({ length: cols }, () =>
@@ -411,7 +445,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
       `</table><p><br></p>`;
     document.execCommand('insertHTML', false, tableHtml);
     scheduleAutosave();
-  }, [scheduleAutosave]);
+  }, [pushUndo, scheduleAutosave]);
 
   // ── Table column / row resize ────────────────────────────────────────────
   // Detects hover within 6px of a cell's right edge (col resize) or bottom
@@ -670,6 +704,11 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     const { cell, table } = tableMenu;
     setTableMenu(null);
 
+    // Snapshot current state BEFORE any change so Ctrl+Z can restore it.
+    // This is critical for table operations because they are direct DOM mutations
+    // invisible to the browser's own undo stack.
+    pushUndo();
+
     const colIdx = Array.from(cell.parentElement.children).indexOf(cell);
     const rows   = Array.from(table.querySelectorAll('tr'));
 
@@ -727,7 +766,10 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     }
 
     scheduleAutosave();
-  }, [tableMenu, scheduleAutosave]);
+    // Re-focus the editor so Ctrl+Z works immediately after a menu action
+    // (right-clicking opens the context menu and causes the editor to lose focus)
+    requestAnimationFrame(() => editorRef.current?.focus());
+  }, [tableMenu, scheduleAutosave, pushUndo]);
 
   // ── List right-click actions (restart / continue numbering) ──────────────
   const handleListMenuAction = useCallback((action) => {
@@ -1301,6 +1343,9 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
             onInsertAtCursor={insertAtCursor}
             cellBgPicker={cellBgPicker}
             setCellBgPicker={setCellBgPicker}
+            onUndo={undo}
+            onRedo={redo}
+            onShowHistory={() => setShowHistory(true)}
           />
         </div>
 
@@ -1443,6 +1488,16 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
             </div>
           ))}
         </div>
+      )}
+
+      {/* ── Version history modal ── */}
+      {showHistory && (
+        <DiaryHistoryModal
+          entryId={entryIdRef.current}
+          isShared={isSharedEntryRef.current}
+          onRestore={handleHistoryRestore}
+          onClose={() => setShowHistory(false)}
+        />
       )}
 
       {/* ── List right-click context menu (restart / continue numbering) ── */}

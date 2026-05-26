@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useConfirm } from '../contexts/ConfirmContext';
 import { BookOpen, Plus, Trash2, RotateCcw, Archive, ChevronRight, ChevronDown, FileText, Download, Users, Share2 } from 'lucide-react';
 import { formatDateTime, formatTime } from '../utils/dates';
 import { TagBadge } from './shared/Pills';
@@ -50,6 +51,7 @@ export default function DiaryList({
   loading, onView, onNew, onRestore, onPurge, onArchive, onUnarchive,
 }) {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const { sharedDiaries } = useMySharedDiaries(user?.uid);
 
   // Entries shared with me = shared diaries where I'm NOT the owner
@@ -160,9 +162,9 @@ export default function DiaryList({
                 <button
                   className="btn-icon flex-shrink-0"
                   title="Archive this entry"
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
-                    if (window.confirm('Archive this entry? Find it anytime in the Archived section below.')) {
+                    if (await confirm('Archive this entry? Find it anytime in the Archived section below.', { okText: 'Archive' })) {
                       onArchive(entry.id);
                     }
                   }}
@@ -319,8 +321,8 @@ export default function DiaryList({
                   <button
                     className="btn-icon"
                     title="Delete permanently"
-                    onClick={() => {
-                      if (window.confirm('Permanently delete this entry? This cannot be undone.')) {
+                    onClick={async () => {
+                      if (await confirm('Permanently delete this entry? This cannot be undone.', { danger: true, okText: 'Delete' })) {
                         onPurge(entry.id);
                       }
                     }}

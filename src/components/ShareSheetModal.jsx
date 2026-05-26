@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useConfirm } from '../contexts/ConfirmContext';
 import { X, UserPlus, UserMinus, Users, Clock, CheckCircle2 } from 'lucide-react';
 import { useSharedSheetLive, useSheetPendingInvites, inviteToSheet, rejectSheetInvite, removeSheetMember, syncMemberAccess } from '../hooks/useSharedSheets';
 
@@ -60,6 +61,7 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
   const acTimer   = useRef();
   const inputRef  = useRef();
 
+  const confirm = useConfirm();
   const { sheet, members, auditLog, loading } = useSharedSheetLive(sheetId);
   const pendingInvites = useSheetPendingInvites(sheetId);
   const isOwner = members.find(m => m.uid === currentUser?.uid)?.role === 'owner';
@@ -150,7 +152,7 @@ export default function ShareSheetModal({ sheetId, sheetTitle, currentUser, onCl
   };
 
   const handleRemove = async (uid) => {
-    if (!window.confirm('Remove this person from the sheet?')) return;
+    if (!await confirm('Remove this person from the sheet?', { danger: true, okText: 'Remove' })) return;
     setRemoving(uid);
     try { await removeSheetMember(sheetId, uid, currentUser?.email); } catch {}
     setRemoving(null);

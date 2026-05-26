@@ -1,4 +1,5 @@
 import { useState, useEffect, useContext } from 'react';
+import { useConfirm } from '../../contexts/ConfirmContext';
 import { User, ChevronDown, ChevronRight, Edit2, Trash2, FolderPlus, Folder } from 'lucide-react';
 import {
   addWorkspaceCategory, addWorkspaceSubcategory,
@@ -54,6 +55,7 @@ function SubcategorySection({
   onAddTaskHere, onRename, onDeleteSub,
   highlightTaskId, onHighlightTaskConsumed,
 }) {
+  const confirm = useConfirm();
   const storageKey = `ddiary_sub_${workspaceId}_${category.id}_${subcategory.id}_expanded`;
   const [expanded, setExpanded] = useState(() => {
     try { return localStorage.getItem(storageKey) === '1'; } catch { return false; }
@@ -146,8 +148,8 @@ function SubcategorySection({
               <Edit2 size={12} />
             </button>
             <button
-              onClick={() => {
-                if (window.confirm(`Delete sub-category "${subcategory.name}"? Tasks inside will be moved to the category root.`)) onDeleteSub();
+              onClick={async () => {
+                if (await confirm(`Delete sub-category "${subcategory.name}"? Tasks inside will be moved to the category root.`, { danger: true, okText: 'Delete' })) onDeleteSub();
               }}
               title="Delete sub-category"
               className="text-slate-400 hover:text-red-500 p-0.5"
@@ -210,6 +212,7 @@ function CategorySection({
   onAddTaskHere, // (categoryId, subcategoryId) => void
   highlightTaskId, onHighlightTaskConsumed,
 }) {
+  const confirm = useConfirm();
   const [expanded, setExpanded] = useState(false);
 
   const [renaming,   setRenaming]   = useState(false);
@@ -281,7 +284,7 @@ function CategorySection({
   };
 
   const handleDeleteCategory = async () => {
-    if (!window.confirm(`Delete category "${category.name}"? Tasks inside will become uncategorized.`)) return;
+    if (!await confirm(`Delete category "${category.name}"? Tasks inside will become uncategorized.`, { danger: true, okText: 'Delete' })) return;
     try { await deleteWorkspaceCategory(workspaceId, category.id); }
     catch (e) { toastError('Failed to delete category', e); }
   };

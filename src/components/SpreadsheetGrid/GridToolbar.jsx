@@ -1,4 +1,4 @@
-import { Bold, Italic, Plus, Filter, Download } from 'lucide-react';
+import { Bold, Italic, Plus, Filter, Download, History } from 'lucide-react';
 import { ck } from './formulaEngine';
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
@@ -37,6 +37,8 @@ export default function GridToolbar({
   redo,
   undoStack,
   redoStack,
+  // history
+  onShowHistory,
   // download
   downloading,
   setDownloading,
@@ -178,6 +180,14 @@ export default function GridToolbar({
         disabled={!redoStack.current.length}
         style={{ ...tbtnStyle(false), opacity: redoStack.current.length ? 1 : 0.35 }}
       >↪ Redo</button>
+
+      <button
+        onMouseDown={e => { e.preventDefault(); onShowHistory(); }}
+        title="Version history — restore a previous version"
+        style={tbtnStyle(false)}
+      >
+        <History size={13} /> History
+      </button>
 
       <div style={divider} />
 

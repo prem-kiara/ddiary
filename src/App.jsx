@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Routes, Route, Navigate, useNavigate, useParams, useLocation } from 'react-router-dom';
 import * as tabCoordinator from './utils/tabCoordinator';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { ConfirmProvider } from './contexts/ConfirmContext';
 import { useEntries, useTasks, useTeamMembers, useSheets } from './hooks/useFirestore';
 import { useNotifications } from './hooks/useNotifications';
 import { useReminderDispatcher } from './hooks/useReminderDispatcher';
@@ -483,7 +484,9 @@ function DiaryApp() {
 export default function App() {
   return (
     <AuthProvider>
-      <DiaryApp />
+      <ConfirmProvider>
+        <DiaryApp />
+      </ConfirmProvider>
     </AuthProvider>
   );
 }

@@ -6,6 +6,7 @@
  * v2: adds Share Sheet feature — share button per card, "Shared with me" section.
  */
 import { useState } from 'react';
+import { useConfirm } from '../contexts/ConfirmContext';
 import {
   Plus, Table2, Trash2, FileSpreadsheet,
   Archive, RotateCcw, ChevronRight, ChevronDown,
@@ -33,6 +34,7 @@ export default function SpreadsheetList({
   onOpenShared,
 }) {
   const { user } = useAuth();
+  const confirm = useConfirm();
   const { sharedSheets: collaboratedSheets } = useMySharedSheets(user?.uid);
 
   const [newTitle,     setNewTitle]     = useState('');
@@ -188,9 +190,9 @@ export default function SpreadsheetList({
                     <button
                       className="btn-icon flex-shrink-0"
                       title="Archive this sheet"
-                      onClick={e => {
+                      onClick={async e => {
                         e.stopPropagation();
-                        if (window.confirm('Archive this sheet? You can restore it from the Archived section below.')) {
+                        if (await confirm('Archive this sheet? You can restore it from the Archived section below.', { okText: 'Archive' })) {
                           onArchive(sheet.id);
                         }
                       }}
@@ -200,9 +202,9 @@ export default function SpreadsheetList({
                     <button
                       className="btn-icon flex-shrink-0"
                       title="Move to trash"
-                      onClick={e => {
+                      onClick={async e => {
                         e.stopPropagation();
-                        if (window.confirm(`Move "${sheet.title || 'Untitled Sheet'}" to trash?`)) {
+                        if (await confirm(`Move "${sheet.title || 'Untitled Sheet'}" to trash?`, { okText: 'Move to Trash' })) {
                           onTrash(sheet.id);
                         }
                       }}
@@ -354,8 +356,8 @@ export default function SpreadsheetList({
                   <button
                     className="btn-icon"
                     title="Delete permanently"
-                    onClick={() => {
-                      if (window.confirm('Permanently delete this sheet? This cannot be undone.')) {
+                    onClick={async () => {
+                      if (await confirm('Permanently delete this sheet? This cannot be undone.', { danger: true, okText: 'Delete' })) {
                         onPurge(sheet.id);
                       }
                     }}

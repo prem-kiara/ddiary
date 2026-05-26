@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useConfirm } from '../contexts/ConfirmContext';
 import {
   Phone, Search, RefreshCw, Check, X, Edit2, Trash2, AlertCircle,
 } from 'lucide-react';
@@ -29,6 +30,7 @@ import Avatar from './shared/Avatar';
  */
 export default function ContactsSection({ showToast }) {
   const { members, saveContactPhone } = useTeamMembers();
+  const confirm = useConfirm();
 
   // Overrides map: email (lowercase) → { email, name, phone }
   const overrides = useMemo(() => {
@@ -159,7 +161,7 @@ export default function ContactsSection({ showToast }) {
 
   const clearOverride = async (row) => {
     if (!row.phoneOverride) return;
-    if (!window.confirm(`Clear the saved phone for ${row.name}? Future assignments will use the directory value ("${row.phoneGraph || 'none'}").`)) return;
+    if (!await confirm(`Clear the saved phone for ${row.name}? Future assignments will use the directory value ("${row.phoneGraph || 'none'}").`, { okText: 'Clear' })) return;
     setSaving(true);
     try {
       await saveContactPhone(row.email, row.name, '');

@@ -25,6 +25,15 @@ service cloud.firestore {
       match /entries/{entryId} {
         allow read, write: if isSuperAdmin()
                             || (request.auth != null && request.auth.uid == userId);
+
+        // Version history snapshots — owner read/write; immutable once written
+        match /history/{histId} {
+          allow read, create: if isSuperAdmin()
+                               || (request.auth != null && request.auth.uid == userId);
+          allow update: if false; // snapshots are immutable
+          allow delete: if isSuperAdmin()
+                         || (request.auth != null && request.auth.uid == userId);
+        }
       }
 
       // Tasks — owner full control; assignee can read/update; super admin can do anything
@@ -63,6 +72,15 @@ service cloud.firestore {
       match /sheets/{sheetId} {
         allow read, write: if isSuperAdmin()
                             || (request.auth != null && request.auth.uid == userId);
+
+        // Version history snapshots — owner read/create; immutable once written
+        match /history/{histId} {
+          allow read, create: if isSuperAdmin()
+                               || (request.auth != null && request.auth.uid == userId);
+          allow update: if false; // snapshots are immutable
+          allow delete: if isSuperAdmin()
+                         || (request.auth != null && request.auth.uid == userId);
+        }
       }
 
       // Team members — owner only (super admin can read/write any)
@@ -298,6 +316,13 @@ service cloud.firestore {
         allow read:           if isSuperAdmin() || isSharedMember();
         allow update, delete: if false;
       }
+
+      // Version history snapshots — any sheet member can read/create; immutable once written
+      match /history/{histId} {
+        allow read, create: if isSuperAdmin() || isSharedMember();
+        allow update: if false; // snapshots are immutable
+        allow delete: if isSuperAdmin() || isSharedOwner();
+      }
     }
 
     // ─── Shared Diaries ────────────────────────────────────────────────────────
@@ -331,6 +356,13 @@ service cloud.firestore {
                        || (request.auth != null && request.auth.uid == memberId)
                        || (request.auth != null &&
                            get(/databases/$(database)/documents/sharedDiaries/$(diaryId)).data.ownerId == request.auth.uid);
+      }
+
+      // Version history snapshots — any diary member can read/create; immutable once written
+      match /history/{histId} {
+        allow read, create: if isSuperAdmin() || isSharedDiaryMember();
+        allow update: if false; // snapshots are immutable
+        allow delete: if isSuperAdmin() || isSharedDiaryOwner();
       }
     }
 
