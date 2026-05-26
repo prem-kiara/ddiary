@@ -100,7 +100,7 @@ function SheetListPage({
   );
 }
 
-function SheetGridPage({ sheets, onSave }) {
+function SheetGridPage({ sheets, onSave, showToast }) {
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -129,6 +129,7 @@ function SheetGridPage({ sheets, onSave }) {
       onBack={() => navigate('/sheets')}
       isShared={isShared}
       sharedSheetId={isShared ? sheet.id : null}
+      showToast={showToast}
     />
   );
 }
@@ -457,6 +458,7 @@ function DiaryApp() {
               <SheetGridPage
                 sheets={sheets}
                 onSave={updateSheet}
+                showToast={showToast}
               />
             }
           />

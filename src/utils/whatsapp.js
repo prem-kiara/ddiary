@@ -79,3 +79,51 @@ export function sendTaskWhatsApp(task, { user, showToast, fromFallback = 'Your m
   window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank');
   return true;
 }
+
+// ── Diary share ───────────────────────────────────────────────────────────────
+
+export function buildDiaryWhatsAppMessage({ title, senderName, recipientName }) {
+  const greeting = recipientName ? `Hi ${recipientName},` : 'Hi,';
+  return (
+    `${greeting}\n\n` +
+    `*${senderName || 'Someone'}* wanted to share a diary entry with you:\n\n` +
+    `📖 *${title || 'Diary Entry'}*\n\n` +
+    `🔗 View in app: ${APP_URL}/diary\n\n` +
+    `— ${senderName || 'Dhanam'}`
+  );
+}
+
+export function sendDiaryWhatsApp({ title, phone, senderName, recipientName, showToast }) {
+  if (!phone) {
+    showToast?.('No phone number for this contact.', 'warning');
+    return false;
+  }
+  const formatted = formatWhatsAppPhone(phone);
+  const msg = buildDiaryWhatsAppMessage({ title, senderName, recipientName });
+  window.open(`https://wa.me/${formatted}?text=${encodeURIComponent(msg)}`, '_blank');
+  return true;
+}
+
+// ── Sheet share ───────────────────────────────────────────────────────────────
+
+export function buildSheetWhatsAppMessage({ title, senderName, recipientName }) {
+  const greeting = recipientName ? `Hi ${recipientName},` : 'Hi,';
+  return (
+    `${greeting}\n\n` +
+    `*${senderName || 'Someone'}* wanted to share a spreadsheet with you:\n\n` +
+    `📊 *${title || 'Spreadsheet'}*\n\n` +
+    `🔗 View in app: ${APP_URL}/sheets\n\n` +
+    `— ${senderName || 'Dhanam'}`
+  );
+}
+
+export function sendSheetWhatsApp({ title, phone, senderName, recipientName, showToast }) {
+  if (!phone) {
+    showToast?.('No phone number for this contact.', 'warning');
+    return false;
+  }
+  const formatted = formatWhatsAppPhone(phone);
+  const msg = buildSheetWhatsAppMessage({ title, senderName, recipientName });
+  window.open(`https://wa.me/${formatted}?text=${encodeURIComponent(msg)}`, '_blank');
+  return true;
+}

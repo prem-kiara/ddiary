@@ -1,4 +1,4 @@
-import { Bold, Italic, Plus, Filter, Download, History } from 'lucide-react';
+import { Bold, Italic, Plus, Filter, Download, History, Send } from 'lucide-react';
 import { ck } from './formulaEngine';
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
@@ -39,6 +39,9 @@ export default function GridToolbar({
   redoStack,
   // history
   onShowHistory,
+  // send
+  onSend,
+  showSendPanel,
   // download
   downloading,
   setDownloading,
@@ -187,6 +190,14 @@ export default function GridToolbar({
         style={tbtnStyle(false)}
       >
         <History size={13} /> History
+      </button>
+
+      <button
+        onMouseDown={e => { e.preventDefault(); onSend?.(); }}
+        title="Send this sheet to someone via Email or WhatsApp"
+        style={{ ...tbtnStyle(showSendPanel), ...(showSendPanel ? { color: '#15803d', borderColor: '#15803d' } : {}) }}
+      >
+        <Send size={13} /> Send
       </button>
 
       <div style={divider} />

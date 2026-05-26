@@ -1,12 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   ChevronDown, Send, Check as CheckIcon, Save,
-  MessageCircle, Activity as ActivityIcon, UserCheck, X,
+  MessageCircle, Activity as ActivityIcon, UserCheck, X, Mail, Loader2,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useWorkspaceComments, useWorkspaceActivity, addWorkspaceComment, updateWorkspaceTask } from '../hooks/useWorkspace';
-import { notifyTaskReassigned } from '../utils/emailNotifications';
+import { notifyTaskReassigned, sendTaskEmailNow } from '../utils/emailNotifications';
+import { sendTaskWhatsApp } from '../utils/whatsapp';
 import { searchOrgPeopleDebounced } from '../utils/graphPeopleSearch';
+import { useTeamMembers } from '../hooks/useFirestore';
 import { logError } from '../utils/errorLogger';
 
 // ── Status config ─────────────────────────────────────────────────────────────
@@ -28,10 +30,17 @@ const formatTime = (ts) => {
 //   Comments/Activity tab pair. Used by the inline-collapsible task card in
 //   the Team Board view, where status/reassign live elsewhere (status badge
 //   popover on the card header, reassign lives in the full-detail modal).
-export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = false, onClose, compact = false }) {
+export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = false, onClose, compact = false, showToast }) {
   const { user } = useAuth();
+  const { members } = useTeamMembers();
   const { comments } = useWorkspaceComments(workspaceId, task.id);
   const { activity }  = useWorkspaceActivity(workspaceId, task.id);
+
+  // Look up the assignee's phone from the saved contacts book
+  const assigneePhone = useMemo(() => {
+    if (!task.assigneeEmail) return '';
+    return members.find(m => m.email?.toLowerCase() === task.assigneeEmail.toLowerCase())?.phone || '';
+  }, [members, task.assigneeEmail]);
 
   // Current user is the assignee if UID matches OR email matches (case-insensitive)
   const isAssignee = !!(
@@ -45,6 +54,7 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
   const [commentText,  setCommentText]  = useState('');
   const [saving,       setSaving]       = useState(false);
   const [statusSaving, setStatusSaving] = useState(false);
+  const [emailSending, setEmailSending] = useState(false);
 
   // Pending status — clicking a button only stages the change; must be saved explicitly
   const [pendingStatus, setPendingStatus] = useState(null);
@@ -168,6 +178,36 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
       setReassignError('Failed to reassign. Please try again.');
     }
     setReassigning(false);
+  };
+
+  // ── On-demand Email / WhatsApp for the task assignee ───────────────────────
+  const handleEmailNow = async () => {
+    if (!task.assigneeEmail) return;
+    setEmailSending(true);
+    try {
+      await sendTaskEmailNow({
+        toEmail:     task.assigneeEmail,
+        toName:      task.assigneeName,
+        taskText:    task.text,
+        taskId:      task.id,
+        workspaceId,
+        dueDate:     task.dueDate,
+        priority:    task.priority || 'medium',
+        notes:       task.notes,
+        senderName:  user.displayName || user.email,
+      });
+      showToast?.(`Email sent to ${task.assigneeName || task.assigneeEmail}.`, 'success');
+    } catch {
+      showToast?.('Could not send email. Please try again.', 'warning');
+    }
+    setEmailSending(false);
+  };
+
+  const handleWhatsApp = () => {
+    sendTaskWhatsApp(
+      { ...task, assigneePhone, workspaceId },
+      { user, showToast, fromFallback: 'Your manager' },
+    );
   };
 
   const actionColor = {
@@ -393,6 +433,51 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
                 )}
               </div>
             </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Email Now + WhatsApp (non-compact, assignee must be set) ────────── */}
+      {!compact && task.assigneeEmail && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+          <button
+            onClick={handleEmailNow}
+            disabled={emailSending}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '7px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+              cursor: emailSending ? 'not-allowed' : 'pointer',
+              border: 'none', background: '#2563eb', color: '#fff',
+              opacity: emailSending ? 0.6 : 1, transition: 'opacity 0.15s',
+            }}
+          >
+            {emailSending
+              ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+              : <Mail size={13} />}
+            {emailSending ? 'Sending…' : 'Email Now'}
+          </button>
+          <button
+            onClick={handleWhatsApp}
+            disabled={!assigneePhone}
+            title={!assigneePhone
+              ? 'No phone number saved for this contact. Add it in Settings → Contacts.'
+              : `Send WhatsApp to ${task.assigneeName || task.assigneeEmail}`}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '7px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+              cursor: !assigneePhone ? 'not-allowed' : 'pointer',
+              border: 'none',
+              background: assigneePhone ? '#25D366' : '#e2e8f0',
+              color: assigneePhone ? '#fff' : '#94a3b8',
+              transition: 'opacity 0.15s',
+            }}
+          >
+            <MessageCircle size={13} /> WhatsApp
+          </button>
+          {!assigneePhone && (
+            <span style={{ fontSize: 11, color: '#94a3b8' }}>
+              No phone — add in Settings → Contacts
+            </span>
           )}
         </div>
       )}

@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useConfirm } from '../contexts/ConfirmContext';
-import { ChevronLeft, Edit3, Trash2, Archive, RotateCcw, Share2, Download, Users } from 'lucide-react';
+import { ChevronLeft, Edit3, Trash2, Archive, RotateCcw, Share2, Download, Users, Send } from 'lucide-react';
 import { TagBadge } from './shared/Pills';
 import { parseDate } from '../utils/dates';
 import ShareEntryModal from './ShareEntryModal';
+import SendNowPanel from './shared/SendNowPanel';
 import ShareDiaryModal from './ShareDiaryModal';
 import { downloadEntryAsPDF } from '../utils/exportUtils';
 import { shareDiary } from '../hooks/useSharedDiaries';
@@ -124,6 +125,7 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
   const [collaborateOpen, setCollaborateOpen] = useState(false);
   const [sharingDiary,    setSharingDiary]    = useState(false);
   const [downloading,     setDownloading]     = useState(false);
+  const [showSendPanel,   setShowSendPanel]   = useState(false);
 
   // ── Live content for shared entries ─────────────────────────────────────
   const [liveContent,      setLiveContent]     = useState(entry.content || '');
@@ -229,6 +231,14 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
             </button>
             <button
               className="btn btn-sm btn-outline"
+              onClick={() => setShowSendPanel(v => !v)}
+              title="Send this entry to someone via Email or WhatsApp"
+              style={showSendPanel ? { color: '#7c3aed', borderColor: '#7c3aed' } : {}}
+            >
+              <Send size={14} /> Send
+            </button>
+            <button
+              className="btn btn-sm btn-outline"
               onClick={handleCollaborate}
               disabled={sharingDiary}
               title={entry.isShared ? 'Manage collaborators' : 'Invite people to co-edit this entry'}
@@ -272,6 +282,16 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
             </button>
           </div>
         </div>
+
+        {showSendPanel && (
+          <SendNowPanel
+            type="diary"
+            title={liveTitle || entry.title || 'Untitled Entry'}
+            showToast={showToast}
+            user={user}
+            onClose={() => setShowSendPanel(false)}
+          />
+        )}
 
         {liveUpdater && (
           <div style={{ marginBottom: 10, padding: '6px 12px', borderRadius: 8,

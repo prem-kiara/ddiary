@@ -735,11 +735,12 @@ export async function shareDiaryEntry({ entry, recipients, senderName, personalN
  * On-Demand Task Email — fired by the "Email Now" button on a task card.
  * Sends directly via Microsoft Graph (no email app needed).
  */
-export async function sendTaskEmailNow({ toEmail, toName, taskText, taskId, dueDate, priority, notes, senderName }) {
+export async function sendTaskEmailNow({ toEmail, toName, taskText, taskId, workspaceId, dueDate, priority, notes, senderName }) {
   if (!toEmail) return false;
 
   const title = (taskText || '').trim() || 'Task';
-  const taskUrl = taskId ? `${APP_URL}/tasks?task=${encodeURIComponent(taskId)}` : `${APP_URL}/tasks`;
+  let taskUrl = taskId ? `${APP_URL}/tasks?task=${encodeURIComponent(taskId)}` : `${APP_URL}/tasks`;
+  if (taskId && workspaceId) taskUrl += `&wsId=${encodeURIComponent(workspaceId)}`;
 
   const body = `
     <p style="font-size: 15px; color: #0f172a; margin: 0 0 16px;">
@@ -767,5 +768,76 @@ export async function sendTaskEmailNow({ toEmail, toName, taskText, taskId, dueD
     to: toEmail,
     subject: `Reminder: ${title.slice(0, 60)}`,
     htmlBody: wrapHtml('Task Reminder', body),
+  });
+}
+
+/**
+ * On-Demand Diary Share Email — "Email Now" from a diary entry.
+ * Sends a notification to the selected recipient with the entry title and a
+ * link to the app. (Entry content is not included — use ShareEntryModal for
+ * full content sharing.)
+ */
+export async function sendDiaryShareNow({ toEmail, toName, diaryTitle, senderName, personalNote }) {
+  if (!toEmail) return false;
+
+  const title   = (diaryTitle || 'a diary entry').trim();
+  const noteHtml = personalNote?.trim()
+    ? `<div style="background:#f8fafc;border-left:3px solid #cbd5e1;padding:10px 14px;border-radius:0 8px 8px 0;margin:0 0 16px;font-size:14px;color:#334155;font-style:italic;line-height:1.6;">${escapeHtml(personalNote.trim())}</div>`
+    : '';
+
+  const body = `
+    <p style="font-size:15px;color:#0f172a;margin:0 0 16px;">
+      Hi${toName ? ' <strong>' + escapeHtml(toName) + '</strong>' : ''},
+    </p>
+    <p style="font-size:15px;color:#0f172a;margin:0 0 16px;">
+      <strong>${escapeHtml(senderName || 'Someone')}</strong> wanted to share a diary entry with you:
+    </p>
+    <div style="background:#f5f3ff;border-left:4px solid #7c3aed;padding:16px 18px;border-radius:0 8px 8px 0;margin:0 0 16px;">
+      <p style="font-size:17px;font-weight:700;color:#1e293b;margin:0;">📖 ${escapeHtml(title)}</p>
+    </div>
+    ${noteHtml}
+    <a href="${APP_URL}/diary" style="display:inline-block;background:#7c3aed;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">
+      Open Dhanam Diary
+    </a>
+  `;
+
+  return sendEmail({
+    to: toEmail,
+    subject: `${senderName || 'Someone'} shared a diary entry: ${title.slice(0, 50)}`,
+    htmlBody: wrapHtml('Diary Entry Shared', body),
+  });
+}
+
+/**
+ * On-Demand Sheet Share Email — "Email Now" from a sheet.
+ */
+export async function sendSheetShareNow({ toEmail, toName, sheetTitle, senderName, personalNote }) {
+  if (!toEmail) return false;
+
+  const title   = (sheetTitle || 'a spreadsheet').trim();
+  const noteHtml = personalNote?.trim()
+    ? `<div style="background:#f8fafc;border-left:3px solid #cbd5e1;padding:10px 14px;border-radius:0 8px 8px 0;margin:0 0 16px;font-size:14px;color:#334155;font-style:italic;line-height:1.6;">${escapeHtml(personalNote.trim())}</div>`
+    : '';
+
+  const body = `
+    <p style="font-size:15px;color:#0f172a;margin:0 0 16px;">
+      Hi${toName ? ' <strong>' + escapeHtml(toName) + '</strong>' : ''},
+    </p>
+    <p style="font-size:15px;color:#0f172a;margin:0 0 16px;">
+      <strong>${escapeHtml(senderName || 'Someone')}</strong> wanted to share a spreadsheet with you:
+    </p>
+    <div style="background:#f0fdf4;border-left:4px solid #15803d;padding:16px 18px;border-radius:0 8px 8px 0;margin:0 0 16px;">
+      <p style="font-size:17px;font-weight:700;color:#1e293b;margin:0;">📊 ${escapeHtml(title)}</p>
+    </div>
+    ${noteHtml}
+    <a href="${APP_URL}/sheets" style="display:inline-block;background:#15803d;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">
+      Open Dhanam Sheets
+    </a>
+  `;
+
+  return sendEmail({
+    to: toEmail,
+    subject: `${senderName || 'Someone'} shared a sheet: ${title.slice(0, 50)}`,
+    htmlBody: wrapHtml('Sheet Shared', body),
   });
 }

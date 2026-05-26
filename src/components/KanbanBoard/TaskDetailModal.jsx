@@ -301,6 +301,7 @@ function TaskDetailModal({ task, workspace, workspaceId, members, onDelete, curr
             task={task}
             isAdmin={isAdmin}
             onClose={onClose}
+            showToast={showToast}
           />
         </div>
       </div>

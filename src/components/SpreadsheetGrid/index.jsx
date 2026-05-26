@@ -28,6 +28,7 @@ import { useSheetRowReminders } from '../../utils/sheetReminders';
 import { saveSheetSnapshot } from '../../utils/sheetHistory';
 import RowReminderModal from '../RowReminderModal';
 import SheetHistoryModal from '../SheetHistoryModal';
+import SendNowPanel from '../shared/SendNowPanel';
 
 import { LETTERS, FORMULA_NAMES, DEFAULT_COL_W, DEFAULT_ROW_H, MIN_COL_W, MIN_ROW_H } from './constants';
 import { ck, parseRef, displayVal, insertRowInData, deleteRowFromData, insertColInData, deleteColFromData, shiftRowComments } from './formulaEngine';
@@ -58,7 +59,7 @@ function tdStyle(selected, editing) {
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
-export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = false, sharedSheetId = null }) {
+export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = false, sharedSheetId = null, showToast }) {
   const { id: sheetId, title: initialTitle } = sheet;
   const { user } = useAuth();
   const initCols = Math.max(sheet.cols || 10, 1);
@@ -87,6 +88,7 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
   const [downloading,  setDownloading]  = useState(false);
   const [contextMenu,  setContextMenu]  = useState(null); // { x, y, row, col }
   const [showHistory,  setShowHistory]  = useState(false);
+  const [showSendPanel,setShowSendPanel]= useState(false);
   const [dragOverCol,setDragOverCol]= useState(null);
 
   // ── Comments + Reminders state ─────────────────────────────────────────────
@@ -947,6 +949,8 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
         undoStack={undoStack}
         redoStack={redoStack}
         onShowHistory={() => setShowHistory(true)}
+        onSend={() => setShowSendPanel(v => !v)}
+        showSendPanel={showSendPanel}
         downloading={downloading}
         setDownloading={setDownloading}
         title={title}
@@ -972,6 +976,17 @@ export default function SpreadsheetGrid({ sheet, onSave, onBack, isShared = fals
         fbarRef={fbarRef}
       />
       </div>
+
+      {/* ── Send Now Panel ─────────────────────────────────────────────────── */}
+      {showSendPanel && (
+        <SendNowPanel
+          type="sheet"
+          title={title || 'Untitled Sheet'}
+          showToast={showToast}
+          user={user}
+          onClose={() => setShowSendPanel(false)}
+        />
+      )}
 
       {/* Formula pointing indicator */}
       {inFormulaMode && (
