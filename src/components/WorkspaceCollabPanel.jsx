@@ -56,6 +56,34 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
   const [statusSaving, setStatusSaving] = useState(false);
   const [emailSending, setEmailSending] = useState(false);
 
+  // ── Extra recipients for on-demand email ────────────────────────────────────
+  const [extraRecipients,    setExtraRecipients]    = useState([]); // [{ name, email, phone }]
+  const [extraQuery,         setExtraQuery]         = useState('');
+  const [extraSuggestions,   setExtraSuggestions]   = useState([]);
+  const [showExtraRecip,     setShowExtraRecip]     = useState(false);
+
+  const handleExtraSearch = (val) => {
+    setExtraQuery(val);
+    if (val.trim().length >= 2) {
+      searchOrgPeopleDebounced(val.trim()).then(r => setExtraSuggestions(r || []));
+    } else {
+      setExtraSuggestions([]);
+    }
+  };
+
+  const addExtraRecipient = (person) => {
+    const email = (person.email || '').toLowerCase();
+    if (!email || extraRecipients.find(r => r.email === email) || email === task.assigneeEmail?.toLowerCase()) return;
+    const phone = members.find(m => m.email?.toLowerCase() === email)?.phone
+      || person.businessPhones?.[0] || person.mobilePhone || '';
+    setExtraRecipients(prev => [...prev, { name: person.displayName || email, email, phone }]);
+    setExtraQuery('');
+    setExtraSuggestions([]);
+  };
+
+  const removeExtraRecipient = (email) =>
+    setExtraRecipients(prev => prev.filter(r => r.email !== email));
+
   // Pending status — clicking a button only stages the change; must be saved explicitly
   const [pendingStatus, setPendingStatus] = useState(null);
   // Reset pending if the saved status changes externally (real-time update from another user)
@@ -180,23 +208,22 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
     setReassigning(false);
   };
 
-  // ── On-demand Email / WhatsApp for the task assignee ───────────────────────
+  // ── On-demand Email / WhatsApp for the task assignee + extra recipients ─────
   const handleEmailNow = async () => {
     if (!task.assigneeEmail) return;
     setEmailSending(true);
+    const senderName  = user.displayName || user.email;
+    const basePayload = { taskText: task.text, taskId: task.id, workspaceId, dueDate: task.dueDate, priority: task.priority || 'medium', notes: task.notes, senderName };
+    const allRecipients = [
+      { email: task.assigneeEmail, name: task.assigneeName || task.assigneeEmail },
+      ...extraRecipients,
+    ];
     try {
-      await sendTaskEmailNow({
-        toEmail:     task.assigneeEmail,
-        toName:      task.assigneeName,
-        taskText:    task.text,
-        taskId:      task.id,
-        workspaceId,
-        dueDate:     task.dueDate,
-        priority:    task.priority || 'medium',
-        notes:       task.notes,
-        senderName:  user.displayName || user.email,
-      });
-      showToast?.(`Email sent to ${task.assigneeName || task.assigneeEmail}.`, 'success');
+      await Promise.all(allRecipients.map(r =>
+        sendTaskEmailNow({ ...basePayload, toEmail: r.email, toName: r.name })
+      ));
+      const names = allRecipients.map(r => (r.name || r.email).split(' ')[0]).join(', ');
+      showToast?.(`Email sent to ${names}.`, 'success');
     } catch {
       showToast?.('Could not send email. Please try again.', 'warning');
     }
@@ -439,45 +466,149 @@ export default function WorkspaceCollabPanel({ workspaceId, task, isAdmin = fals
 
       {/* ── Email Now + WhatsApp (non-compact, assignee must be set) ────────── */}
       {!compact && task.assigneeEmail && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
-          <button
-            onClick={handleEmailNow}
-            disabled={emailSending}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '7px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
-              cursor: emailSending ? 'not-allowed' : 'pointer',
-              border: 'none', background: '#2563eb', color: '#fff',
-              opacity: emailSending ? 0.6 : 1, transition: 'opacity 0.15s',
-            }}
-          >
-            {emailSending
-              ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
-              : <Mail size={13} />}
-            {emailSending ? 'Sending…' : 'Email Now'}
-          </button>
-          <button
-            onClick={handleWhatsApp}
-            disabled={!assigneePhone}
-            title={!assigneePhone
-              ? 'No phone number saved for this contact. Add it in Settings → Contacts.'
-              : `Send WhatsApp to ${task.assigneeName || task.assigneeEmail}`}
-            style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              padding: '7px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
-              cursor: !assigneePhone ? 'not-allowed' : 'pointer',
-              border: 'none',
-              background: assigneePhone ? '#25D366' : '#e2e8f0',
-              color: assigneePhone ? '#fff' : '#94a3b8',
-              transition: 'opacity 0.15s',
-            }}
-          >
-            <MessageCircle size={13} /> WhatsApp
-          </button>
-          {!assigneePhone && (
-            <span style={{ fontSize: 11, color: '#94a3b8' }}>
-              No phone — add in Settings → Contacts
-            </span>
+        <div style={{ marginBottom: 14 }}>
+          {/* Primary row: buttons + "also send to" toggle */}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: showExtraRecip ? 10 : 0 }}>
+            <button
+              onClick={handleEmailNow}
+              disabled={emailSending}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '7px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+                cursor: emailSending ? 'not-allowed' : 'pointer',
+                border: 'none', background: '#2563eb', color: '#fff',
+                opacity: emailSending ? 0.6 : 1, transition: 'opacity 0.15s',
+              }}
+            >
+              {emailSending
+                ? <Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} />
+                : <Mail size={13} />}
+              {emailSending
+                ? 'Sending…'
+                : extraRecipients.length > 0
+                  ? `Email All ${1 + extraRecipients.length}`
+                  : 'Email Now'}
+            </button>
+
+            <button
+              onClick={handleWhatsApp}
+              disabled={!assigneePhone}
+              title={!assigneePhone
+                ? 'No phone number saved for this contact. Add it in Settings → Contacts.'
+                : `Send WhatsApp to ${task.assigneeName || task.assigneeEmail}`}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '7px 16px', borderRadius: 8, fontSize: 13, fontWeight: 600,
+                cursor: !assigneePhone ? 'not-allowed' : 'pointer',
+                border: 'none',
+                background: assigneePhone ? '#25D366' : '#e2e8f0',
+                color: assigneePhone ? '#fff' : '#94a3b8',
+                transition: 'opacity 0.15s',
+              }}
+            >
+              <MessageCircle size={13} /> WhatsApp
+            </button>
+
+            {/* Also send to toggle */}
+            <button
+              onClick={() => { setShowExtraRecip(v => !v); setExtraQuery(''); setExtraSuggestions([]); }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 5,
+                padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600,
+                cursor: 'pointer', border: `1px solid ${showExtraRecip ? '#2563eb44' : '#e2e8f0'}`,
+                background: showExtraRecip ? '#eff6ff' : 'transparent',
+                color: showExtraRecip ? '#2563eb' : '#64748b',
+                transition: 'all 0.15s',
+              }}
+            >
+              <Mail size={12} />
+              {extraRecipients.length > 0 ? `+${extraRecipients.length} more` : 'Also send to…'}
+            </button>
+
+            {!assigneePhone && (
+              <span style={{ fontSize: 11, color: '#94a3b8' }}>
+                No phone — add in Settings → Contacts
+              </span>
+            )}
+          </div>
+
+          {/* Extra recipients panel */}
+          {showExtraRecip && (
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 8, padding: '10px 12px' }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
+                Additional recipients
+              </div>
+
+              {/* Pills */}
+              {extraRecipients.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
+                  {extraRecipients.map(r => (
+                    <span key={r.email} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                      background: '#dbeafe', border: '1px solid #93c5fd',
+                      borderRadius: 20, padding: '3px 8px 3px 10px',
+                      fontSize: 12, fontWeight: 600, color: '#1d4ed8',
+                    }}>
+                      {r.name.split(' ')[0]}
+                      <button
+                        type="button"
+                        onClick={() => removeExtraRecipient(r.email)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#93c5fd', padding: 0, display: 'flex' }}
+                      >
+                        <X size={11} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {/* Search */}
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  value={extraQuery}
+                  onChange={e => handleExtraSearch(e.target.value)}
+                  onBlur={() => setTimeout(() => setExtraSuggestions([]), 150)}
+                  placeholder="Search name or email…"
+                  autoComplete="off"
+                  style={{
+                    width: '100%', padding: '7px 10px',
+                    border: '1px solid #e2e8f0', borderRadius: 7,
+                    fontSize: 12, fontFamily: 'var(--font-body)',
+                    background: '#fff', color: '#0f172a', outline: 'none', boxSizing: 'border-box',
+                  }}
+                />
+                {extraSuggestions.length > 0 && (
+                  <div style={{
+                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 400,
+                    background: '#fff', border: '1px solid #cbd5e1', borderRadius: 8,
+                    boxShadow: '0 4px 16px rgba(0,0,0,0.12)', marginTop: 2, overflow: 'hidden',
+                  }}>
+                    {extraSuggestions.map(p => {
+                      const email = p.email?.toLowerCase();
+                      const isAssignee = email === task.assigneeEmail?.toLowerCase();
+                      const already = extraRecipients.find(r => r.email === email);
+                      return (
+                        <div
+                          key={p.id || p.email}
+                          onMouseDown={() => !already && !isAssignee && addExtraRecipient(p)}
+                          style={{ padding: '8px 12px', cursor: (already || isAssignee) ? 'default' : 'pointer', borderBottom: '1px solid #f1f5f9', opacity: (already || isAssignee) ? 0.5 : 1 }}
+                          onMouseEnter={e => { if (!already && !isAssignee) e.currentTarget.style.background = '#f1f5f9'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
+                        >
+                          <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>
+                            {p.displayName}
+                            {isAssignee && <span style={{ fontSize: 10, color: '#d97706', marginLeft: 6 }}>assignee</span>}
+                            {already && <span style={{ fontSize: 10, color: '#2563eb', marginLeft: 6 }}>✓ added</span>}
+                          </div>
+                          <div style={{ fontSize: 11, color: '#475569' }}>{p.email}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
       )}

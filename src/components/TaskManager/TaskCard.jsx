@@ -13,6 +13,7 @@ import MemberAutocomplete from '../shared/MemberAutocomplete';
 import ReminderEditor from '../shared/ReminderEditor';
 import { normalizeReminder, computeNextSendAt, describeSchedule, describeNextSend } from '../../utils/reminders';
 import { sendTaskWhatsApp } from '../../utils/whatsapp';
+import { searchOrgPeopleDebounced } from '../../utils/graphPeopleSearch';
 import MoveToBoard from './MoveToBoard';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -52,6 +53,12 @@ function TaskDetailModal({
 
   const [panel, setPanel] = useState(null); // 'edit' | 'assign' | 'collab' | 'move' | 'reminder'
   const [sendingEmail, setSendingEmail] = useState(false);
+
+  // ── Extra recipients for on-demand email ──────────────────────────────────
+  const [showExtraRecip,   setShowExtraRecip]   = useState(false);
+  const [extraRecipients,  setExtraRecipients]  = useState([]); // [{ name, email }]
+  const [extraQuery,       setExtraQuery]       = useState('');
+  const [extraSuggestions, setExtraSuggestions] = useState([]);
 
   const taskReminder = task.reminder && typeof task.reminder === 'object' ? task.reminder : null;
   const [reminderDraft, setReminderDraft] = useState(taskReminder);
@@ -155,26 +162,49 @@ function TaskDetailModal({
     setAssignSaving(false);
   };
 
+  const handleExtraSearch = (val) => {
+    setExtraQuery(val);
+    if (val.trim().length >= 2) {
+      searchOrgPeopleDebounced(val.trim()).then(r => setExtraSuggestions(r || []));
+    } else {
+      setExtraSuggestions([]);
+    }
+  };
+
+  const addExtraRecipient = (person) => {
+    const email = (person.email || '').toLowerCase();
+    if (!email || extraRecipients.find(r => r.email === email) || email === task.assigneeEmail?.toLowerCase()) return;
+    setExtraRecipients(prev => [...prev, { name: person.displayName || email, email }]);
+    setExtraQuery('');
+    setExtraSuggestions([]);
+  };
+
+  const removeExtraRecipient = (email) =>
+    setExtraRecipients(prev => prev.filter(r => r.email !== email));
+
   const handleEmail = async () => {
     if (!task.assigneeEmail) { showToast('No email set for this task.', 'warning'); return; }
     if (sendingEmail) return;
     setSendingEmail(true);
+    const allRecipients = [
+      { email: task.assigneeEmail, name: task.assigneeName || null },
+      ...extraRecipients,
+    ];
     try {
       const { sendTaskEmailNow } = await import('../../utils/emailNotifications');
-      const ok = await sendTaskEmailNow({
-        toEmail:    task.assigneeEmail,
-        toName:     task.assigneeName || null,
+      const basePayload = {
         taskText:   task.text || '',
         taskId:     task.id || null,
         dueDate:    task.dueDate || null,
         priority:   task.priority || 'medium',
         notes:      task.notes || null,
         senderName: user?.displayName || user?.email || 'Your manager',
-      });
-      showToast(ok
-        ? `Email sent to ${task.assigneeName || task.assigneeEmail}`
-        : 'Email failed — check your Microsoft 365 sign-in',
-        ok ? 'success' : 'warning');
+      };
+      await Promise.all(allRecipients.map(r =>
+        sendTaskEmailNow({ ...basePayload, toEmail: r.email, toName: r.name })
+      ));
+      const names = allRecipients.map(r => (r.name || r.email).split(' ')[0]).join(', ');
+      showToast(`Email sent to ${names}`, 'success');
     } catch (err) {
       console.error('handleEmail error:', err);
       showToast('Email failed — please try again', 'warning');
@@ -335,6 +365,7 @@ function TaskDetailModal({
         {/* ── Action buttons ── */}
         <div style={{ padding: '14px 20px 10px', borderBottom: '1px solid #f1f5f9' }}>
           {!task.completed ? (
+            <div>
             <div className="task-action-row" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
               {task.assigneeEmail && (
                 <button
@@ -345,7 +376,24 @@ function TaskDetailModal({
                 >
                   {sendingEmail
                     ? <><Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> Sending…</>
-                    : <><Mail size={12} /> Email Now</>}
+                    : extraRecipients.length > 0
+                      ? <><Mail size={12} /> Email All {1 + extraRecipients.length}</>
+                      : <><Mail size={12} /> Email Now</>}
+                </button>
+              )}
+              {task.assigneeEmail && (
+                <button
+                  className="btn btn-sm"
+                  onClick={() => { setShowExtraRecip(v => !v); setExtraQuery(''); setExtraSuggestions([]); }}
+                  style={{
+                    border: `1px solid ${showExtraRecip ? '#2563eb44' : '#e2e8f0'}`,
+                    background: showExtraRecip ? '#eff6ff' : 'transparent',
+                    color: showExtraRecip ? '#2563eb' : '#64748b',
+                    fontSize: 12,
+                  }}
+                  title="Send to additional recipients"
+                >
+                  <Mail size={11} /> {extraRecipients.length > 0 ? `+${extraRecipients.length} more` : 'Also send to…'}
                 </button>
               )}
               {task.assigneePhone && (
@@ -397,6 +445,82 @@ function TaskDetailModal({
               >
                 <CheckCircle size={12} /> Done
               </button>
+            </div>
+
+            {/* ── Also send to panel ── */}
+            {showExtraRecip && task.assigneeEmail && (
+              <div style={{ marginTop: 8, background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: 8, padding: '10px 12px' }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: '#0369a1', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
+                  Also send to
+                </div>
+                {extraRecipients.length > 0 && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 8 }}>
+                    {extraRecipients.map(r => (
+                      <span key={r.email} style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4,
+                        background: '#dbeafe', border: '1px solid #93c5fd',
+                        borderRadius: 20, padding: '3px 8px 3px 10px',
+                        fontSize: 12, fontWeight: 600, color: '#1d4ed8',
+                      }}>
+                        {r.name.split(' ')[0]}
+                        <button
+                          type="button"
+                          onClick={() => removeExtraRecipient(r.email)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#93c5fd', padding: 0, display: 'flex' }}
+                        >
+                          <X size={11} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div style={{ position: 'relative' }}>
+                  <input
+                    type="text"
+                    value={extraQuery}
+                    onChange={e => handleExtraSearch(e.target.value)}
+                    onBlur={() => setTimeout(() => setExtraSuggestions([]), 150)}
+                    placeholder="Search name or email…"
+                    autoComplete="off"
+                    style={{
+                      width: '100%', padding: '7px 10px',
+                      border: '1px solid #bae6fd', borderRadius: 7,
+                      fontSize: 12, fontFamily: 'var(--font-body)',
+                      background: '#fff', color: '#0f172a', outline: 'none', boxSizing: 'border-box',
+                    }}
+                  />
+                  {extraSuggestions.length > 0 && (
+                    <div style={{
+                      position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 400,
+                      background: '#fff', border: '1px solid #cbd5e1', borderRadius: 8,
+                      boxShadow: '0 4px 16px rgba(0,0,0,0.12)', marginTop: 2, overflow: 'hidden',
+                    }}>
+                      {extraSuggestions.map(p => {
+                        const email = p.email?.toLowerCase();
+                        const isAssignee = email === task.assigneeEmail?.toLowerCase();
+                        const already = extraRecipients.find(r => r.email === email);
+                        return (
+                          <div
+                            key={p.id || p.email}
+                            onMouseDown={() => !already && !isAssignee && addExtraRecipient(p)}
+                            style={{ padding: '8px 12px', cursor: (already || isAssignee) ? 'default' : 'pointer', borderBottom: '1px solid #f1f5f9', opacity: (already || isAssignee) ? 0.5 : 1 }}
+                            onMouseEnter={e => { if (!already && !isAssignee) e.currentTarget.style.background = '#f1f5f9'; }}
+                            onMouseLeave={e => { e.currentTarget.style.background = '#fff'; }}
+                          >
+                            <div style={{ fontSize: 12, fontWeight: 600, color: '#0f172a' }}>
+                              {p.displayName}
+                              {isAssignee && <span style={{ fontSize: 10, color: '#d97706', marginLeft: 6 }}>assignee</span>}
+                              {already && <span style={{ fontSize: 10, color: '#2563eb', marginLeft: 6 }}>✓ added</span>}
+                            </div>
+                            <div style={{ fontSize: 11, color: '#475569' }}>{p.email}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             </div>
           ) : (
             <button className="btn btn-sm btn-outline" onClick={() => onToggle(task.id, true)}>
