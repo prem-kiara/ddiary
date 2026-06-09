@@ -11,7 +11,7 @@ import { useUndoStack } from './hooks/useUndoStack';
 import { saveSnapshot } from '../../utils/diaryHistory';
 import { HIGHLIGHT_COLORS, TD_STYLE } from './constants';
 import { getIndentLevel, setIndentLevel, isAtBlockStart, placeCursorAtEnd } from './utils/cursorUtils';
-import { getCurrentCell, selectCell, equalizeColumns } from './utils/tableUtils';
+import { getCurrentCell, selectCell, equalizeColumns, isHashTable, renumberHashColumns } from './utils/tableUtils';
 import { detectListPrefix, fixNumberedListsInDOM, normalizeBareTextNodes, legacyTextToHtml } from './utils/listUtils';
 import { register as registerUnsaved, unregister as unregisterUnsaved } from '../../utils/unsavedState';
 
@@ -283,6 +283,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     if (editorRef.current) {
       editorRef.current.innerHTML = content;
       fixNumberedListsInDOM(editorRef.current);
+      renumberHashColumns(editorRef.current);
       setIsEmpty(!content.replace(/<[^>]+>/g, '').trim());
     }
     if (restoredTitle) {
@@ -309,7 +310,11 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     // internally so running on every keystroke is safe and ensures the list
     // stays consistent no matter how content was changed (typing, paste,
     // select+delete, drag-drop, etc.).
-    requestAnimationFrame(() => fixNumberedListsInDOM(editorRef.current));
+    // renumberHashColumns runs alongside it to keep "#"-column tables in sync.
+    requestAnimationFrame(() => {
+      fixNumberedListsInDOM(editorRef.current);
+      renumberHashColumns(editorRef.current);
+    });
   }, [scheduleAutosave]);
 
   // ── Set defaultParagraphSeparator once on mount ───────────────────────────
@@ -746,7 +751,13 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
         action === 'row-above' ? 'beforebegin' : 'afterend',
         newRow,
       );
-      selectCell(newRow.children[0]);
+      // renumberHashColumns is called below; cursor skips # cell if applicable
+      {
+        const startCell = (isHashTable(table) && newRow.children[1])
+          ? newRow.children[1]
+          : newRow.children[0];
+        selectCell(startCell);
+      }
 
     } else if (action === 'row-delete') {
       const currentRow = cell.closest('tr');
@@ -765,6 +776,8 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
       if (target) placeCursorAtEnd(target, window.getSelection());
     }
 
+    // Re-number "#"-column tables after any structural row change
+    renumberHashColumns(editorRef.current);
     scheduleAutosave();
     // Re-focus the editor so Ctrl+Z works immediately after a menu action
     // (right-clicking opens the context menu and causes the editor to lose focus)
@@ -1072,7 +1085,12 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
               newRow.appendChild(td);
             }
             lastRow.insertAdjacentElement('afterend', newRow);
-            selectCell(newRow.children[0]);
+            // Auto-number "#" column tables and skip cursor past the # cell
+            renumberHashColumns(editorRef.current);
+            const startCell = (isHashTable(table) && newRow.children[1])
+              ? newRow.children[1]
+              : newRow.children[0];
+            selectCell(startCell);
             scheduleAutosave();
           }
         } else {
@@ -1115,7 +1133,12 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
         newRow.appendChild(td);
       }
       currentRow.insertAdjacentElement('afterend', newRow);
-      selectCell(newRow.children[0]);
+      // Auto-number "#" column tables and skip cursor past the # cell
+      renumberHashColumns(editorRef.current);
+      const startCell = (isHashTable(table) && newRow.children[1])
+        ? newRow.children[1]
+        : newRow.children[0];
+      selectCell(startCell);
       scheduleAutosave();
       return;
     }
