@@ -182,7 +182,7 @@ digital-diary/
 │   └── index.js                # Daily email reminders + welcome email
 │
 ├── ec2/                        # Production hosting + email backend (since 2026-05-19)
-│   ├── server.js               # Express API on 127.0.0.1:3002 — POST /api/notify → Amazon SES
+│   ├── server.js               # Express API on 127.0.0.1:3003 — POST /api/notify → Amazon SES
 │   ├── crons.js                # node-cron: task / sheet / daily reminders
 │   ├── ecosystem.config.js     # PM2 process manager config
 │   ├── nginx-diary.dhanamfinance.com.conf  # nginx server block (SPA + /api/ proxy)

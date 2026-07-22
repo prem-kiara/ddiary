@@ -3,7 +3,8 @@
 /**
  * ddiary-server — Express API server for Dhanam DDiary on EC2
  *
- * Listens on 127.0.0.1:3002 (localhost only — nginx proxies /api/* here).
+ * Listens on 127.0.0.1:3003 (localhost only — nginx proxies /api/* here).
+ * Port 3003 since 2026-07-22 — 3002 is occupied by codpulse on this box.
  * Authenticates every request using Firebase ID tokens (Bearer header).
  * Sends email via Amazon SES — uses EC2 IAM role automatically if attached,
  * or falls back to AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in .env.
@@ -27,7 +28,7 @@ admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 // Otherwise set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env
 const ses  = new SESClient({ region: process.env.AWS_REGION || 'ap-south-1' });
 const FROM = process.env.SENDER_EMAIL || 'tech@dhanam.finance';
-const PORT = parseInt(process.env.PORT || '3002', 10);
+const PORT = parseInt(process.env.PORT || '3003', 10);
 
 // ── Express Setup ─────────────────────────────────────────────────────────────
 const app = express();
@@ -108,7 +109,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-// IMPORTANT: bind to 127.0.0.1, not 0.0.0.0 — port 3002 must not be internet-accessible
+// IMPORTANT: bind to 127.0.0.1, not 0.0.0.0 — port 3003 must not be internet-accessible
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`[ddiary-server] Listening on 127.0.0.1:${PORT} — ${new Date().toISOString()}`);
 });

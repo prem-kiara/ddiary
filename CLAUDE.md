@@ -288,7 +288,7 @@ Bugs fixed in source (2026-05-26) but **not yet deployed to production** — dep
 | Medium | `useReminderDispatcher.js` | `user` captured at interval creation; stale after sign-out/sign-in | Reminder may fire against wrong user or fail silently — **pending fix** |
 | Medium | `ec2/crons.js` `sendDailyReminders` | Assumes `reminder.nextSendAt` is an ISO string; Firestore stores Timestamps | `new Date(timestamp)` produces `Invalid Date`; daily reminders silently skipped — **pending fix** |
 | Medium | `useEditorSync.js` | Firestore real-time listener not re-attached when a personal diary entry is converted to shared mid-session | Collaborator changes invisible until page refresh — **pending fix** |
-| Low/Security | `ec2/server.js` `/api/notify` | No recipient domain restriction — any authenticated user can send email to any address | Domain allowlist code written, **pending deploy** |
+| Low/Security | `ec2/server.js` `/api/notify` | No recipient domain restriction — any authenticated user can send email to any address | **Resolved** — domain allowlist (`ALLOWED_EMAIL_DOMAINS`, default `dhanam.finance`) confirmed deployed on EC2 2026-07-22; non-matching recipients get 403 |
 | Low | `DiaryEditor/index.jsx` | `unregisterUnsaved('diary-editor')` called in both the `useEffect` body and its cleanup | Double unregister on every `draftStatus` change — **pending fix** |
 | Low | `tabCoordinator.js` | `window.close()` fires even if the winning tab's navigate failed | Stray closed tab with no navigation — **pending fix** |
 
@@ -403,7 +403,7 @@ All EC2 server files live in `~/ddiary-server/` on the instance and in `ec2/` in
 
 ```
 ec2/
-  server.js               — Express API on 127.0.0.1:3002, POST /api/notify → SES
+  server.js               — Express API on 127.0.0.1:3003, POST /api/notify → SES (3002 belongs to codpulse)
   crons.js                — node-cron: task reminders (*/5), sheet reminders (hourly), daily digest (hourly)
   package.json            — dependencies: express, firebase-admin, @aws-sdk/client-ses, node-cron, dotenv
   ecosystem.config.js     — PM2 config for ddiary-server + ddiary-crons
@@ -415,7 +415,9 @@ ec2/
 - App root: `/var/www/ddiary/` (React `dist/` deployed here)
 - Server: `~/ddiary-server/` (server.js, crons.js, .env, service-account.json)
 - nginx config: `/etc/nginx/sites-enabled/diary.dhanamfinance.com.conf`
-- PM2 processes: `ddiary-server` (id 2), `ddiary-crons` (id 3)
+- PM2 processes: `ddiary-server` (id 1), `ddiary-crons` (id 2); `codpulse` (id 0) is a separate app — do not touch
+- Ports on this box: 3000 = next-server, 3001 = docker-proxy, 3002 = codpulse (Kiara Microcredit), **3003 = ddiary-server**, 3010 = dhanam-fi
+- nginx `sites-enabled` hosts several other apps (codpulse, deck, expense, fi, finops, gold) — only edit `diary.dhanamfinance.com.conf`
 - IAM role: `dhanam-finops-ses-role` (SES send permission, no hardcoded keys)
 - SSL: Let's Encrypt via Certbot (auto-renews)
 
@@ -460,4 +462,5 @@ pm2 restart ddiary-server   # or ddiary-crons
 | 2026-05-26 | Fixed WhatsApp task link — `buildTaskAppLink` was returning bare `/tasks` (no task ID) for personal tasks and `?workspace=` (wrong param) for workspace tasks; now uses correct deep link format: `/tasks?task=<id>` and `/tasks?task=<id>&wsId=<wsId>`; also updated `APP_URL` from legacy `dhanamdiary.web.app` to `diary.dhanamfinance.com` | `src/utils/whatsapp.js` |
 | 2026-05-26 | Multi-recipient email — `SendNowPanel` now supports adding multiple recipients (pills + search, "Email All N" button, per-pill WhatsApp); `WorkspaceCollabPanel` and `TaskCard` both gain an "Also send to…" toggle that adds extra recipients to any on-demand email send | `src/components/shared/SendNowPanel.jsx`, `src/components/WorkspaceCollabPanel.jsx`, `src/components/TaskManager/TaskCard.jsx` |
 | 2026-05-26 | On-demand Email + WhatsApp for Diary, Sheets, and Team Board tasks — added `sendDiaryShareNow`/`sendSheetShareNow` to `emailNotifications.js`; added `sendDiaryWhatsApp`/`sendSheetWhatsApp` to `whatsapp.js`; created reusable `SendNowPanel` (org search + contact phone lookup + Email Now + WhatsApp buttons); added "Send" button to `DiaryView` (inline panel below action row); added "Send" button to `GridToolbar` (inline panel below toolbar); added Email Now + WhatsApp buttons to `WorkspaceCollabPanel` non-compact mode (after Reassign section); threaded `showToast` through `TaskDetailModal` → `WorkspaceCollabPanel` and `App.jsx SheetGridPage` → `SpreadsheetGrid` | `src/utils/emailNotifications.js`, `src/utils/whatsapp.js`, `src/components/shared/SendNowPanel.jsx` (new), `src/components/DiaryView.jsx`, `src/components/SpreadsheetGrid/GridToolbar.jsx`, `src/components/SpreadsheetGrid/index.jsx`, `src/components/WorkspaceCollabPanel.jsx`, `src/components/KanbanBoard/TaskDetailModal.jsx`, `src/App.jsx` |
+| 2026-07-22 | **Incident: email + reminders silently down ~1 month (since ~2026-06-20).** codpulse (Kiara Microcredit) took over port 3002 while `ddiary-server`/`ddiary-crons` had dropped out of PM2, so nginx `/api/notify` hit codpulse and returned 404 ("Could not send email" in the app). Fix (live on EC2): DDiary moved to port 3003 (`.env`), nginx `proxy_pass` repointed, both PM2 processes restarted + `pm2 save`; codpulse left untouched on 3002. Crons then cleared the due-reminder backlog (16 sent, 0 errors; Firestore lock prevents duplicates). Repo synced to match production. | `ec2/.env.template`, `ec2/server.js`, `ec2/nginx-diary.dhanamfinance.com.conf`, `SETUP-GUIDE.md`, `CLAUDE.md` |
 | 2026-06-09 | Auto-number `#` column in DiaryEditor tables — any table whose first column header is exactly `#` now auto-numbers data rows (1, 2, 3 …) dynamically; renumbering fires on every keystroke (`handleEditorInput` rAF), on Enter/Tab new-row creation, on right-click row insert/delete, and on version history restore; cursor skips the `#` cell automatically when a new row is added via Enter or Tab | `src/components/DiaryEditor/utils/tableUtils.js`, `src/components/DiaryEditor/index.jsx` |
