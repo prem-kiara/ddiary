@@ -53,6 +53,20 @@ export function attachPointerCapture(el, handlers) {
   // Finger-pan state, used only in stylus-only mode (see handleDown).
   let panId = null, panX = 0, panY = 0;
 
+  // Diagnostics, surfaced by the ?perf=1 readout. Writing feel can only be
+  // judged on the device it happens on, so these count the events that would
+  // explain a stroke appearing late or not at all.
+  const stats = {
+    down: 0,          // pen/finger contacts accepted for drawing
+    declined: 0,      // contacts refused (palm rejection, stylus-only)
+    takeover: 0,      // pen seizing an in-progress stroke (palm landed first)
+    cancelled: 0,     // strokes discarded by the browser
+    lostCapture: 0,   // capture removed mid-stroke
+    hoverMoves: 0,    // pen moves with no contact (Apple Pencil hover)
+    lastDownGapMs: 0, // time since the previous stroke ended
+  };
+  let lastEndAt = 0;
+
   /** Nearest scrollable ancestor, or the window. */
   function scrollTargetFor(node) {
     let n = node?.parentElement;
@@ -119,6 +133,7 @@ export function attachPointerCapture(el, handlers) {
       if (e.pointerType === 'pen') {
         try { el.releasePointerCapture(activeId); } catch { /* not fatal */ }
         activeId = activeType = null;
+        stats.takeover++;
         onCancel?.();
         // fall through and let the pen claim the stroke below
       } else {
@@ -139,9 +154,12 @@ export function attachPointerCapture(el, handlers) {
       if (e.pointerType === 'touch' && policy() === DEVICE_POLICY.PEN_ONLY) {
         panId = e.pointerId; panX = e.clientX; panY = e.clientY;
       }
+      stats.declined++;
       return;
     }
 
+    stats.down++;
+    stats.lastDownGapMs = lastEndAt ? Math.round(performance.now() - lastEndAt) : 0;
     activeId   = e.pointerId;
     activeType = e.pointerType;
     // Keep receiving moves even if the pointer leaves the element.
@@ -151,7 +169,12 @@ export function attachPointerCapture(el, handlers) {
   }
 
   function handleMove(e) {
-    if (e.pointerType === 'pen') lastPenAt = performance.now();
+    if (e.pointerType === 'pen') {
+      lastPenAt = performance.now();
+      // Apple Pencil reports moves while hovering above the glass. If these
+      // arrive in bulk between strokes they are pure overhead, so count them.
+      if (activeId === null) stats.hoverMoves++;
+    }
 
     if (panId !== null && e.pointerId === panId) {
       panBy(e.clientX - panX, e.clientY - panY);
@@ -175,6 +198,7 @@ export function attachPointerCapture(el, handlers) {
     if (e.pointerId !== activeId) return;
     try { el.releasePointerCapture(e.pointerId); } catch { /* not fatal */ }
     activeId = activeType = null;
+    lastEndAt = performance.now();
     onEnd(toSample(e));
   }
 
@@ -183,6 +207,7 @@ export function attachPointerCapture(el, handlers) {
     if (e.pointerId === panId) panId = null;
     if (e.pointerId !== activeId) return;
     activeId = activeType = null;
+    stats.cancelled++;
     onCancel?.();
   }
 
@@ -200,10 +225,22 @@ export function attachPointerCapture(el, handlers) {
   el.addEventListener('pointerup',     handleUp);
   el.addEventListener('pointerleave',  handleUp);
   el.addEventListener('pointercancel', handleCancel);
-  // Safety net for the same stuck-stroke problem: if the browser takes capture
-  // away (system gesture, app switch) no pointerup may ever arrive, so release
+  // Safety net for the stuck-stroke problem: if the browser takes capture away
+  // (system gesture, app switch) no pointerup may ever arrive, so release
   // ownership here rather than blocking every subsequent stroke.
-  el.addEventListener('lostpointercapture', handleCancel);
+  //
+  // This *ends* the stroke rather than cancelling it. Normally it fires after
+  // handleUp has already cleared activeId and is a no-op — but if it ever
+  // arrives first, discarding the stroke would throw away ink the user had
+  // just written, which is far worse than committing a slightly short one.
+  function handleLostCapture(e) {
+    if (e.pointerId === panId) panId = null;
+    if (e.pointerId !== activeId) return;
+    activeId = activeType = null;
+    stats.lostCapture++;
+    onEnd(toSample(e));
+  }
+  el.addEventListener('lostpointercapture', handleLostCapture);
 
   return {
     detach() {
@@ -213,8 +250,9 @@ export function attachPointerCapture(el, handlers) {
       el.removeEventListener('pointerup',     handleUp);
       el.removeEventListener('pointerleave',  handleUp);
       el.removeEventListener('pointercancel', handleCancel);
-      el.removeEventListener('lostpointercapture', handleCancel);
+      el.removeEventListener('lostpointercapture', handleLostCapture);
     },
+    stats,
     isDrawing: () => activeId !== null,
   };
 }

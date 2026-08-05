@@ -68,6 +68,10 @@ export function createInkEngine({
   let pendingFull = false;
   let pendingBox = null;
   let lastShownBox = null;   // area the live stroke covered on the previous frame
+  // Time from the pen touching down to the frame that first shows its ink.
+  // This is the number that actually corresponds to "it feels laggy".
+  let strokeDownAt = 0;
+  let lastInkLatency = 0;
   let rafHandle = 0;
   let destroyed = false;
 
@@ -211,6 +215,7 @@ export function createInkEngine({
       const full = pendingFull || !region;
       pendingFull = false; pendingBox = null; partialPending = false;
       repaint(full ? null : region);
+      if (strokeDownAt) { lastInkLatency = performance.now() - strokeDownAt; strokeDownAt = 0; }
     });
   }
 
@@ -294,6 +299,7 @@ export function createInkEngine({
       return;
     }
 
+    strokeDownAt = performance.now();
     stabilizer = createStabilizer(stabilizerCfg);
     pressureResolver = createPressureResolver({});
     live = createStroke({ tool: tool.type, color: tool.color, size: tool.size });
@@ -432,6 +438,9 @@ export function createInkEngine({
       if (!strokes.length) return;
       apply({ added: [], removed: [...strokes] });
     },
+
+    /** Diagnostics for the ?perf=1 readout. */
+    getStats: () => ({ ...capture.stats, inkLatencyMs: Math.round(lastInkLatency) }),
 
     getStrokes:  () => strokes,
     isEmpty:     () => strokes.length === 0,

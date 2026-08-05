@@ -267,8 +267,15 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
       const dt = t - last; last = t;
       if (dt < 1000) { frames++; acc += dt; if (dt > worst) worst = dt; }
       if (acc >= 500) {
-        setPerf(`${Math.round(1000 / (acc / frames))} fps · worst ${worst.toFixed(0)} ms · ` +
-                `${canvasRef.current?.width}×${canvasRef.current?.height}`);
+        const s = engineRef.current?.getStats?.();
+        setPerf(
+          `${Math.round(1000 / (acc / frames))}fps worst ${worst.toFixed(0)}ms · ` +
+          (s
+            ? `ink ${s.inkLatencyMs}ms · down ${s.down} declined ${s.declined} ` +
+              `takeover ${s.takeover} cancel ${s.cancelled} lost ${s.lostCapture} ` +
+              `hover ${s.hoverMoves} gap ${s.lastDownGapMs}ms`
+            : '')
+        );
         worst = 0; frames = 0; acc = 0;
       }
       raf = requestAnimationFrame(tick);
