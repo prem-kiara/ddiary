@@ -15,6 +15,7 @@ import { X, Pen, Highlighter, Eraser, Undo2, Redo2, Trash2, Check, Shapes } from
 import { createInkEngine } from '../ink/inkEngine';
 import {
   useInkTools,
+  SHAPES_ENABLED,
   INK_COLORS as COLORS,
   INK_SIZES as SIZES,
   INK_BACKGROUNDS as BACKGROUNDS,
@@ -133,13 +134,15 @@ export default function InkBlockModal({ initialDoc, onSave, onClose }) {
             <button style={toolBtn(mode === 'pen')}         onClick={() => setMode('pen')}><Pen size={14} /> Pen</button>
             <button style={toolBtn(mode === 'highlighter')} onClick={() => setMode('highlighter')}><Highlighter size={14} /> Marker</button>
             <button style={toolBtn(mode === 'eraser')}      onClick={() => setMode('eraser')}><Eraser size={14} /> Eraser</button>
-            <button
-              style={toolBtn(shapes)}
-              onClick={() => setShapes(v => !v)}
-              title="Shapes: straighten lines and snap rough boxes, circles and triangles when you lift the pen. Anything unrecognised stays freehand."
-            >
-              <Shapes size={14} /> Shapes
-            </button>
+            {SHAPES_ENABLED && (
+              <button
+                style={toolBtn(shapes)}
+                onClick={() => setShapes(v => !v)}
+                title="Shapes: straighten lines and snap rough boxes, circles and triangles when you lift the pen. Anything unrecognised stays freehand."
+              >
+                <Shapes size={14} /> Shapes
+              </button>
+            )}
           </div>
 
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>

@@ -22,7 +22,7 @@ import {
 import { createInkEngine } from '../ink/inkEngine';
 import { inkBlockHtml, decodeInk, contentInkBytes, INK_CLASS, INK_ATTR } from '../ink/inkHtml';
 import {
-  useInkTools, INK_COLORS, INK_SIZES, INK_BACKGROUNDS, INK_SMOOTHING,
+  useInkTools, SHAPES_ENABLED, INK_COLORS, INK_SIZES, INK_BACKGROUNDS, INK_SMOOTHING,
 } from './ink/useInkTools';
 import { register as registerUnsaved, unregister as unregisterUnsaved } from '../utils/unsavedState';
 import { useConfirm } from '../contexts/ConfirmContext';
@@ -324,10 +324,12 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
         <button style={btn(mode === 'pen')}         onClick={() => setMode('pen')}><Pen size={14} /> Pen</button>
         <button style={btn(mode === 'highlighter')} onClick={() => setMode('highlighter')}><Highlighter size={14} /> Marker</button>
         <button style={btn(mode === 'eraser')}      onClick={() => setMode('eraser')}><Eraser size={14} /> Eraser</button>
-        <button style={btn(shapes)} onClick={() => setShapes(v => !v)}
-                title="Straighten lines and snap rough boxes, circles and triangles on pen-up">
-          <Shapes size={14} /> Shapes
-        </button>
+        {SHAPES_ENABLED && (
+          <button style={btn(shapes)} onClick={() => setShapes(v => !v)}
+                  title="Straighten lines and snap rough boxes, circles and triangles on pen-up">
+            <Shapes size={14} /> Shapes
+          </button>
+        )}
         <span style={{ flex: 1 }} />
         <button className="btn btn-sm btn-outline" onClick={() => engineRef.current?.undo()} title="Undo (Ctrl+Z)"><Undo2 size={14} /></button>
         <button className="btn btn-sm btn-outline" onClick={() => engineRef.current?.redo()} title="Redo (Ctrl+Shift+Z)"><Redo2 size={14} /></button>
