@@ -168,7 +168,7 @@ functions/
 Set in `.env` (frontend, never committed):
 ```
 VITE_FIREBASE_API_KEY
-VITE_FIREBASE_AUTH_DOMAIN
+VITE_FIREBASE_AUTH_DOMAIN         # currently ddiary-a72ca.firebaseapp.com — see the note below before changing
 VITE_FIREBASE_PROJECT_ID
 VITE_FIREBASE_STORAGE_BUCKET
 VITE_FIREBASE_MESSAGING_SENDER_ID
@@ -186,6 +186,45 @@ Cloud Functions env file (`functions/.env`):
 ```
 SENDER_EMAIL=tech@dhanam.finance
 ```
+
+
+### Firebase authDomain — do NOT change without these prerequisites
+
+Current value is `ddiary-a72ca.firebaseapp.com`. It works for browsers and must
+stay that way until the two prerequisites below are done.
+
+**Why anyone would want to change it:** Firebase parks its sign-in handshake
+state on the authDomain origin. When that differs from the app's origin it is
+*third-party storage*, which WebKit blocks (Safari 16.1+ and every iOS WebView).
+`signInWithRedirect` therefore fails silently in the iOS app — correct password,
+no session, bounced back to the sign-in page. Serving the handler from our own
+domain makes the handshake first-party and fixes it.
+
+**Attempted 2026-08-05 and rolled back the same night.** Flipping authDomain
+alone broke sign-in immediately with `AADSTS50011`, because the redirect URI
+becomes `https://diary.dhanamfinance.com/__/auth/handler`, which was not
+registered in Azure. The popup path uses the same URI, so browsers broke too.
+
+**Required order if this is attempted again:**
+
+1. **Azure** — app registration `1e2755ba-bac8-4556-84bf-e3a52bf3114e` →
+   Authentication → add redirect URI
+   `https://diary.dhanamfinance.com/__/auth/handler`.
+   Keep the existing firebaseapp.com URI; both can coexist, so nothing breaks
+   mid-switch.
+2. **Service worker** — exclude `/__/auth/` from the navigation fallback. The
+   PWA service worker otherwise serves cached `index.html` for the handler URL,
+   so the sign-in popup renders the app instead of Firebase's handler.
+3. **Only then** set `VITE_FIREBASE_AUTH_DOMAIN=diary.dhanamfinance.com`,
+   rebuild and deploy.
+
+**nginx is already prepared** — `/__/auth/` proxies to Firebase and was verified
+byte-identical to the real handler. That block is inert while authDomain points
+at firebaseapp.com, so it is safe to leave in place.
+
+**Verifying any auth change:** unregister the service worker before testing, or
+the browser serves a cached bundle and the test cannot fail — which is exactly
+how the 2026-08-05 breakage got past a "login still works" check.
 
 ---
 
