@@ -255,6 +255,28 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
     setSaving(false);
   }, [capture, title, onSave, showToast, editingEntry, user]);
 
+  // ── Optional on-device performance readout ────────────────────────────────
+  // Add ?perf=1 to the URL to show live frame timing in the footer. Writing
+  // performance can only really be judged on the tablet it is used on, and
+  // this turns "it feels laggy" into a number that can be acted on.
+  const [perf, setPerf] = useState('');
+  useEffect(() => {
+    if (!new URLSearchParams(window.location.search).has('perf')) return;
+    let raf = 0, last = performance.now(), worst = 0, frames = 0, acc = 0;
+    const tick = (t) => {
+      const dt = t - last; last = t;
+      if (dt < 1000) { frames++; acc += dt; if (dt > worst) worst = dt; }
+      if (acc >= 500) {
+        setPerf(`${Math.round(1000 / (acc / frames))} fps · worst ${worst.toFixed(0)} ms · ` +
+                `${canvasRef.current?.width}×${canvasRef.current?.height}`);
+        worst = 0; frames = 0; acc = 0;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   // ── Shortcuts ─────────────────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (ev) => {
@@ -421,6 +443,11 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
 
       <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 8, textAlign: 'center' }}>
         {dirty ? 'Unsaved changes' : 'Write with a stylus or finger · Ctrl+Z to undo · Ctrl+S to save'}
+        {perf && (
+          <span style={{ marginLeft: 10, fontVariantNumeric: 'tabular-nums', color: '#7c3aed' }}>
+            · {perf}
+          </span>
+        )}
       </div>
     </div>
   );

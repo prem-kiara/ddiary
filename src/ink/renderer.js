@@ -142,11 +142,35 @@ export function drawBackground(ctx, type, width, height, dpr = 1) {
 }
 
 /**
+ * Largest backing store we will allocate per canvas layer.
+ *
+ * A full A4 page at 900 CSS px wide on a 2× display is 1800×2546 ≈ 4.6 M
+ * pixels, i.e. ~18 MB — and the engine keeps three layers (visible, background,
+ * committed ink), so ~55 MB that the browser must re-composite whenever
+ * anything changes. On an iPad that is the dominant cost of writing, no matter
+ * how small a region we actually repaint.
+ *
+ * Capping the total resolves it. Ink is antialiased vector art, so a slightly
+ * lower device ratio costs very little visible sharpness; the alternative —
+ * a smaller page — costs writing space, which is worse.
+ */
+const MAX_BACKING_PIXELS = 2.6e6;
+
+/** Device ratio to use for a page of this size, reduced if it would be huge. */
+export function effectiveDpr(cssWidth, cssHeight) {
+  const dpr = window.devicePixelRatio || 1;
+  const area = Math.max(1, cssWidth * cssHeight);
+  const capped = Math.sqrt(MAX_BACKING_PIXELS / area);
+  // Never go below 1 — that would be blurrier than the CSS size itself.
+  return Math.max(1, Math.min(dpr, capped));
+}
+
+/**
  * Size a canvas for the device pixel ratio and return the context, pre-scaled
  * so all drawing can be done in CSS pixels.
  */
 export function setupCanvas(canvas, cssWidth, cssHeight) {
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = effectiveDpr(cssWidth, cssHeight);
   canvas.width  = Math.round(cssWidth * dpr);
   canvas.height = Math.round(cssHeight * dpr);
   canvas.style.width  = cssWidth + 'px';

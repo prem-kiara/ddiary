@@ -50,6 +50,26 @@ export function attachPointerCapture(el, handlers) {
   let lastPenAt  = 0;      // timestamp of the most recent pen event
   let touchCount = 0;      // live touch points, for the multi-touch veto
 
+  // Finger-pan state, used only in stylus-only mode (see handleDown).
+  let panId = null, panX = 0, panY = 0;
+
+  /** Nearest scrollable ancestor, or the window. */
+  function scrollTargetFor(node) {
+    let n = node?.parentElement;
+    while (n) {
+      const s = getComputedStyle(n);
+      if (/(auto|scroll)/.test(s.overflowY) && n.scrollHeight > n.clientHeight) return n;
+      n = n.parentElement;
+    }
+    return null;   // null → scroll the window
+  }
+
+  function panBy(dx, dy) {
+    const target = scrollTargetFor(el);
+    if (target) target.scrollTop -= dy;
+    else window.scrollBy(-dx, -dy);
+  }
+
   const policy = () => (getPolicy ? getPolicy() : DEVICE_POLICY.AUTO);
 
   /** Should this pointer type be allowed to draw right now? */
@@ -110,7 +130,17 @@ export function attachPointerCapture(el, handlers) {
         return;
       }
     }
-    if (!canDraw(e.pointerType)) return;
+    if (!canDraw(e.pointerType)) {
+      // In stylus-only mode a finger is not drawing, so it should still be able
+      // to scroll the sheet. It cannot be left to the browser: touch-action
+      // applies to every direct-manipulation pointer, so anything other than
+      // 'none' lets it claim the Pencil's strokes too and cancel them. So the
+      // pan is done by hand here — finger scrolls, pen keeps writing.
+      if (e.pointerType === 'touch' && policy() === DEVICE_POLICY.PEN_ONLY) {
+        panId = e.pointerId; panX = e.clientX; panY = e.clientY;
+      }
+      return;
+    }
 
     activeId   = e.pointerId;
     activeType = e.pointerType;
@@ -122,6 +152,14 @@ export function attachPointerCapture(el, handlers) {
 
   function handleMove(e) {
     if (e.pointerType === 'pen') lastPenAt = performance.now();
+
+    if (panId !== null && e.pointerId === panId) {
+      panBy(e.clientX - panX, e.clientY - panY);
+      panX = e.clientX; panY = e.clientY;
+      e.preventDefault();
+      return;
+    }
+
     if (e.pointerId !== activeId) return;
     e.preventDefault();
 
@@ -133,6 +171,7 @@ export function attachPointerCapture(el, handlers) {
 
   function handleUp(e) {
     if (e.pointerType === 'touch') touchCount = Math.max(0, touchCount - 1);
+    if (e.pointerId === panId) panId = null;
     if (e.pointerId !== activeId) return;
     try { el.releasePointerCapture(e.pointerId); } catch { /* not fatal */ }
     activeId = activeType = null;
@@ -141,6 +180,7 @@ export function attachPointerCapture(el, handlers) {
 
   function handleCancel(e) {
     if (e.pointerType === 'touch') touchCount = Math.max(0, touchCount - 1);
+    if (e.pointerId === panId) panId = null;
     if (e.pointerId !== activeId) return;
     activeId = activeType = null;
     onCancel?.();

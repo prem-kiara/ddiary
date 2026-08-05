@@ -331,6 +331,11 @@ export function createInkEngine({
   }
 
   function onCancel() {
+    // Only the discarded stroke's area needs restoring. This path runs on every
+    // palm-then-pen handover — i.e. potentially each time the hand is
+    // repositioned for a new word — so a full-page repaint here showed up as a
+    // stutter exactly when lifting the pen.
+    const box = live ? strokeBounds(live) : null;
     live = null;
     stabilizer = null;
     pressureResolver = null;
@@ -339,8 +344,10 @@ export function createInkEngine({
       strokes = eraseSnapshot;
       eraseSnapshot = null;
       redrawInkLayer();
+      scheduleRepaint();
+      return;
     }
-    scheduleRepaint();
+    scheduleRepaint(box || undefined);
   }
 
   const capture = attachPointerCapture(canvas, {
