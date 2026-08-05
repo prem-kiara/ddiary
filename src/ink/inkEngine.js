@@ -67,6 +67,7 @@ export function createInkEngine({
   let partialPending = false;
   let pendingFull = false;
   let pendingBox = null;
+  let lastShownBox = null;   // area the live stroke covered on the previous frame
   let rafHandle = 0;
   let destroyed = false;
 
@@ -109,12 +110,13 @@ export function createInkEngine({
       ctx.drawImage(inkCanvas, x, y, w, h, x, y, w, h);
       ctx.restore();
 
-      if (live && live.points.length) {
+      const shown = liveRenderStroke();
+      if (shown) {
         ctx.save();
         ctx.beginPath();
         ctx.rect(x / dpr, y / dpr, w / dpr, h / dpr);
         ctx.clip();
-        drawStroke(ctx, live, 1);
+        drawStroke(ctx, shown, 1);
         ctx.restore();
       }
       return;
@@ -124,7 +126,31 @@ export function createInkEngine({
     ctx.drawImage(bgCanvas, 0, 0);
     ctx.drawImage(inkCanvas, 0, 0);
     ctx.restore();
-    if (live && live.points.length) drawStroke(ctx, live, 1);
+    const shown = liveRenderStroke();
+    if (shown) drawStroke(ctx, shown, 1);
+  }
+
+  /**
+   * The stroke as it should appear *right now*, including a catch-up tail to
+   * the pen's true position.
+   *
+   * Stabilisation inherently trails the nib, and the velocity-weighted averager
+   * smooths hardest at low speed — which is exactly what the beginning of every
+   * stroke is. So the ink lagged most just after the pen was put down, which
+   * reads as "it lags when I lift and start the next word" even at a perfect
+   * 60 fps: the problem was never frame rate, it was input-to-ink distance.
+   *
+   * finalize() already computes a tangent-continuous spline from the last
+   * smoothed point to the true raw one — it was only being used at pen-up.
+   * Running it per frame for *rendering* keeps the nib and the ink together
+   * while the committed geometry stays exactly as smooth as before.
+   */
+  function liveRenderStroke() {
+    if (!live || !live.points.length) return null;
+    if (!stabilizer) return live;
+    let tail = [];
+    try { tail = stabilizer.finalize(live.points) || []; } catch { tail = []; }
+    return tail.length ? { ...live, points: live.points.concat(tail) } : live;
   }
 
   function unionBox(a, b) {
@@ -165,8 +191,21 @@ export function createInkEngine({
       if (!pendingFull) {
         region = pendingBox;
         // Union in the live stroke's *current* extent — more points may have
-        // arrived since the request was made.
-        if (partialPending && live) region = unionBox(region, strokeBounds(live));
+        // arrived since the request was made. Measure the rendered stroke, not
+        // the committed points, so the catch-up tail is not clipped away.
+        if (partialPending && live) {
+          const shown = liveRenderStroke();
+          if (shown) {
+            const box = strokeBounds(shown);
+            // Include what was drawn last frame as well: the catch-up tail can
+            // get shorter (when the pen slows or reverses), and those pixels
+            // must be cleared or they linger as a stray whisker.
+            region = unionBox(unionBox(region, box), lastShownBox);
+            lastShownBox = box;
+          }
+        } else {
+          lastShownBox = null;
+        }
         if (!region) region = null;
       }
       const full = pendingFull || !region;

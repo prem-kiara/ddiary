@@ -107,6 +107,46 @@ describe('stabilizer', () => {
     expect(gapAfter).toBeLessThan(gapBefore);
   });
 
+  it('finalize() is non-mutating, so it can drive per-frame catch-up rendering', () => {
+    // The engine now calls finalize() every frame to draw a tail from the last
+    // smoothed point to the pen's true position — that is what keeps the ink
+    // under the nib, since the averager smooths hardest at low speed and the
+    // start of every stroke is slow. Calling it repeatedly must not disturb the
+    // stabiliser's state or the committed points.
+    const input = jitteryLine({ n: 40, noise: 1 });
+    const stab = createStabilizer(STABILIZER_PRESETS.strong);
+    const pts = [];
+    for (const s of input) { const o = stab.push(s); if (o) pts.push(o); }
+
+    const snapshot = JSON.stringify(pts);
+    const a = stab.finalize(pts);
+    const b = stab.finalize(pts);
+    const cc = stab.finalize(pts);
+
+    expect(JSON.stringify(pts)).toBe(snapshot);      // committed points untouched
+    expect(JSON.stringify(b)).toBe(JSON.stringify(a)); // deterministic
+    expect(JSON.stringify(cc)).toBe(JSON.stringify(a));
+
+    // Pushing more samples afterwards still behaves.
+    const more = stab.push({ x: 400, y: 100, p: 0.5, t: 999 });
+    expect(more === null || Number.isFinite(more.x)).toBe(true);
+  });
+
+  it('the catch-up tail reaches the pen position mid-stroke, not just at the end', () => {
+    const input = jitteryLine({ n: 30, noise: 1 });
+    const stab = createStabilizer(STABILIZER_PRESETS.strong);
+    const pts = [];
+    for (const s of input) { const o = stab.push(s); if (o) pts.push(o); }
+
+    const raw = input[input.length - 1];
+    const trailing = Math.hypot(pts.at(-1).x - raw.x, pts.at(-1).y - raw.y);
+    const tail = stab.finalize(pts);
+    const end = tail.at(-1);
+
+    expect(trailing).toBeGreaterThan(0.5);   // smoothing really does lag the nib
+    expect(Math.hypot(end.x - raw.x, end.y - raw.y)).toBeLessThan(0.01);
+  });
+
   it('emits the first point immediately', () => {
     const stab = createStabilizer(STABILIZER_PRESETS.medium);
     const first = stab.push({ x: 10, y: 20, p: 0.5, t: 0 });
