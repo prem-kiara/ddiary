@@ -65,6 +65,8 @@ export function createInkEngine({
   let pressureResolver = null;
   let rafPending = false;
   let partialPending = false;
+  let pendingFull = false;
+  let pendingBox = null;
   let rafHandle = 0;
   let destroyed = false;
 
@@ -125,21 +127,51 @@ export function createInkEngine({
     if (live && live.points.length) drawStroke(ctx, live, 1);
   }
 
+  function unionBox(a, b) {
+    if (!a) return b;
+    if (!b) return a;
+    return {
+      minX: Math.min(a.minX, b.minX), minY: Math.min(a.minY, b.minY),
+      maxX: Math.max(a.maxX, b.maxX), maxY: Math.max(a.maxY, b.maxY),
+    };
+  }
+
   /**
-   * @param {boolean} [partial] restrict the repaint to the in-progress stroke.
+   * Request a repaint.
+   *
+   * @param {'live'|{minX,minY,maxX,maxY}} [arg]
+   *   'live'  — only the in-progress stroke's area
+   *   a box   — only that area (used when a finished stroke is committed)
+   *   omitted — the whole page (undo, erase, load, background change)
+   *
+   * Getting this right matters at stroke *boundaries*: pen-down and pen-up used
+   * to force full-page repaints, so lifting the pen to dot an "i" cost two
+   * page-sized blits even though only a few pixels had changed. Continuous
+   * writing felt fine because only onMove was optimised.
    */
-  function scheduleRepaint(partial) {
+  function scheduleRepaint(arg) {
     if (destroyed) return;
-    if (partial && live) partialPending = true;
-    else partialPending = false;    // a full repaint supersedes a partial one
+    if (arg === 'live') partialPending = true;
+    else if (arg && typeof arg === 'object') pendingBox = unionBox(pendingBox, arg);
+    else pendingFull = true;
+
     if (rafPending) return;
     rafPending = true;
     rafHandle = requestAnimationFrame(() => {
       rafPending = false;
       if (destroyed) return;
-      const region = partialPending && live ? strokeBounds(live) : null;
-      partialPending = false;
-      repaint(region);
+
+      let region = null;
+      if (!pendingFull) {
+        region = pendingBox;
+        // Union in the live stroke's *current* extent — more points may have
+        // arrived since the request was made.
+        if (partialPending && live) region = unionBox(region, strokeBounds(live));
+        if (!region) region = null;
+      }
+      const full = pendingFull || !region;
+      pendingFull = false; pendingBox = null; partialPending = false;
+      repaint(full ? null : region);
     });
   }
 
@@ -154,11 +186,19 @@ export function createInkEngine({
     // made each new stroke cost more than the last, so a page slowed down as
     // it filled up — exactly when writing needs to stay responsive.
     if (cmd.added?.length && !cmd.removed?.length) {
-      for (const s of cmd.added) drawStroke(inkCtx, s, 1);
+      let box = null;
+      for (const s of cmd.added) {
+        drawStroke(inkCtx, s, 1);
+        box = unionBox(box, strokeBounds(s));
+      }
+      // Committing only changes the area the new stroke covers — repainting the
+      // whole page here is what made lifting the pen (to dot an i, or start a
+      // new letter) lag even though writing itself was smooth.
+      scheduleRepaint(box || undefined);
     } else {
       redrawInkLayer();
+      scheduleRepaint();
     }
-    scheduleRepaint();
     onChange?.(strokes);
   }
 
@@ -223,7 +263,8 @@ export function createInkEngine({
     if (p < 0) return;
     const out = stabilizer.push({ ...sample, p });
     if (out) addPoint(live, out);
-    scheduleRepaint();
+    // Pen-down only puts one point on screen — no reason to repaint the page.
+    scheduleRepaint('live');
   }
 
   function onMove(batch) {
@@ -242,7 +283,7 @@ export function createInkEngine({
       if (out) addPoint(live, out);
     }
     // Only the in-progress stroke changed — repaint just its area.
-    scheduleRepaint(true);
+    scheduleRepaint('live');
   }
 
   function onEnd() {

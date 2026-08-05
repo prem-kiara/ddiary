@@ -284,14 +284,23 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
 
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 8px 32px' }}>
+      {/* Everything above the sheet is pinned — title, save/cancel, tools and
+          page controls. An A4 sheet is far taller than the screen, so without
+          this you have to scroll back to the top to rename, change colour or
+          switch page, then scroll down again to carry on writing. */}
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 20,
+        background: '#f8fafc', paddingTop: 8,
+        boxShadow: '0 4px 12px -6px rgba(15,23,42,0.25)',
+      }}>
       {/* Title + actions */}
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', margin: '12px 0' }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 8 }}>
         <input
           value={title}
           onChange={e => { setTitle(e.target.value); setDirty(true); }}
           placeholder="Untitled handwritten note"
           className="input"
-          style={{ flex: 1, minWidth: 220, fontSize: 17, fontWeight: 600, padding: '10px 12px' }}
+          style={{ flex: 1, minWidth: 180, fontSize: 17, fontWeight: 600, padding: '10px 12px' }}
         />
         <button className="btn btn-outline" onClick={onCancel}><X size={16} /> Cancel</button>
         <button className="btn btn-teal" onClick={handleSave} disabled={saving}>
@@ -299,10 +308,6 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
         </button>
       </div>
 
-      {/* Tools + options are sticky: an A4 sheet is far taller than the screen,
-          so without this you have to scroll back to the top to change colour or
-          switch page, then scroll down again to keep writing. */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 20 }}>
       {/* userSelect:none throughout the chrome — a pointer the engine declines
           (a resting palm, or any finger in stylus-only mode) falls through to
           the browser, which starts a text-selection drag and highlights
