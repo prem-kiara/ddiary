@@ -141,6 +141,15 @@ export function attachPointerCapture(el, handlers) {
     onCancel?.();
   }
 
+  // A pointer the engine declines (a resting palm during the pen lockout, or
+  // any finger in stylus-only mode) is handed back to the browser, whose
+  // default for a drag is to select text — on iOS that selects across the page
+  // and pops the Copy / Look Up callout over the toolbar. CSS user-select
+  // covers most of it, but Safari has historically still begun a selection
+  // mid-drag, so refuse it at the source too.
+  const blockSelection = (e) => e.preventDefault();
+  el.addEventListener('selectstart', blockSelection);
+
   el.addEventListener('pointerdown',   handleDown,   { passive: false });
   el.addEventListener('pointermove',   handleMove,   { passive: false });
   el.addEventListener('pointerup',     handleUp);
@@ -149,6 +158,7 @@ export function attachPointerCapture(el, handlers) {
 
   return {
     detach() {
+      el.removeEventListener('selectstart',   blockSelection);
       el.removeEventListener('pointerdown',   handleDown);
       el.removeEventListener('pointermove',   handleMove);
       el.removeEventListener('pointerup',     handleUp);

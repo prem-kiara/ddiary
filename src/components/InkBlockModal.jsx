@@ -106,8 +106,9 @@ export default function InkBlockModal({ initialDoc, onSave, onClose }) {
   return (
     <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="modal-content" style={{ maxWidth: 940 }}>
-        {/* Toolbar */}
-        <div className="canvas-toolbar">
+        {/* Toolbar — see the canvas below for why selection is suppressed. */}
+        <div className="canvas-toolbar"
+             style={{ userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none' }}>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             {COLORS.map(c => (
               <button
@@ -157,6 +158,7 @@ export default function InkBlockModal({ initialDoc, onSave, onClose }) {
         <div style={{
           display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
           padding: '8px 16px', borderBottom: '1px solid #e2e8f0', background: '#f8fafc',
+          userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
         }}>
           <select value={bg} onChange={e => setBg(e.target.value)} className="select" style={{ width: 'auto', padding: '5px 9px', fontSize: 12 }}>
             {BACKGROUNDS.map(b => <option key={b.value} value={b.value}>{b.label}</option>)}
@@ -175,10 +177,14 @@ export default function InkBlockModal({ initialDoc, onSave, onClose }) {
           <canvas
             ref={canvasRef}
             style={{
-              display: 'block', touchAction: 'none', background: '#fff',
+              display: 'block', background: '#fff',
               border: '1px solid #e2e8f0', borderRadius: 8,
               cursor: mode === 'eraser' ? 'cell' : 'crosshair',
               margin: '0 auto',
+              // See InkCanvasPage: a declined palm otherwise starts a browser
+              // text-selection drag and pops the iOS Copy/Look Up callout.
+              userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
+              touchAction: penOnly ? 'pan-y' : 'none',
             }}
           />
         </div>

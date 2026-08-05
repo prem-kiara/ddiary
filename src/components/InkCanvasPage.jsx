@@ -300,9 +300,13 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
       </div>
 
       {/* Tools */}
+      {/* userSelect:none throughout the chrome — a pointer the engine declines
+          (a resting palm, or any finger in stylus-only mode) falls through to
+          the browser, which starts a text-selection drag and highlights
+          whatever control it reaches. Nobody needs to select toolbar labels. */}
       <div style={{
         display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap',
-        padding: '8px 10px', background: '#fff',
+        padding: '8px 10px', background: '#fff', userSelect: 'none', WebkitUserSelect: 'none',
         border: '1px solid #e2e8f0', borderRadius: '10px 10px 0 0',
       }}>
         {INK_COLORS.map(c => (
@@ -341,6 +345,7 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
         display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap',
         padding: '7px 10px', background: '#f8fafc', borderLeft: '1px solid #e2e8f0',
         borderRight: '1px solid #e2e8f0', borderBottom: '1px solid #e2e8f0',
+        userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
       }}>
         <select value={bg} onChange={e => setBg(e.target.value)} className="select"
                 style={{ width: 'auto', padding: '5px 9px', fontSize: 12 }}>
@@ -381,13 +386,22 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
         padding: 14, background: '#eef2f7',
         border: '1px solid #e2e8f0', borderTop: 'none', borderRadius: '0 0 10px 10px',
         display: 'flex', justifyContent: 'center',
+        userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
       }}>
         <canvas
           ref={canvasRef}
           style={{
-            display: 'block', touchAction: 'none', background: '#fff',
+            display: 'block', background: '#fff',
             borderRadius: 6, boxShadow: '0 2px 10px rgba(15,23,42,0.12)',
             cursor: mode === 'eraser' ? 'cell' : 'crosshair',
+            // No selection or iOS callout: a palm the engine declines otherwise
+            // falls through to the browser, which begins a text-selection drag
+            // across the page and pops the Copy/Look Up menu over the toolbar.
+            userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
+            // In stylus-only mode a finger is not drawing, so let it scroll —
+            // an A4 page is ~1273px tall and does not fit the screen, and with
+            // touch-action:none there was no way to scroll it by hand at all.
+            touchAction: penOnly ? 'pan-y' : 'none',
           }}
         />
       </div>
