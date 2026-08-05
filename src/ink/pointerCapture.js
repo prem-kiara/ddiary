@@ -86,12 +86,17 @@ export function attachPointerCapture(el, handlers) {
     if (e.pointerType === 'touch') touchCount++;
 
     if (activeId !== null) {
-      // A pen arriving mid-touch-stroke means the "touch" was a palm that
-      // landed first — the normal writing posture. Discard the palm's stroke
-      // and hand control to the pen. Without this the palm keeps ownership and
-      // the pen is ignored for as long as the hand rests on the glass, which
-      // inverts palm rejection on exactly the devices it matters for.
-      if (activeType === 'touch' && e.pointerType === 'pen') {
+      // **A pen always takes over.** Two situations need this:
+      //
+      //  1. The palm landed first — the normal writing posture. Without the
+      //     handover the palm keeps ownership and the pen is ignored for as
+      //     long as the hand rests on the glass.
+      //  2. The previous stroke never ended. iOS drops a pointerup whenever the
+      //     system interrupts a gesture, and `activeId` then stays set forever,
+      //     so every later stroke is silently discarded — the reported
+      //     "had to write the word several times to complete it". Refusing a
+      //     fresh pen-down because a stale one is recorded is never right.
+      if (e.pointerType === 'pen') {
         try { el.releasePointerCapture(activeId); } catch { /* not fatal */ }
         activeId = activeType = null;
         onCancel?.();
@@ -155,6 +160,10 @@ export function attachPointerCapture(el, handlers) {
   el.addEventListener('pointerup',     handleUp);
   el.addEventListener('pointerleave',  handleUp);
   el.addEventListener('pointercancel', handleCancel);
+  // Safety net for the same stuck-stroke problem: if the browser takes capture
+  // away (system gesture, app switch) no pointerup may ever arrive, so release
+  // ownership here rather than blocking every subsequent stroke.
+  el.addEventListener('lostpointercapture', handleCancel);
 
   return {
     detach() {
@@ -164,6 +173,7 @@ export function attachPointerCapture(el, handlers) {
       el.removeEventListener('pointerup',     handleUp);
       el.removeEventListener('pointerleave',  handleUp);
       el.removeEventListener('pointercancel', handleCancel);
+      el.removeEventListener('lostpointercapture', handleCancel);
     },
     isDrawing: () => activeId !== null,
   };

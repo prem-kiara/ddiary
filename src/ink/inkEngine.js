@@ -19,7 +19,7 @@ import { createPressureResolver } from './pressure.js';
 import { createStabilizer, STABILIZER_PRESETS } from './stabilizer.js';
 import {
   TOOL, createStroke, addPoint, serialize, deserialize,
-  hitTestStroke, splitStrokeAt, estimateSize,
+  hitTestStroke, splitStrokeAt, estimateSize, strokeBounds,
 } from './strokeModel.js';
 import { drawStroke, renderStrokes, drawBackground, setupCanvas } from './renderer.js';
 import { recognizeShape } from './shapeRecognition.js';
@@ -64,6 +64,7 @@ export function createInkEngine({
   let stabilizer = null;
   let pressureResolver = null;
   let rafPending = false;
+  let partialPending = false;
   let rafHandle = 0;
   let destroyed = false;
 
@@ -80,9 +81,43 @@ export function createInkEngine({
     for (const s of strokes) drawStroke(inkCtx, s, 1);
   }
 
-  function repaint() {
+  /**
+   * Repaint, optionally only within `region` (CSS px).
+   *
+   * A full repaint clears and blits two canvases the size of the page — on an
+   * A4 sheet at 2× DPR that is ~14 MB of pixel traffic *per frame*, which is
+   * what made writing lag on a tablet. While a stroke is in progress only the
+   * area that stroke covers can have changed, and for a handwritten letter
+   * that is a small box, so the per-frame cost becomes negligible.
+   */
+  function repaint(region) {
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+    if (region) {
+      const pad = 3;   // cover the stroke's own width and antialiasing
+      const x = Math.max(0, Math.floor((region.minX - pad) * dpr));
+      const y = Math.max(0, Math.floor((region.minY - pad) * dpr));
+      const w = Math.min(canvas.width  - x, Math.ceil((region.maxX - region.minX + pad * 2) * dpr));
+      const h = Math.min(canvas.height - y, Math.ceil((region.maxY - region.minY + pad * 2) * dpr));
+      if (w <= 0 || h <= 0) { ctx.restore(); return; }
+
+      ctx.clearRect(x, y, w, h);
+      ctx.drawImage(bgCanvas,  x, y, w, h, x, y, w, h);
+      ctx.drawImage(inkCanvas, x, y, w, h, x, y, w, h);
+      ctx.restore();
+
+      if (live && live.points.length) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x / dpr, y / dpr, w / dpr, h / dpr);
+        ctx.clip();
+        drawStroke(ctx, live, 1);
+        ctx.restore();
+      }
+      return;
+    }
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(bgCanvas, 0, 0);
     ctx.drawImage(inkCanvas, 0, 0);
@@ -90,12 +125,21 @@ export function createInkEngine({
     if (live && live.points.length) drawStroke(ctx, live, 1);
   }
 
-  function scheduleRepaint() {
-    if (rafPending || destroyed) return;
+  /**
+   * @param {boolean} [partial] restrict the repaint to the in-progress stroke.
+   */
+  function scheduleRepaint(partial) {
+    if (destroyed) return;
+    if (partial && live) partialPending = true;
+    else partialPending = false;    // a full repaint supersedes a partial one
+    if (rafPending) return;
     rafPending = true;
     rafHandle = requestAnimationFrame(() => {
       rafPending = false;
-      if (!destroyed) repaint();
+      if (destroyed) return;
+      const region = partialPending && live ? strokeBounds(live) : null;
+      partialPending = false;
+      repaint(region);
     });
   }
 
@@ -105,7 +149,15 @@ export function createInkEngine({
     undoStack.push(cmd);
     redoStack.length = 0;
     runCommand(cmd, false);
-    redrawInkLayer();
+    // Committing a stroke only *adds* ink, so draw it straight onto the layer
+    // rather than re-rendering every stroke on the page. Redrawing everything
+    // made each new stroke cost more than the last, so a page slowed down as
+    // it filled up — exactly when writing needs to stay responsive.
+    if (cmd.added?.length && !cmd.removed?.length) {
+      for (const s of cmd.added) drawStroke(inkCtx, s, 1);
+    } else {
+      redrawInkLayer();
+    }
     scheduleRepaint();
     onChange?.(strokes);
   }
@@ -189,7 +241,8 @@ export function createInkEngine({
       const out = stabilizer.push({ ...sample, p });
       if (out) addPoint(live, out);
     }
-    scheduleRepaint();
+    // Only the in-progress stroke changed — repaint just its area.
+    scheduleRepaint(true);
   }
 
   function onEnd() {

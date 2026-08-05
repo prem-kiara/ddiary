@@ -299,7 +299,10 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
         </button>
       </div>
 
-      {/* Tools */}
+      {/* Tools + options are sticky: an A4 sheet is far taller than the screen,
+          so without this you have to scroll back to the top to change colour or
+          switch page, then scroll down again to keep writing. */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 20 }}>
       {/* userSelect:none throughout the chrome — a pointer the engine declines
           (a resting palm, or any finger in stylus-only mode) falls through to
           the browser, which starts a text-selection drag and highlights
@@ -308,6 +311,7 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
         display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap',
         padding: '8px 10px', background: '#fff', userSelect: 'none', WebkitUserSelect: 'none',
         border: '1px solid #e2e8f0', borderRadius: '10px 10px 0 0',
+        boxShadow: '0 1px 3px rgba(15,23,42,0.06)',
       }}>
         {INK_COLORS.map(c => (
           <button
@@ -380,6 +384,7 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
           </button>
         </div>
       </div>
+      </div>{/* /sticky */}
 
       {/* The page */}
       <div ref={holderRef} style={{
@@ -398,10 +403,13 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
             // falls through to the browser, which begins a text-selection drag
             // across the page and pops the Copy/Look Up menu over the toolbar.
             userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
-            // In stylus-only mode a finger is not drawing, so let it scroll —
-            // an A4 page is ~1273px tall and does not fit the screen, and with
-            // touch-action:none there was no way to scroll it by hand at all.
-            touchAction: penOnly ? 'pan-y' : 'none',
+            // Always 'none'. touch-action applies to EVERY direct-manipulation
+            // pointer, the Apple Pencil included — it cannot distinguish pen
+            // from finger. Setting pan-y here to let a finger scroll also let
+            // the browser claim the Pencil's vertical strokes for scrolling and
+            // fire pointercancel, so stylus-only mode could not write at all.
+            // Scroll the page using the margins beside the sheet instead.
+            touchAction: 'none',
           }}
         />
       </div>

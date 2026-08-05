@@ -183,8 +183,10 @@ export default function InkBlockModal({ initialDoc, onSave, onClose }) {
               margin: '0 auto',
               // See InkCanvasPage: a declined palm otherwise starts a browser
               // text-selection drag and pops the iOS Copy/Look Up callout.
+              // touch-action must stay 'none': it cannot distinguish pen from
+              // finger, so pan-y let the browser cancel Pencil strokes too.
               userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
-              touchAction: penOnly ? 'pan-y' : 'none',
+              touchAction: 'none',
             }}
           />
         </div>
