@@ -22,6 +22,7 @@ import {
   hitTestStroke, splitStrokeAt, estimateSize,
 } from './strokeModel.js';
 import { drawStroke, renderStrokes, drawBackground, setupCanvas } from './renderer.js';
+import { recognizeShape } from './shapeRecognition.js';
 
 export const ERASER_MODE = {
   STROKE: 'stroke',  // remove whole strokes — fast, predictable
@@ -56,6 +57,7 @@ export function createInkEngine({
   let eraser = { active: false, mode: ERASER_MODE.SPLIT, size: 12 };
   let policy = DEVICE_POLICY.AUTO;
   let stabilizerCfg = STABILIZER_PRESETS.medium;
+  let shapeMode = false;
 
   // In-progress stroke state
   let live = null;
@@ -211,6 +213,17 @@ export function createInkEngine({
     // Close the lag gap left by stabilisation.
     for (const pt of stabilizer.finalize(live.points)) addPoint(live, pt);
 
+    // Shape mode: snap to a clean primitive if the stroke clearly is one.
+    // Recognition returning null means "keep the freehand stroke", so an
+    // unrecognised scribble is never damaged.
+    if (shapeMode && live.points.length > 3) {
+      const shape = recognizeShape(live);
+      if (shape) {
+        live.points = shape.points;
+        live.shape = shape.kind;
+      }
+    }
+
     const committed = live;
     live = null;
     stabilizer = null;
@@ -247,6 +260,7 @@ export function createInkEngine({
     setTool(next)      { tool = { ...tool, ...next }; eraser.active = false; },
     setEraser(next)    { eraser = { ...eraser, ...next }; },
     setPolicy(p)       { policy = p; },
+    setShapeMode(on)   { shapeMode = !!on; },
     setStabilizer(cfg) { stabilizerCfg = typeof cfg === 'string' ? STABILIZER_PRESETS[cfg] : cfg; },
     setBackground(type) {
       drawBackground(bgCtx, type, width, height, dpr);

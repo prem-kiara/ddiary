@@ -11,7 +11,7 @@
  * to embed it (see ink/inkHtml.js).
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { X, Pen, Highlighter, Eraser, Undo2, Redo2, Trash2, Check } from 'lucide-react';
+import { X, Pen, Highlighter, Eraser, Undo2, Redo2, Trash2, Check, Shapes } from 'lucide-react';
 import { createInkEngine, TOOL, DEVICE_POLICY } from '../ink/inkEngine';
 
 const COLORS = ['#1a1a2e', '#dc2626', '#2563eb', '#15803d', '#d97706', '#7c3aed'];
@@ -50,6 +50,7 @@ export default function InkBlockModal({ initialDoc, onSave, onClose }) {
   const [bg,      setBg]      = useState('ruled');
   const [smooth,  setSmooth]  = useState('medium');
   const [penOnly, setPenOnly] = useState(false);
+  const [shapes,  setShapes]  = useState(false);
   const [dirty,   setDirty]   = useState(false);
 
   // ── Engine lifecycle ──────────────────────────────────────────────────────
@@ -102,6 +103,7 @@ export default function InkBlockModal({ initialDoc, onSave, onClose }) {
   useEffect(() => {
     engineRef.current?.setPolicy(penOnly ? DEVICE_POLICY.PEN_ONLY : DEVICE_POLICY.AUTO);
   }, [penOnly, ready]);
+  useEffect(() => { engineRef.current?.setShapeMode(shapes); }, [shapes, ready]);
 
   const handleSave = useCallback(() => {
     const e = engineRef.current;
@@ -166,6 +168,13 @@ export default function InkBlockModal({ initialDoc, onSave, onClose }) {
             <button style={toolBtn(mode === 'pen')}         onClick={() => setMode('pen')}><Pen size={14} /> Pen</button>
             <button style={toolBtn(mode === 'highlighter')} onClick={() => setMode('highlighter')}><Highlighter size={14} /> Marker</button>
             <button style={toolBtn(mode === 'eraser')}      onClick={() => setMode('eraser')}><Eraser size={14} /> Eraser</button>
+            <button
+              style={toolBtn(shapes)}
+              onClick={() => setShapes(v => !v)}
+              title="Shapes: straighten lines and snap rough boxes, circles and triangles when you lift the pen. Anything unrecognised stays freehand."
+            >
+              <Shapes size={14} /> Shapes
+            </button>
           </div>
 
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
