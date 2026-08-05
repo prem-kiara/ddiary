@@ -64,6 +64,9 @@ export function attachPointerCapture(el, handlers) {
     lostCapture: 0,   // capture removed mid-stroke
     hoverMoves: 0,    // pen moves with no contact (Apple Pencil hover)
     lastDownGapMs: 0, // time since the previous stroke ended
+    moves: 0,         // pointermove events received while drawing
+    coalesced: 0,     // samples extracted from them — moves ≈ coalesced means
+                      // the browser is NOT giving us the pen's full rate
   };
   let lastEndAt = 0;
 
@@ -187,8 +190,14 @@ export function attachPointerCapture(el, handlers) {
     e.preventDefault();
 
     // Every buffered sample since the last frame, not just the latest one.
-    const raw = e.getCoalescedEvents ? e.getCoalescedEvents() : null;
+    // When the browser actually supplies these, a fast stroke gets the pen's
+    // full report rate instead of one sample per frame — which is the
+    // difference between a faithful path and a coarse one.
+    let raw = null;
+    try { raw = e.getCoalescedEvents ? e.getCoalescedEvents() : null; } catch { raw = null; }
     const batch = raw && raw.length ? raw.map(toSample) : [toSample(e)];
+    stats.moves++;
+    stats.coalesced += batch.length;
     onMove(batch);
   }
 

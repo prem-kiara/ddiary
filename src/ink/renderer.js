@@ -178,7 +178,16 @@ export function setupCanvas(canvas, cssWidth, cssHeight) {
   canvas.height = Math.round(cssHeight * dpr);
   canvas.style.width  = cssWidth + 'px';
   canvas.style.height = cssHeight + 'px';
-  const ctx = canvas.getContext('2d');
+
+  // `desynchronized` asks the browser to bypass a step of its normal
+  // compositing for this canvas — the low-latency path added specifically for
+  // stylus drawing. It is the one lever that targets pen-to-ink delay itself
+  // rather than how fast we draw, which measurement showed was never the
+  // problem. Harmless where unsupported: the option is simply ignored.
+  let ctx = null;
+  try { ctx = canvas.getContext('2d', { desynchronized: true }); } catch { /* older engines */ }
+  if (!ctx) ctx = canvas.getContext('2d');
+
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   return { ctx, dpr };
 }

@@ -271,9 +271,9 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
         setPerf(
           `${Math.round(1000 / (acc / frames))}fps worst ${worst.toFixed(0)}ms · ` +
           (s
-            ? `ink ${s.inkLatencyMs}ms · down ${s.down} declined ${s.declined} ` +
-              `takeover ${s.takeover} cancel ${s.cancelled} lost ${s.lostCapture} ` +
-              `hover ${s.hoverMoves} gap ${s.lastDownGapMs}ms`
+            ? `ink ${s.inkLatencyMs}ms · samples/move ${s.moves ? (s.coalesced / s.moves).toFixed(1) : '—'} · ` +
+              `down ${s.down} declined ${s.declined} takeover ${s.takeover} ` +
+              `cancel ${s.cancelled} lost ${s.lostCapture} hover ${s.hoverMoves}`
             : '')
         );
         worst = 0; frames = 0; acc = 0;
