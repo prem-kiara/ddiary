@@ -18,7 +18,7 @@
  */
 
 import getStroke from 'perfect-freehand';
-import { TOOL } from './strokeModel.js';
+import { TOOL, densify } from './strokeModel.js';
 
 // How strongly pressure modulates width (0 = uniform, 1 = extreme taper).
 const THINNING = 0.6;
@@ -40,7 +40,10 @@ export function strokeToPath2D(stroke, scale = 1) {
     ? stroke.size * HIGHLIGHTER_SCALE
     : stroke.size) * scale;
 
-  const input = pts.map(p => [p.x * scale, p.y * scale, p.p]);
+  // Fill in points before outlining: widely-spaced samples (a fast pen on a
+  // 60 Hz event stream) make perfect-freehand's ribbon collapse and break up.
+  const input = densify(pts, 6 / Math.max(scale, 0.05))
+    .map(p => [p.x * scale, p.y * scale, p.p]);
 
   const outline = getStroke(input, {
     size,

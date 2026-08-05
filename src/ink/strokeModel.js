@@ -171,6 +171,49 @@ export function deserialize(doc) {
   return { strokes, width: doc.w || 0, height: doc.h || 0 };
 }
 
+/**
+ * Longest gap allowed between points when building a stroke outline.
+ *
+ * Safari delivers pointermove at roughly display rate, so a fast scribble lands
+ * samples 50–120 px apart. perfect-freehand cannot build a clean outline from
+ * points that sparse: the ribbon collapses and breaks up, which rendered as
+ * thin, faded, dashed strokes — while slow handwriting on the same page looked
+ * perfect, because its samples are close together.
+ *
+ * Proven by drawing one shape twice with identical pressure: at 92 px spacing
+ * it broke up, at 5.8 px it was solid.
+ */
+const MAX_POINT_SPACING = 6;
+
+/**
+ * Insert interpolated points wherever consecutive samples are too far apart.
+ *
+ * Applied only when *rendering* (screen and PDF), never to what is stored, so
+ * saved documents stay compact and the recorded geometry remains exactly what
+ * the pen reported.
+ */
+export function densify(points, maxSpacing = MAX_POINT_SPACING) {
+  if (points.length < 2) return points;
+  const out = [points[0]];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    const dist = Math.hypot(b.x - a.x, b.y - a.y);
+    if (dist > maxSpacing) {
+      const steps = Math.min(Math.ceil(dist / maxSpacing), 200); // cap pathological jumps
+      for (let k = 1; k < steps; k++) {
+        const t = k / steps;
+        out.push({
+          x: a.x + (b.x - a.x) * t,
+          y: a.y + (b.y - a.y) * t,
+          p: a.p + (b.p - a.p) * t,
+        });
+      }
+    }
+    out.push(b);
+  }
+  return out;
+}
+
 /** Rough serialised size in bytes — used to warn before hitting Firestore limits. */
 export function estimateSize(strokes) {
   let n = 0;

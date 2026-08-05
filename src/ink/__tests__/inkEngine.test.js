@@ -9,7 +9,7 @@ import { createStabilizer, STABILIZER_PRESETS } from '../stabilizer.js';
 import { createPressureResolver } from '../pressure.js';
 import {
   createStroke, addPoint, serialize, deserialize,
-  hitTestStroke, splitStrokeAt, strokeBounds, TOOL,
+  hitTestStroke, splitStrokeAt, strokeBounds, densify, TOOL,
 } from '../strokeModel.js';
 
 /** Deterministic pseudo-random so the tests never flake. */
@@ -307,6 +307,41 @@ describe('strokeModel', () => {
   it('returns the identical stroke reference when the eraser truly misses', () => {
     const s = makeStroke();
     expect(splitStrokeAt(s, 45, 500, 5)[0]).toBe(s);  // identity → caller skips it
+  });
+
+  it('densifies widely-spaced points before outlining', () => {
+    // Regression: a fast pen on a ~60Hz event stream lands samples 50-120px
+    // apart, and perfect-freehand's ribbon collapses at that spacing — strokes
+    // rendered thin, faded and broken while slow handwriting on the same page
+    // looked perfect. Proven by drawing one shape at 92px spacing (broken) and
+    // 5.8px spacing (solid).
+    const sparse = [
+      { x: 0,   y: 0,   p: 0.6 },
+      { x: 100, y: 0,   p: 0.6 },
+      { x: 100, y: 120, p: 0.2 },
+    ];
+    const out = densify(sparse, 6);
+
+    // No gap may exceed the threshold.
+    for (let i = 1; i < out.length; i++) {
+      expect(Math.hypot(out[i].x - out[i-1].x, out[i].y - out[i-1].y)).toBeLessThanOrEqual(6.001);
+    }
+    // Endpoints and shape preserved, pressure interpolated along the way.
+    expect(out[0]).toEqual(sparse[0]);
+    expect(out.at(-1)).toEqual(sparse.at(-1));
+    expect(out.length).toBeGreaterThan(30);
+    const mid = out[Math.floor(out.length * 0.9)];
+    expect(mid.p).toBeGreaterThan(0.2);
+    expect(mid.p).toBeLessThan(0.6);
+  });
+
+  it('leaves already-dense points untouched and tolerates degenerate input', () => {
+    const dense = [{ x: 0, y: 0, p: 0.5 }, { x: 3, y: 0, p: 0.5 }, { x: 6, y: 0, p: 0.5 }];
+    expect(densify(dense, 6)).toEqual(dense);
+    expect(densify([], 6)).toEqual([]);
+    expect(densify([{ x: 1, y: 1, p: 0.5 }], 6)).toHaveLength(1);
+    // A pathological jump must not explode the point count.
+    expect(densify([{ x: 0, y: 0, p: 0.5 }, { x: 1e6, y: 0, p: 0.5 }], 6).length).toBeLessThan(210);
   });
 
   it('bounds include the rendered half-width padding', () => {

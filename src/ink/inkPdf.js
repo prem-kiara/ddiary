@@ -10,7 +10,7 @@
  */
 
 import getStroke from 'perfect-freehand';
-import { deserialize, TOOL } from './strokeModel.js';
+import { deserialize, TOOL, densify } from './strokeModel.js';
 
 const PX_TO_MM = 25.4 / 96;
 
@@ -55,7 +55,9 @@ export function drawInkToPdf(doc, inkDoc, { x, y, maxWidthMm }) {
     const size = isHl ? stroke.size * 6 : stroke.size;
 
     const outline = getStroke(
-      stroke.points.map(p => [p.x, p.y, p.p]),
+      // Same densification as on screen — a sparse fast stroke would otherwise
+      // export as a broken-up ribbon.
+      densify(stroke.points).map(p => [p.x, p.y, p.p]),
       {
         size,
         thinning:   isHl ? 0 : 0.6,
