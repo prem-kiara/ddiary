@@ -16,6 +16,7 @@ import Toast from './components/Toast';
 import DiaryList from './components/DiaryList';
 import DiaryView from './components/DiaryView';
 import DiaryEditor from './components/DiaryEditor';
+import InkCanvasPage from './components/InkCanvasPage';
 import SettingsPage from './components/SettingsPage';
 import Dashboard from './components/Dashboard';
 import SpreadsheetList from './components/SpreadsheetList';
@@ -68,6 +69,31 @@ function DiaryEditorPage({ entries, archivedEntries, onSave, onCancel, showToast
 
   return (
     <DiaryEditor
+      editingEntry={editingEntry || null}
+      onSave={handleSave}
+      onCancel={onCancel}
+      showToast={showToast}
+    />
+  );
+}
+
+// Full-page handwritten note for /canvas and /canvas/:id.
+// A canvas note is an ordinary entry whose content is a sequence of ink blocks,
+// so it saves through exactly the same path as a typed entry.
+function InkCanvasEditorPage({ entries, archivedEntries, onSave, onCancel, showToast }) {
+  const { id } = useParams();
+  const location = useLocation();
+  const editingEntry = id
+    ? (location.state?.entry || entries.find(e => e.id === id) || archivedEntries.find(e => e.id === id))
+    : null;
+
+  const handleSave = useCallback(
+    async (entryData) => onSave(entryData, editingEntry?.id || null),
+    [onSave, editingEntry]
+  );
+
+  return (
+    <InkCanvasPage
       editingEntry={editingEntry || null}
       onSave={handleSave}
       onCancel={onCancel}
@@ -293,7 +319,10 @@ function DiaryApp() {
   const handleRestoreEntry  = async (id) => { await restoreEntry(id);  showToast('Entry restored', 'success'); };
   const handlePurgeEntry    = async (id) => { await purgeEntry(id);    showToast('Entry permanently deleted', 'success'); };
 
-  const goToEditEntry = (entry) => navigate(`/write/${entry.id}`, { state: { entry } });
+  // Handwritten notes open in the full-page canvas rather than the text editor.
+  const goToEditEntry = (entry) =>
+    navigate(entry?.kind === 'canvas' ? `/canvas/${entry.id}` : `/write/${entry.id}`,
+             { state: { entry } });
 
   // ─── Auth gate ───────────────────────────────────────────────────────────
   if (authLoading) {
@@ -359,6 +388,7 @@ function DiaryApp() {
                 loading={entriesLoading}
                 onView={(entry) => navigate(`/entry/${entry.id}`, { state: { entry } })}
                 onNew={() => navigate('/write')}
+                onNewCanvas={() => navigate('/canvas')}
                 onRestore={handleRestoreEntry}
                 onPurge={handlePurgeEntry}
                 onArchive={handleArchiveEntry}
@@ -402,6 +432,34 @@ function DiaryApp() {
             path="/write/:id"
             element={
               <DiaryEditorPage
+                entries={entries}
+                archivedEntries={archivedEntries}
+                onSave={handleSaveEntry}
+                onCancel={() => navigate(-1)}
+                showToast={showToast}
+              />
+            }
+          />
+
+          {/* New handwritten note (full-page canvas) */}
+          <Route
+            path="/canvas"
+            element={
+              <InkCanvasEditorPage
+                entries={entries}
+                archivedEntries={archivedEntries}
+                onSave={handleSaveEntry}
+                onCancel={() => navigate('/')}
+                showToast={showToast}
+              />
+            }
+          />
+
+          {/* Edit existing handwritten note */}
+          <Route
+            path="/canvas/:id"
+            element={
+              <InkCanvasEditorPage
                 entries={entries}
                 archivedEntries={archivedEntries}
                 onSave={handleSaveEntry}

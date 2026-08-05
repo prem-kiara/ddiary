@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useConfirm } from '../contexts/ConfirmContext';
-import { BookOpen, Plus, Trash2, RotateCcw, Archive, ChevronRight, ChevronDown, FileText, Download, Users, Share2 } from 'lucide-react';
+import { BookOpen, Plus, Trash2, RotateCcw, Archive, ChevronRight, ChevronDown, FileText, Download, Users, Share2, PenLine } from 'lucide-react';
 import { formatDateTime, formatTime } from '../utils/dates';
 import { TagBadge } from './shared/Pills';
 import { downloadEntryAsPDF } from '../utils/exportUtils';
@@ -48,7 +48,7 @@ function pickAccent(id = '') {
 
 export default function DiaryList({
   entries, trashedEntries = [], archivedEntries = [],
-  loading, onView, onNew, onRestore, onPurge, onArchive, onUnarchive,
+  loading, onView, onNew, onNewCanvas, onRestore, onPurge, onArchive, onUnarchive,
 }) {
   const { user } = useAuth();
   const confirm = useConfirm();
@@ -97,6 +97,11 @@ export default function DiaryList({
           )}
         </div>
         <div className="page-actions">
+          {onNewCanvas && (
+            <button className="btn btn-outline" onClick={onNewCanvas} title="Write by hand on a full page">
+              <PenLine size={16} /> Handwritten
+            </button>
+          )}
           <button className="btn btn-gold" onClick={onNew}>
             <Plus size={16} /> New Entry
           </button>

@@ -12,27 +12,14 @@
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { X, Pen, Highlighter, Eraser, Undo2, Redo2, Trash2, Check, Shapes } from 'lucide-react';
-import { createInkEngine, TOOL, DEVICE_POLICY } from '../ink/inkEngine';
-
-const COLORS = ['#1a1a2e', '#dc2626', '#2563eb', '#15803d', '#d97706', '#7c3aed'];
-const SIZES  = [
-  { label: 'Fine',   value: 1.2 },
-  { label: 'Medium', value: 2.2 },
-  { label: 'Thick',  value: 3.6 },
-  { label: 'Bold',   value: 6 },
-];
-const BACKGROUNDS = [
-  { value: 'blank',     label: 'Blank' },
-  { value: 'ruled',     label: 'Ruled' },
-  { value: 'grid',      label: 'Grid' },
-  { value: 'dotted',    label: 'Dotted' },
-];
-const STABILIZERS = [
-  { value: 'off',    label: 'Smoothing: off' },
-  { value: 'light',  label: 'Smoothing: light' },
-  { value: 'medium', label: 'Smoothing: medium' },
-  { value: 'strong', label: 'Smoothing: strong' },
-];
+import { createInkEngine } from '../ink/inkEngine';
+import {
+  useInkTools,
+  INK_COLORS as COLORS,
+  INK_SIZES as SIZES,
+  INK_BACKGROUNDS as BACKGROUNDS,
+  INK_SMOOTHING as STABILIZERS,
+} from './ink/useInkTools';
 
 // Authoring height. Width is measured from the modal so the block fits the
 // device; strokes store authoring coordinates and rescale on render.
@@ -43,15 +30,15 @@ export default function InkBlockModal({ initialDoc, onSave, onClose }) {
   const canvasRef = useRef(null);
   const engineRef = useRef(null);
 
-  const [ready,   setReady]   = useState(false);
-  const [color,   setColor]   = useState(COLORS[0]);
-  const [size,    setSize]    = useState(SIZES[1].value);
-  const [mode,    setMode]    = useState('pen');   // pen | highlighter | eraser
-  const [bg,      setBg]      = useState('ruled');
-  const [smooth,  setSmooth]  = useState('medium');
-  const [penOnly, setPenOnly] = useState(false);
-  const [shapes,  setShapes]  = useState(false);
-  const [dirty,   setDirty]   = useState(false);
+  const [ready, setReady] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  // Tool state and its engine wiring are shared with the full-page canvas so
+  // the two surfaces cannot drift apart as options are added.
+  const {
+    color, setColor, size, setSize, mode, setMode,
+    bg, setBg, smooth, setSmooth, penOnly, setPenOnly, shapes, setShapes,
+  } = useInkTools(engineRef, ready, { bg: 'ruled' });
 
   // ── Engine lifecycle ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -82,28 +69,6 @@ export default function InkBlockModal({ initialDoc, onSave, onClose }) {
     return () => { engine.destroy(); engineRef.current = null; };
     // Mount-only: the engine sizes itself once, like the rest of the app's canvases.
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Toolbar → engine ──────────────────────────────────────────────────────
-  useEffect(() => {
-    const e = engineRef.current;
-    if (!e) return;
-    if (mode === 'eraser') {
-      e.setEraser({ active: true, mode: 'split', size: 22 });
-    } else {
-      e.setTool({
-        type:  mode === 'highlighter' ? TOOL.HIGHLIGHTER : TOOL.PEN,
-        color: mode === 'highlighter' ? '#fde047' : color,
-        size,
-      });
-    }
-  }, [mode, color, size, ready]);
-
-  useEffect(() => { engineRef.current?.setBackground(bg); }, [bg, ready]);
-  useEffect(() => { engineRef.current?.setStabilizer(smooth); }, [smooth, ready]);
-  useEffect(() => {
-    engineRef.current?.setPolicy(penOnly ? DEVICE_POLICY.PEN_ONLY : DEVICE_POLICY.AUTO);
-  }, [penOnly, ready]);
-  useEffect(() => { engineRef.current?.setShapeMode(shapes); }, [shapes, ready]);
 
   const handleSave = useCallback(() => {
     const e = engineRef.current;
