@@ -1165,3 +1165,29 @@ body {
   .section-title { font-size: 17px; }
   .card { padding: 12px; }
 }
+
+/* ── Handwriting blocks (ink) ────────────────────────────────────────────────
+   Inserted into diary content by InkBlockModal; the vector payload lives on
+   the element's data-ink attribute and is drawn into a child <canvas> at
+   render time (see src/ink/inkHtml.js). */
+.ddiary-ink {
+  display: block;
+  margin: 10px 0;
+  border: 1px solid var(--paper-line, #e2e8f0);
+  border-radius: 10px;
+  background: #ffffff;
+  overflow: hidden;
+  max-width: 100%;
+  line-height: 0;            /* no stray descender gap under the canvas */
+}
+.ddiary-ink canvas { max-width: 100%; }
+
+/* In the editor the block is clickable to reopen the handwriting pad. */
+.diary-editor .ddiary-ink {
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.diary-editor .ddiary-ink:hover {
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
+}

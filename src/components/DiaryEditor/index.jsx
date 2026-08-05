@@ -5,6 +5,8 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import EditorToolbar from './EditorToolbar';
 import DiaryHistoryModal from '../DiaryHistoryModal';
+import InkBlockModal from '../InkBlockModal';
+import { inkBlockHtml, hydratePendingInkBlocks, encodeInk, INK_CLASS, INK_ATTR, decodeInk } from '../../ink/inkHtml';
 import { useAutosave } from './hooks/useAutosave';
 import { useEditorSync } from './hooks/useEditorSync';
 import { useUndoStack } from './hooks/useUndoStack';
@@ -27,6 +29,8 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
   const [listMenu,      setListMenu]      = useState(null);
   // Row / Col background-color picker open in toolbar: null | 'row' | 'col'
   const [cellBgPicker,  setCellBgPicker]  = useState(null);
+  // Handwriting block editor: null | { doc, el } — el set when editing an existing block
+  const [inkEditor,     setInkEditor]     = useState(null);
   // Version history modal
   const [showHistory,   setShowHistory]   = useState(false);
 
@@ -451,6 +455,53 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
     document.execCommand('insertHTML', false, tableHtml);
     scheduleAutosave();
   }, [pushUndo, scheduleAutosave]);
+
+  // ── Handwriting blocks ────────────────────────────────────────────────────
+  // Ink is stored as a vector payload on the block element itself, so it rides
+  // along with `content` through autosave, drafts, version history and shared
+  // sync without any extra plumbing. See ink/inkHtml.js.
+
+  /** Hydrate any ink block that has appeared but not yet been drawn.
+   *  A MutationObserver covers every innerHTML assignment — initial load,
+   *  history restore, undo/redo and live collaborative updates — so none of
+   *  those code paths need to know ink exists. */
+  useEffect(() => {
+    const root = editorRef.current;
+    if (!root) return;
+    hydratePendingInkBlocks(root);
+    const mo = new MutationObserver(() => hydratePendingInkBlocks(root));
+    mo.observe(root, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, []);
+
+  const handleInsertInk = useCallback(() => {
+    editorRef.current?.focus();
+    setInkEditor({ doc: null, el: null });
+  }, []);
+
+  /** Click an existing block to reopen it for editing. */
+  const handleEditorClick = useCallback((e) => {
+    const block = e.target.closest?.(`.${INK_CLASS}[${INK_ATTR}]`);
+    if (!block) return;
+    e.preventDefault();
+    setInkEditor({ doc: decodeInk(block.getAttribute(INK_ATTR)), el: block });
+  }, []);
+
+  const handleInkSave = useCallback((inkDoc) => {
+    pushUndo();
+    if (inkEditor?.el) {
+      // Editing in place — swap the payload and let the observer redraw it.
+      inkEditor.el.setAttribute(INK_ATTR, encodeInk(inkDoc));
+      inkEditor.el.querySelector('canvas')?.remove();
+      hydratePendingInkBlocks(editorRef.current);
+    } else {
+      editorRef.current?.focus();
+      document.execCommand('insertHTML', false, inkBlockHtml(inkDoc) + '<p><br></p>');
+    }
+    setInkEditor(null);
+    setIsEmpty(false);
+    scheduleAutosave();
+  }, [inkEditor, pushUndo, scheduleAutosave]);
 
   // ── Table column / row resize ────────────────────────────────────────────
   // Detects hover within 6px of a cell's right edge (col resize) or bottom
@@ -1362,6 +1413,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
             onToggleList={toggleList}
             onIndent={handleIndent}
             onInsertTable={handleInsertTable}
+            onInsertInk={handleInsertInk}
             onCellBgColor={(scope, color) => handleCellBgColor(scope, color, null)}
             onInsertAtCursor={insertAtCursor}
             cellBgPicker={cellBgPicker}
@@ -1405,6 +1457,7 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
               onInput={handleEditorInput}
               onKeyDown={handleEditorKeyDown}
               onContextMenu={handleContextMenu}
+              onClick={handleEditorClick}
               className="diary-editor"
             />
           </div>
@@ -1520,6 +1573,15 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
           isShared={isSharedEntryRef.current}
           onRestore={handleHistoryRestore}
           onClose={() => setShowHistory(false)}
+        />
+      )}
+
+      {/* ── Handwriting block editor ── */}
+      {inkEditor && (
+        <InkBlockModal
+          initialDoc={inkEditor.doc}
+          onSave={handleInkSave}
+          onClose={() => setInkEditor(null)}
         />
       )}
 

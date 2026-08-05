@@ -1,4 +1,4 @@
-import { Bold, Italic, Underline, Strikethrough, List, ListOrdered, Table2, Undo2, Redo2, History } from 'lucide-react';
+import { Bold, Italic, Underline, Strikethrough, List, ListOrdered, Table2, Undo2, Redo2, History, PenLine } from 'lucide-react';
 import { HIGHLIGHT_COLORS, toolbarBtnStyle, applyHover } from './constants';
 
 /**
@@ -16,6 +16,7 @@ import { HIGHLIGHT_COLORS, toolbarBtnStyle, applyHover } from './constants';
  *   onToggleList(type)             - 'numbered' | 'bullet'
  *   onIndent(increase)             - true = indent, false = outdent
  *   onInsertTable()                - inserts a 3×2 table at cursor
+ *   onInsertInk()                  - opens the handwriting pad and inserts a drawing
  *   onCellBgColor(scope, color)    - applies bg to row or col
  *   onInsertAtCursor(action)       - quick-key insertions (backspace/enter)
  *   cellBgPicker                   - null | 'row' | 'col'
@@ -30,6 +31,7 @@ export default function EditorToolbar({
   onToggleList,
   onIndent,
   onInsertTable,
+  onInsertInk,
   onCellBgColor,
   onInsertAtCursor,
   cellBgPicker,
@@ -187,6 +189,19 @@ export default function EditorToolbar({
       >
         <Table2 size={15} />
       </button>
+
+      {/* ── Insert handwriting ── */}
+      {onInsertInk && (
+        <button
+          onMouseDown={e => { e.preventDefault(); onInsertInk(); }}
+          title="Insert handwriting / drawing — write with a stylus or finger"
+          style={toolbarBtnStyle}
+          onMouseEnter={e => applyHover(e, true)}
+          onMouseLeave={e => applyHover(e, false)}
+        >
+          <PenLine size={15} />
+        </button>
+      )}
 
       {/* ── Row / Column background colour ── */}
       {['row', 'col'].map(scope => (

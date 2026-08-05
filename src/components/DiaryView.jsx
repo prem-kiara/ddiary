@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useConfirm } from '../contexts/ConfirmContext';
+import { hydrateInkBlocks } from '../ink/inkHtml';
 import { ChevronLeft, Edit3, Trash2, Archive, RotateCcw, Share2, Download, Users, Send } from 'lucide-react';
 import { TagBadge } from './shared/Pills';
 import { parseDate } from '../utils/dates';
@@ -137,6 +138,13 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
     setLiveContent(entry.content || '');
     setLiveTitle(entry.title || '');
   }, [entry.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Handwriting blocks arrive as bare elements carrying a vector payload —
+  // draw them once the content HTML is in the DOM (and again on live updates).
+  const contentRef = useRef(null);
+  useEffect(() => {
+    hydrateInkBlocks(contentRef.current);
+  }, [liveContent]);
 
   // Subscribe to sharedDiaries for real-time changes (owner or collaborator)
   useEffect(() => {
@@ -302,7 +310,7 @@ export default function DiaryView({ entry, onBack, onEdit, onDelete, onArchive, 
           </div>
         )}
 
-        <div className="border-t border-slate-200 pt-4 pb-2">
+        <div ref={contentRef} className="border-t border-slate-200 pt-4 pb-2">
           {renderContent(liveContent)}
         </div>
 

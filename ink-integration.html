@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Ink ⇄ editor integration — dev harness</title>
+  <link rel="stylesheet" href="/src/styles/diary.css" />
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+           margin: 0; padding: 16px; background: #f8fafc; }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em;
+         color: #475569; margin: 14px 0 6px; }
+    .diary-editor, .viewer {
+      min-height: 120px; background: #fff; border: 1px solid #e2e8f0;
+      border-radius: 10px; padding: 12px; font-size: 15px; line-height: 1.7;
+    }
+    #log { font-family: ui-monospace, monospace; font-size: 12px; white-space: pre-wrap;
+           background: #0f172a; color: #d1fae5; padding: 10px; border-radius: 8px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h2>1 · Editor (contentEditable + MutationObserver hydration)</h2>
+  <div id="editor" class="diary-editor" contenteditable></div>
+
+  <h2>2 · Saved content string (what goes to Firestore)</h2>
+  <div id="saved" style="font-family:ui-monospace,monospace;font-size:11px;background:#fff;
+       border:1px solid #e2e8f0;border-radius:8px;padding:10px;max-height:110px;overflow:auto;"></div>
+
+  <h2>3 · Viewer — reloaded from that string (simulates DiaryView)</h2>
+  <div id="viewer" class="viewer"></div>
+
+  <div id="log"></div>
+
+  <script type="module">
+    import { inkBlockHtml, hydratePendingInkBlocks, hydrateInkBlocks, decodeInk,
+             contentInkBytes, INK_CLASS, INK_ATTR } from '/src/ink/inkHtml.js';
+    import { createStroke, addPoint, serialize, TOOL } from '/src/ink/strokeModel.js';
+
+    const log = (...a) => { document.getElementById('log').textContent += a.join(' ') + '\n'; };
+
+    // Build a drawing that looks like handwriting.
+    function makeDoc() {
+      const s = createStroke({ tool: TOOL.PEN, color: '#1a1a2e', size: 2.2 });
+      for (let i = 0; i <= 220; i++) {
+        const t = i / 220;
+        addPoint(s, { x: 30 + t * 560,
+                      y: 110 - Math.sin(t * 24) * 30 - Math.sin(t * 6) * 10,
+                      p: 0.3 + 0.5 * Math.abs(Math.cos(t * 24)) });
+      }
+      const h = createStroke({ tool: TOOL.HIGHLIGHTER, color: '#fde047', size: 3 });
+      for (let i = 0; i <= 30; i++) addPoint(h, { x: 40 + i * 18, y: 112, p: 0.7 });
+      return serialize([h, s], 640, 200);
+    }
+
+    const editor = document.getElementById('editor');
+
+    // Exactly the hydration wiring DiaryEditor uses.
+    hydratePendingInkBlocks(editor);
+    new MutationObserver(() => hydratePendingInkBlocks(editor))
+      .observe(editor, { childList: true, subtree: true });
+
+    // ── Insert text + an ink block, the way handleInkSave does ──────────────
+    const doc = makeDoc();
+    editor.innerHTML =
+      '<p>Board meeting — signature and margin note below:</p>' +
+      inkBlockHtml(doc) +
+      '<p>Follow-up: circulate minutes.</p>';
+
+    // Let the observer run, then inspect.
+    requestAnimationFrame(() => {
+      const el = editor.querySelector('.' + INK_CLASS);
+      const canvas = el?.querySelector('canvas');
+      log('editor block present :', !!el);
+      log('hydrated to canvas   :', !!canvas, canvas ? `(${canvas.style.width} × ${canvas.style.height})` : '');
+
+      // ── Simulate save: read innerHTML back (this is entry.content) ────────
+      const saved = editor.innerHTML;
+      document.getElementById('saved').textContent = saved.slice(0, 400) + (saved.length > 400 ? ' …' : '');
+      log('saved content bytes  :', saved.length);
+      log('  of which ink       :', contentInkBytes(saved), 'bytes');
+      log('  canvas serialised  :', /<canvas[^>]*>\s*<\/canvas>/.test(saved)
+            ? 'as EMPTY tag ✓ (bitmap not stored)' : 'UNEXPECTED');
+
+      // ── Simulate reload in the read-only viewer ───────────────────────────
+      const viewer = document.getElementById('viewer');
+      viewer.innerHTML = saved;               // like dangerouslySetInnerHTML
+      hydrateInkBlocks(viewer);               // like DiaryView's useEffect
+
+      requestAnimationFrame(() => {
+        const vEl = viewer.querySelector('.' + INK_CLASS);
+        const vCanvas = vEl?.querySelector('canvas');
+        const rt = decodeInk(vEl.getAttribute(INK_ATTR));
+        log('viewer re-hydrated   :', !!vCanvas);
+        log('payload identical    :', JSON.stringify(rt) === JSON.stringify(doc) ? 'YES ✓' : 'NO ✗');
+        log('stroke count         :', rt.s.length);
+        window.__result = {
+          hydrated: !!canvas, viewerHydrated: !!vCanvas,
+          identical: JSON.stringify(rt) === JSON.stringify(doc),
+          savedBytes: saved.length, inkBytes: contentInkBytes(saved),
+          canvasEmptyInHtml: /<canvas[^>]*>\s*<\/canvas>/.test(saved),
+        };
+      });
+    });
+  </script>
+</body>
+</html>

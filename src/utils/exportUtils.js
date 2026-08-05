@@ -9,6 +9,9 @@
  *   npm install xlsx jspdf jspdf-autotable
  */
 
+import { INK_CLASS, INK_ATTR, decodeInk } from '../ink/inkHtml';
+import { drawInkToPdf, measureInk } from '../ink/inkPdf';
+
 // ─── Column letter helpers (mirrors SpreadsheetGrid) ─────────────────────────
 const LETTERS = Array.from({ length: 26 }, (_, i) => String.fromCharCode(65 + i));
 function ck(col, row) { return `${LETTERS[col] ?? '?'}${row + 1}`; }
@@ -259,6 +262,22 @@ function renderHtmlToPdf(htmlStr, doc, autoTable, layout) {
     if (node.nodeType !== 1 /* ELEMENT_NODE */) return;
 
     const tag = node.tagName.toLowerCase();
+
+    // ── Handwriting block ───────────────────────────────────────────────────
+    // Must be checked before the switch: an ink block is a <div>, so the 'div'
+    // case would otherwise recurse into it and emit nothing (the vector lives
+    // in an attribute, and its <canvas> child has no text).
+    if (node.classList?.contains(INK_CLASS) && node.hasAttribute(INK_ATTR)) {
+      const inkDoc = decodeInk(node.getAttribute(INK_ATTR));
+      if (inkDoc) {
+        const { height } = measureInk(inkDoc, TW);
+        ensureSpace(height + 4);
+        y += 2;
+        drawInkToPdf(doc, inkDoc, { x: ML, y, maxWidthMm: TW });
+        y += height + 4;
+      }
+      return;
+    }
 
     switch (tag) {
       case 'table':
