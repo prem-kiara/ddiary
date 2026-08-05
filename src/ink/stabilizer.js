@@ -45,6 +45,16 @@ const MAX_WINDOW = 64;
 // size and rendering cost without adding visible detail.
 const MIN_POINT_DISTANCE = 0.35;
 
+// ─── Prediction (latency hiding) ────────────────────────────────────────────
+// How far ahead of the newest sample to extrapolate, in ms. Roughly one frame:
+// enough to cancel the delay, short enough that a wrong guess is invisible.
+const PREDICT_MS = 16;
+// Never extrapolate further than this, whatever the velocity says.
+const PREDICT_MAX_PX = 16;
+// Below this speed (CSS px per ms) there is no visible lag to hide, and
+// predicting would only add jitter.
+const PREDICT_MIN_SPEED = 0.25;
+
 export const STABILIZER_PRESETS = {
   off:    { sigma: 0,    deadzone: 0   },
   light:  { sigma: 0.35, deadzone: 0.8 },
@@ -64,6 +74,8 @@ export function createStabilizer({ sigma = 0.6, deadzone = 1.3, cuspDetection = 
   /** @type {{x:number,y:number,p:number,v:number}[]} newest first */
   let window = [];
   let prevRaw = null;       // previous raw sample, for velocity
+  let lastVel = null;       // last raw velocity vector, for prediction damping
+  let turnCos = 1;          // 1 = travelling straight, -1 = reversing
   let lastPainted = null;   // last emitted point (deadzone centre)
   let lastLive = null;      // last raw sample that escaped the deadzone
   let lastDir = null;       // direction that took us out of the deadzone
@@ -147,7 +159,16 @@ export function createStabilizer({ sigma = 0.6, deadzone = 1.3, cuspDetection = 
       let velocity = 0;
       if (prevRaw) {
         const dt = Math.max(s.t - prevRaw.t, 0.1); // sub-ms timestamps
-        velocity = Math.hypot(s.x - prevRaw.x, s.y - prevRaw.y) / dt;
+        const vx = (s.x - prevRaw.x) / dt;
+        const vy = (s.y - prevRaw.y) / dt;
+        velocity = Math.hypot(vx, vy);
+        // How much the direction just changed — used to switch prediction off
+        // through corners, where extrapolating would overshoot.
+        if (lastVel) {
+          const mags = Math.hypot(vx, vy) * Math.hypot(lastVel.x, lastVel.y);
+          turnCos = mags > 1e-9 ? (vx * lastVel.x + vy * lastVel.y) / mags : 1;
+        }
+        lastVel = { x: vx, y: vy };
       }
       prevRaw = s;
 
@@ -180,8 +201,13 @@ export function createStabilizer({ sigma = 0.6, deadzone = 1.3, cuspDetection = 
      * @param {{x,y,p}[]} pts  points committed so far
      * @returns {{x,y,p}[]}    extra points to append (possibly empty)
      */
-    finalize(pts) {
-      const C = lastRaw && { x: lastRaw.x, y: lastRaw.y, p: lastRaw.p };
+    finalize(pts, target) {
+      // `target` lets the caller aim the tail somewhere other than the newest
+      // sample — used for prediction while drawing. Committing a stroke passes
+      // nothing, so the stored geometry always ends at a position the pen
+      // genuinely reported, never at a guess.
+      const aim = target || lastRaw;
+      const C = aim && { x: aim.x, y: aim.y, p: aim.p };
       if (!C || pts.length === 0) return [];
       const B = pts[pts.length - 1];
       const bc = Math.hypot(C.x - B.x, C.y - B.y);
@@ -220,9 +246,45 @@ export function createStabilizer({ sigma = 0.6, deadzone = 1.3, cuspDetection = 
       return out;
     },
 
+    /**
+     * Where the pen is *about to be*, extrapolated from its current velocity.
+     *
+     * Native stylus apps hide latency this way (Apple exposes it as predicted
+     * touches); the web gives us no such API, so we estimate it. Even with a
+     * perfect pipeline the newest sample we hold is already a frame old, so
+     * drawing only as far as it means the ink is always behind the nib — and
+     * the faster you write, the further behind, which is exactly the reported
+     * "fine slowly, lags when fast".
+     *
+     * Heavily damped on purpose: prediction is off through corners (where it
+     * would overshoot), off at low speed (where it would only add jitter and
+     * there is no visible lag anyway), and capped in absolute distance.
+     *
+     * @returns {{x,y,p}|null} null when predicting would be unsafe
+     */
+    predict(aheadMs = PREDICT_MS) {
+      if (!lastVel || !lastRaw) return null;
+      const speed = Math.hypot(lastVel.x, lastVel.y);
+      if (speed < PREDICT_MIN_SPEED) return null;      // slow: no lag to hide
+
+      // Straight → full prediction; 90° or sharper → none.
+      const damp = Math.max(0, turnCos);
+      if (damp <= 0) return null;
+
+      let dx = lastVel.x * aheadMs * damp;
+      let dy = lastVel.y * aheadMs * damp;
+      const dist = Math.hypot(dx, dy);
+      if (dist > PREDICT_MAX_PX) {
+        const k = PREDICT_MAX_PX / dist;
+        dx *= k; dy *= k;
+      }
+      return { x: lastRaw.x + dx, y: lastRaw.y + dy, p: lastRaw.p };
+    },
+
     reset() {
       window = [];
-      prevRaw = lastPainted = lastLive = lastDir = lastRaw = null;
+      prevRaw = lastPainted = lastLive = lastDir = lastRaw = lastVel = null;
+      turnCos = 1;
     },
   };
 }

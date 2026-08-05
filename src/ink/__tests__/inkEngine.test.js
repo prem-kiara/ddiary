@@ -147,6 +147,78 @@ describe('stabilizer', () => {
     expect(Math.hypot(end.x - raw.x, end.y - raw.y)).toBeLessThan(0.01);
   });
 
+  describe('prediction (latency hiding)', () => {
+    /** Feed a straight run of samples at a given speed (px per ms). */
+    const run = (stab, { speed = 1, n = 12, turn = false } = {}) => {
+      let x = 100, y = 100, t = 0;
+      for (let i = 0; i < n; i++) {
+        // Reverse only the final sample: that is the instant of the corner.
+        // (Two reversed samples would mean the pen is travelling straight again
+        // in the new direction, where resuming prediction is correct.)
+        const dir = (turn && i === n - 1) ? -1 : 1;
+        x += dir * speed * 8; t += 8;
+        stab.push({ x, y, p: 0.5, t });
+      }
+      return { x, y };
+    };
+
+    it('extrapolates ahead of the newest sample when moving fast and straight', () => {
+      const stab = createStabilizer(STABILIZER_PRESETS.medium);
+      const last = run(stab, { speed: 1.5 });
+      const p = stab.predict();
+      expect(p).not.toBeNull();
+      expect(p.x).toBeGreaterThan(last.x);          // ahead, in the direction of travel
+      expect(p.x - last.x).toBeLessThanOrEqual(16); // and capped
+    });
+
+    it('does not predict at low speed, where there is no visible lag', () => {
+      const stab = createStabilizer(STABILIZER_PRESETS.medium);
+      run(stab, { speed: 0.05 });
+      expect(stab.predict()).toBeNull();
+    });
+
+    it('does not predict at the instant of a corner, where it would overshoot', () => {
+      const stab = createStabilizer(STABILIZER_PRESETS.medium);
+      run(stab, { speed: 1.5, turn: true });
+      expect(stab.predict()).toBeNull();
+    });
+
+    it('resumes predicting once travelling straight again after a corner', () => {
+      const stab = createStabilizer(STABILIZER_PRESETS.medium);
+      run(stab, { speed: 1.5, turn: true });      // corner
+      let x = 100, t = 1000;                       // now straight in the new direction
+      for (let i = 0; i < 4; i++) { x -= 12; t += 8; stab.push({ x, y: 100, p: 0.5, t }); }
+      expect(stab.predict()).not.toBeNull();
+    });
+
+    it('never extrapolates further than the cap, however fast the pen', () => {
+      const stab = createStabilizer(STABILIZER_PRESETS.medium);
+      const last = run(stab, { speed: 40 });     // absurdly fast
+      const p = stab.predict();
+      if (p) expect(Math.hypot(p.x - last.x, p.y - last.y)).toBeLessThanOrEqual(16.001);
+    });
+
+    it('committed geometry ends at a real position, never at a guess', () => {
+      // finalize() with no target must still aim at the true last sample, so a
+      // saved stroke never contains extrapolated coordinates.
+      const stab = createStabilizer(STABILIZER_PRESETS.medium);
+      const input = jitteryLine({ n: 30, noise: 0.5 });
+      const pts = [];
+      for (const s of input) { const o = stab.push(s); if (o) pts.push(o); }
+
+      const committed = stab.finalize(pts);           // no target → real
+      const predicted = stab.finalize(pts, stab.predict());
+      const raw = input.at(-1);
+
+      expect(Math.hypot(committed.at(-1).x - raw.x, committed.at(-1).y - raw.y))
+        .toBeLessThan(0.01);
+      // The predicted tail, when it fires, reaches beyond the real position.
+      if (stab.predict()) {
+        expect(predicted.at(-1).x).toBeGreaterThan(committed.at(-1).x);
+      }
+    });
+  });
+
   it('emits the first point immediately', () => {
     const stab = createStabilizer(STABILIZER_PRESETS.medium);
     const first = stab.push({ x: 10, y: 20, p: 0.5, t: 0 });

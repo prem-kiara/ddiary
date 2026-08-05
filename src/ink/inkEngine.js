@@ -58,6 +58,7 @@ export function createInkEngine({
   let policy = DEVICE_POLICY.AUTO;
   let stabilizerCfg = STABILIZER_PRESETS.medium;
   let shapeMode = false;
+  let prediction = true;   // latency hiding — see liveRenderStroke()
 
   // In-progress stroke state
   let live = null;
@@ -129,7 +130,15 @@ export function createInkEngine({
     if (!live || !live.points.length) return null;
     if (!stabilizer) return live;
     let tail = [];
-    try { tail = stabilizer.finalize(live.points) || []; } catch { tail = []; }
+    try {
+      // Aim the tail at where the pen is heading, not where it last reported.
+      // Even a perfect pipeline holds a sample that is already a frame old, so
+      // without this the ink trails further the faster you write. Prediction
+      // returns null through corners and at low speed, and the tail then ends
+      // at the true position as before.
+      const aim = prediction ? stabilizer.predict() : null;
+      tail = stabilizer.finalize(live.points, aim) || [];
+    } catch { tail = []; }
     return tail.length ? { ...live, points: live.points.concat(tail) } : live;
   }
 
@@ -328,6 +337,7 @@ export function createInkEngine({
     setEraser(next)    { eraser = { ...eraser, ...next }; },
     setPolicy(p)       { policy = p; },
     setShapeMode(on)   { shapeMode = !!on; },
+    setPrediction(on)  { prediction = !!on; },
     setStabilizer(cfg) { stabilizerCfg = typeof cfg === 'string' ? STABILIZER_PRESETS[cfg] : cfg; },
     setBackground(type) {
       drawBackground(bgCtx, type, width, height, dpr);
