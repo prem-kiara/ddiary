@@ -1,0 +1,13 @@
+{
+  "appId": "finance.dhanam.diary",
+  "appName": "Dhanam Workspace",
+  "webDir": "native-poc",
+  "ios": {
+    "contentInset": "always",
+    "limitsNavigationsToAppBoundDomains": false
+  },
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "https"
+  }
+}

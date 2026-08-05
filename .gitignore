@@ -36,3 +36,12 @@ Thumbs.db
 *.swp
 *.swo
 .env
+
+# ── Capacitor / iOS native shell ────────────────────────────────────────────
+ios/App/Pods/
+ios/App/App/public/
+ios/App/Podfile.lock
+ios/.gitignore
+DerivedData/
+*.xcuserstate
+xcuserdata/
