@@ -2,6 +2,8 @@ import { createContext, useContext, useState, useEffect, useCallback, useRef } f
 import {
   onAuthStateChanged,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut,
   getAdditionalUserInfo,
   OAuthProvider,
@@ -11,6 +13,7 @@ import { auth, db, microsoftProvider } from '../firebase';
 import { writeUserDirectory } from '../hooks/useFirestore';
 import { addWorkspaceMember } from '../hooks/useWorkspace';
 import { setMsTokenRefresher } from '../utils/msTokenRefresh';
+import { isNativeApp } from '../utils/platform';
 
 const AuthContext = createContext(null);
 
@@ -33,6 +36,8 @@ export function useAuth() {
 // ─── Keys for persisting the Microsoft access token across page reloads ──────
 const MS_TOKEN_KEY        = 'ddiary_ms_access_token';
 const MS_TOKEN_EXPIRY_KEY = 'ddiary_ms_token_expiry';
+// Survives the sign-in redirect, which loses function arguments (native only).
+const PENDING_OWNER_KEY = 'ddiary_pending_owner_uid';
 // MS Graph tokens last ~60 min; we treat them as valid for 55 min to allow headroom
 const MS_TOKEN_TTL_MS = 55 * 60 * 1000;
 
@@ -110,6 +115,14 @@ export function AuthProvider({ children }) {
   const refreshMsToken = useCallback(async () => {
     if (refreshPromiseRef.current) return refreshPromiseRef.current;
 
+    // In the native shell this cannot work: it relies on a *silent* popup, and
+    // WKWebView blocks popups. The only alternative would be a full-page
+    // redirect, which would throw the user out of whatever they were doing to
+    // refresh a background token — worse than failing. Callers already treat
+    // null as "no token", so SharePoint upload and people-search degrade
+    // rather than break, and signing in again restores a fresh token.
+    if (isNativeApp()) return null;
+
     refreshPromiseRef.current = (async () => {
       setMsRefreshing(true);
       try {
@@ -169,6 +182,31 @@ export function AuthProvider({ children }) {
     } catch { /* non-fatal — indexes may not exist yet on first deploy */ }
   }, []);
 
+  // ── Collect a redirect sign-in result (native shell only) ────────────────
+  // signInWithRedirect navigates the whole web view away and back, so the
+  // result of the sign-in arrives here on the next load rather than from the
+  // call that started it. Runs before/alongside the auth listener; harmless in
+  // a browser, where it simply resolves to null.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await getRedirectResult(auth);
+        if (cancelled || !result) return;
+        let ownerUid = null;
+        try {
+          ownerUid = sessionStorage.getItem(PENDING_OWNER_KEY);
+          sessionStorage.removeItem(PENDING_OWNER_KEY);
+        } catch { /* ignore */ }
+        await processSignInResult(result, ownerUid);
+      } catch (err) {
+        if (!cancelled) setError(err.message);
+      }
+    })();
+    return () => { cancelled = true; };
+    // Mount-only: a redirect result is delivered exactly once, on load.
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Firebase auth state listener ─────────────────────────────────────────
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -193,54 +231,75 @@ export function AuthProvider({ children }) {
     return unsub;
   }, [saveMsToken, claimPendingMemberships]);
 
+  // ── Handle a completed Microsoft sign-in ─────────────────────────────────
+  // Shared by both paths: the browser signs in with a popup, the native shell
+  // has to redirect (WKWebView blocks popups outright — Firebase reports
+  // auth/popup-blocked), and the redirect result arrives later, on load.
+  const processSignInResult = async (result, ownerUid = null) => {
+    const credential = OAuthProvider.credentialFromResult(result);
+
+    // Persist the Microsoft access token for Graph API calls (SharePoint)
+    const accessToken = result._tokenResponse?.oauthAccessToken
+                     || credential?.accessToken;
+    if (accessToken) saveMsToken(accessToken);
+
+    const firebaseUser = result.user;
+    const additionalInfo = getAdditionalUserInfo(result);
+    const isNewUser = additionalInfo?.isNewUser;
+
+    if (isNewUser) {
+      // First time this Microsoft user signs in — create their Firestore profile
+      // Everyone gets full 'owner' access (their own diary, tasks, etc.)
+      const role = 'owner';
+      const profileData = {
+        email:       firebaseUser.email,
+        displayName: firebaseUser.displayName,
+        role,
+        ...(ownerUid ? { invitedBy: ownerUid } : {}),
+        createdAt:   new Date().toISOString(),
+        settings: {
+          reminderEmail:         firebaseUser.email,
+          reminderTime:          '09:00',
+          timezone:              Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+          emailRemindersEnabled: role === 'owner',
+          theme:                 'warm',
+        },
+      };
+
+      await setDoc(doc(db, 'users', firebaseUser.uid), profileData);
+
+      // If joining as member, write to userDirectory so owner can discover them
+      if (ownerUid) {
+        await writeUserDirectory(firebaseUser.uid, {
+          email:       firebaseUser.email,
+          displayName: firebaseUser.displayName,
+          invitedBy:   ownerUid,
+        });
+      }
+    }
+
+    return firebaseUser;
+  };
+
   // ── Sign in with Microsoft (works for both owner & member) ───────────────
   const loginWithMicrosoft = async (ownerUid = null) => {
     setError(null);
     try {
-      const result = await signInWithPopup(auth, microsoftProvider);
-      const credential = OAuthProvider.credentialFromResult(result);
-
-      // Persist the Microsoft access token for Graph API calls (SharePoint)
-      const accessToken = result._tokenResponse?.oauthAccessToken
-                       || credential?.accessToken;
-      if (accessToken) saveMsToken(accessToken);
-
-      const firebaseUser = result.user;
-      const additionalInfo = getAdditionalUserInfo(result);
-      const isNewUser = additionalInfo?.isNewUser;
-
-      if (isNewUser) {
-        // First time this Microsoft user signs in — create their Firestore profile
-        // Everyone gets full 'owner' access (their own diary, tasks, etc.)
-        const role = 'owner';
-        const profileData = {
-          email:       firebaseUser.email,
-          displayName: firebaseUser.displayName,
-          role,
-          ...(ownerUid ? { invitedBy: ownerUid } : {}),
-          createdAt:   new Date().toISOString(),
-          settings: {
-            reminderEmail:         firebaseUser.email,
-            reminderTime:          '09:00',
-            timezone:              Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-            emailRemindersEnabled: role === 'owner',
-            theme:                 'warm',
-          },
-        };
-
-        await setDoc(doc(db, 'users', firebaseUser.uid), profileData);
-
-        // If joining as member, write to userDirectory so owner can discover them
-        if (ownerUid) {
-          await writeUserDirectory(firebaseUser.uid, {
-            email:       firebaseUser.email,
-            displayName: firebaseUser.displayName,
-            invitedBy:   ownerUid,
-          });
-        }
+      if (isNativeApp()) {
+        // WKWebView blocks popups, so the native shell must redirect. The whole
+        // web view navigates to Microsoft and comes back, which means this call
+        // never returns a result — it is collected on the next load, below.
+        // ownerUid would be lost across that navigation, so park it first.
+        try {
+          if (ownerUid) sessionStorage.setItem(PENDING_OWNER_KEY, ownerUid);
+          else sessionStorage.removeItem(PENDING_OWNER_KEY);
+        } catch { /* private mode — worst case the invite link needs re-clicking */ }
+        await signInWithRedirect(auth, microsoftProvider);
+        return null;   // navigation is under way
       }
 
-      return firebaseUser;
+      const result = await signInWithPopup(auth, microsoftProvider);
+      return await processSignInResult(result, ownerUid);
     } catch (err) {
       setError(err.message);
       throw err;

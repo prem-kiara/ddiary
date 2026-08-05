@@ -7,7 +7,17 @@
     "limitsNavigationsToAppBoundDomains": false
   },
   "server": {
+    "url": "https://diary.dhanamfinance.com",
+    "cleartext": false,
     "androidScheme": "https",
-    "iosScheme": "https"
+    "iosScheme": "https",
+    "allowNavigation": [
+      "diary.dhanamfinance.com",
+      "login.microsoftonline.com",
+      "*.microsoftonline.com",
+      "login.live.com",
+      "*.firebaseapp.com",
+      "*.googleapis.com"
+    ]
   }
 }
