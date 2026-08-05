@@ -69,9 +69,10 @@ function isConclusive(sample) {
  * single dropped sample can't flip modes mid-stroke).
  */
 export function createPressureResolver({ multiplier = 1 } = {}) {
-  let real = null;        // null until the first sample decides
-  let lastPressure = 0;   // EMA state for the synthesised path
-  let prev = null;        // previous sample, for speed
+  let real = null;             // null until a sample proves the case
+  let lastPressure = 0;        // EMA state for the synthesised path
+  let lastRealPressure = 0;    // last non-zero stylus reading, for drop-outs
+  let prev = null;             // previous sample, for speed
 
   return {
     /** @returns {number} width factor in (0, ~1], or -1 to drop the sample */
@@ -81,10 +82,20 @@ export function createPressureResolver({ multiplier = 1 } = {}) {
       if (real === null && isConclusive(sample)) real = hasRealPressure(sample);
 
       if (real) {
-        // A hard 0 mid-stroke is a lift-off artefact, not a real reading.
-        if (sample.pressure === 0) return -1;
+        // A reported pressure of 0 mid-stroke says nothing about *where* the
+        // pen is. This used to discard the whole sample, which deleted chunks
+        // of the stroke path — the survivors were then joined by a straight
+        // line, producing long sweeps across the page that read as lag or
+        // "the letter didn't come out". The Apple Pencil reports 0 routinely
+        // when writing fast or lightly, so this fired constantly.
+        //
+        // Position is never thrown away now; only the width falls back to the
+        // last good reading. True lift-off is signalled by pointerup, not by a
+        // zero here.
+        const p = sample.pressure > 0 ? sample.pressure : (lastRealPressure || MIN_PRESSURE);
+        if (sample.pressure > 0) lastRealPressure = sample.pressure;
         prev = sample;
-        return clamp(Math.max(MIN_PRESSURE, sample.pressure * multiplier), 0.01, 2);
+        return clamp(Math.max(MIN_PRESSURE, p * multiplier), 0.01, 2);
       }
 
       // ── Synthesised from speed ──────────────────────────────────────────

@@ -201,10 +201,25 @@ describe('pressure', () => {
     expect(first).toBeLessThan(1);
   });
 
-  it('drops a hard-zero pressure sample mid-stroke (lift-off artefact)', () => {
+  it('never discards a sample for reporting zero pressure', () => {
+    // Regression: a zero reading used to drop the whole sample, deleting part
+    // of the stroke path. The remaining points were then joined by a straight
+    // line — long sweeps across the page. The Apple Pencil reports 0 routinely
+    // when writing fast or lightly, so this fired constantly during real use.
     const r = createPressureResolver({});
     r.resolve({ x: 0, y: 0, pressure: 0.7, type: 'pen', t: 0 });
-    expect(r.resolve({ x: 1, y: 1, pressure: 0, type: 'pen', t: 8 })).toBe(-1);
+
+    const v = r.resolve({ x: 1, y: 1, pressure: 0, type: 'pen', t: 8 });
+    expect(v).toBeGreaterThan(0);          // sample kept, not dropped
+    expect(v).toBeCloseTo(0.7, 5);         // width falls back to the last good reading
+
+    // A whole run of drop-outs must still keep every position.
+    for (let i = 0; i < 10; i++) {
+      expect(r.resolve({ x: 2 + i, y: 2, pressure: 0, type: 'pen', t: 16 + i * 8 }))
+        .toBeGreaterThan(0);
+    }
+    // ...and a real reading takes over again.
+    expect(r.resolve({ x: 20, y: 2, pressure: 0.4, type: 'pen', t: 200 })).toBeCloseTo(0.4, 5);
   });
 });
 
