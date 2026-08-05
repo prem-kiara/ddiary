@@ -141,6 +141,26 @@ describe('pressure', () => {
     expect(slow).toBeGreaterThan(fast);
   });
 
+  it('does not disable real pressure when the pen reports 0 at pen-down', () => {
+    // Regression: `real` was latched from sample 1. Many digitizers (and iOS,
+    // where force is not populated on the first touch of a contact) report 0 at
+    // pen-down, which permanently misclassified a pressure-capable Apple Pencil
+    // as pressure-less for the whole stroke.
+    const r = createPressureResolver({});
+    r.resolve({ x: 0, y: 0, pressure: 0,    type: 'pen', t: 0 });   // inconclusive
+    const v = r.resolve({ x: 2, y: 0, pressure: 0.83, type: 'pen', t: 8 });
+    expect(v).toBeCloseTo(0.83, 5);            // real pressure honoured
+  });
+
+  it('does not start a synthesised stroke at maximum width', () => {
+    // Regression: the first synthesised sample seeded from `target`, which is
+    // always SYNTH_MAX because there is no velocity yet — producing the heavy
+    // starting blob the ramp-in exists to avoid.
+    const r = createPressureResolver({});
+    const first = r.resolve({ x: 0, y: 0, pressure: 0, type: 'touch', t: 0 });
+    expect(first).toBeLessThan(1);
+  });
+
   it('drops a hard-zero pressure sample mid-stroke (lift-off artefact)', () => {
     const r = createPressureResolver({});
     r.resolve({ x: 0, y: 0, pressure: 0.7, type: 'pen', t: 0 });
@@ -172,6 +192,20 @@ describe('strokeModel', () => {
     expect(deserialize({}).strokes).toEqual([]);
   });
 
+  it('discards a truncated trailing triple instead of inventing a point', () => {
+    // Regression: the loop bound was `i + 2 < p.length + 1`, so a payload whose
+    // length % 3 === 2 emitted a point with pressure `undefined`. That survived
+    // rendering but round-tripped through serialize() as null, permanently
+    // corrupting the stored content on the next autosave.
+    const truncated = { v: 1, w: 100, h: 100, s: [{ t: 0, c: '#000', z: 2, p: [1, 2, 0.5, 9, 9] }] };
+    const { strokes } = deserialize(truncated);
+    expect(strokes[0].points).toHaveLength(1);
+    expect(strokes[0].points[0]).toEqual({ x: 1, y: 2, p: 0.5 });
+
+    // And the round trip stays clean — no nulls written back.
+    expect(JSON.stringify(serialize(strokes, 100, 100))).not.toContain('null');
+  });
+
   it('hit-tests against segments, not just vertices', () => {
     const s = makeStroke();
     // Midway between two samples, slightly off the line.
@@ -191,8 +225,33 @@ describe('strokeModel', () => {
 
   it('erasing the whole stroke leaves nothing; missing it leaves it intact', () => {
     const s = makeStroke();
-    expect(splitStrokeAt(s, 45, 50, 500)).toHaveLength(0);
-    expect(splitStrokeAt(s, 45, 400, 5)).toHaveLength(1);
+    expect(splitStrokeAt(s, 45, 500, 5)).toHaveLength(1);   // nowhere near it
+    expect(splitStrokeAt(s, 45, 50, 500)).toHaveLength(0);  // swallows everything
+  });
+
+  it('cuts a segment the eraser crosses even when both endpoints survive', () => {
+    // Regression: hitTestStroke measured distance to segments but splitStrokeAt
+    // only tested vertices, so an eraser passing between two widely-spaced
+    // samples reported a hit and then removed nothing — the eraser silently
+    // no-opped on fast strokes, where samples are far apart.
+    const sparse = createStroke({ tool: TOOL.PEN, color: '#000', size: 2 });
+    addPoint(sparse, { x: 0,   y: 50, p: 0.5 });
+    addPoint(sparse, { x: 100, y: 50, p: 0.5 });   // 100px apart
+    addPoint(sparse, { x: 200, y: 50, p: 0.5 });
+
+    // Eraser sits mid-segment, far from every vertex.
+    expect(hitTestStroke(sparse, 50, 50, 8)).toBe(true);
+    const pieces = splitStrokeAt(sparse, 50, 50, 8);
+    expect(pieces).not.toEqual([sparse]);           // must not be the identity
+    expect(pieces.length).toBeGreaterThanOrEqual(1);
+    // The 100→200 half must survive intact.
+    const survivingXs = pieces.flatMap(p => p.points.map(q => q.x));
+    expect(survivingXs).toContain(200);
+  });
+
+  it('returns the identical stroke reference when the eraser truly misses', () => {
+    const s = makeStroke();
+    expect(splitStrokeAt(s, 45, 500, 5)[0]).toBe(s);  // identity → caller skips it
   });
 
   it('bounds include the rendered half-width padding', () => {

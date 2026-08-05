@@ -59,6 +59,23 @@ describe('ink ⇄ content HTML', () => {
     expect(found[0]).toEqual(doc);
   });
 
+  it('encodes a large drawing without blowing the call stack', () => {
+    // Regression: encodeInk used String.fromCharCode(...bytes), which throws
+    // RangeError past ~100 KB on V8 and lower on JavaScriptCore (iPad). A dense
+    // page of handwriting clears that easily, and the throw lost the drawing.
+    const big = createStroke({ tool: TOOL.PEN, color: '#1a1a2e', size: 2 });
+    for (let i = 0; i < 40000; i++) {
+      addPoint(big, { x: (i % 900) + 0.12, y: ((i * 7) % 300) + 0.34, p: 0.5 });
+    }
+    const doc = serialize([big], 900, 300);
+    const json = JSON.stringify(doc);
+    expect(json.length).toBeGreaterThan(500_000);   // well past the old limit
+
+    let encoded;
+    expect(() => { encoded = encodeInk(doc); }).not.toThrow();
+    expect(decodeInk(encoded)).toEqual(doc);
+  });
+
   it('reports payload size so callers can warn near the 1 MiB doc limit', () => {
     const html = inkBlockHtml(sampleDoc());
     const bytes = contentInkBytes(html);
@@ -66,20 +83,68 @@ describe('ink ⇄ content HTML', () => {
     expect(contentInkBytes('<p>no ink here</p>')).toBe(0);
   });
 
-  it('hydrate only touches blocks without a canvas (so the observer terminates)', () => {
+  it('redraws after an innerHTML round trip, even though the canvas survives', () => {
+    // Regression: hydration skipped any block that already had a <canvas>. The
+    // canvas element DOES survive innerHTML (only its bitmap does not), so every
+    // reopened entry, undo, history restore and remote sync showed a blank box.
+    // Stub just enough canvas API for jsdom to render headlessly.
+    const origGetContext = HTMLCanvasElement.prototype.getContext;
+    const origPath2D = globalThis.Path2D;
+    globalThis.Path2D = class { moveTo() {} lineTo() {} closePath() {} };
+    HTMLCanvasElement.prototype.getContext = () => ({
+      save() {}, restore() {}, fill() {}, setTransform() {}, clearRect() {},
+      set fillStyle(_v) {}, set globalAlpha(_v) {}, set globalCompositeOperation(_v) {},
+    });
+
+    try {
+      const doc = sampleDoc();
+      const host = document.createElement('div');
+      document.body.appendChild(host);
+      host.innerHTML = inkBlockHtml(doc);
+
+      expect(hydratePendingInkBlocks(host)).toBe(1);        // first draw
+      expect(hydratePendingInkBlocks(host)).toBe(0);        // already current → no loop
+
+      // Simulate save + reload: the canvas comes back, the JS marker does not.
+      const saved = host.innerHTML;
+      expect(saved).toContain('<canvas');                   // it really does survive
+      const reloaded = document.createElement('div');
+      document.body.appendChild(reloaded);
+      reloaded.innerHTML = saved;
+
+      expect(hydratePendingInkBlocks(reloaded)).toBe(1);    // must redraw, not skip
+
+      host.remove();
+      reloaded.remove();
+    } finally {
+      HTMLCanvasElement.prototype.getContext = origGetContext;
+      globalThis.Path2D = origPath2D;
+    }
+  });
+
+  it('skips a block only when its drawn output matches the current payload', () => {
+    // Note the semantics deliberately do NOT key on canvas presence: a canvas
+    // survives innerHTML with a blank bitmap, so presence proves nothing. The
+    // marker is a JS property, which does not survive — see the round-trip test.
     const doc = sampleDoc();
     const host = document.createElement('div');
     host.innerHTML = inkBlockHtml(doc);
     document.body.appendChild(host);
 
     const el = host.querySelector(`.${INK_CLASS}`);
-    // jsdom has no 2D context, so renderInkInto throws internally and is
-    // swallowed; what we assert is the *selection* behaviour.
-    hydratePendingInkBlocks(host);
+    const payload = el.getAttribute(INK_ATTR);
 
-    // Give it a canvas and confirm a second pass reports nothing pending.
+    // A canvas alone is NOT enough to be considered current.
     el.appendChild(document.createElement('canvas'));
+    expect(hydratePendingInkBlocks(host)).toBe(1);
+
+    // Marker matching the payload → skipped (this is what stops the observer loop).
+    el.__inkRenderedFor = payload;
     expect(hydratePendingInkBlocks(host)).toBe(0);
+
+    // Payload edited (block re-drawn by the user) → stale marker, redraw.
+    el.setAttribute(INK_ATTR, encodeInk({ ...doc, w: 999 }));
+    expect(hydratePendingInkBlocks(host)).toBe(1);
 
     host.remove();
   });

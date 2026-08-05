@@ -62,6 +62,8 @@ export function createInkEngine({
   let stabilizer = null;
   let pressureResolver = null;
   let rafPending = false;
+  let rafHandle = 0;
+  let destroyed = false;
 
   drawBackground(bgCtx, background, width, height, dpr);
   repaint();
@@ -87,9 +89,12 @@ export function createInkEngine({
   }
 
   function scheduleRepaint() {
-    if (rafPending) return;
+    if (rafPending || destroyed) return;
     rafPending = true;
-    requestAnimationFrame(() => { rafPending = false; repaint(); });
+    rafHandle = requestAnimationFrame(() => {
+      rafPending = false;
+      if (!destroyed) repaint();
+    });
   }
 
   // ─── Edits (all undoable) ─────────────────────────────────────────────────
@@ -119,10 +124,15 @@ export function createInkEngine({
 
     for (const s of strokes) {
       if (!hitTestStroke(s, x, y, r)) continue;
-      removed.push(s);
       if (eraser.mode === ERASER_MODE.SPLIT) {
-        added.push(...splitStrokeAt(s, x, y, r));
+        const pieces = splitStrokeAt(s, x, y, r);
+        // splitStrokeAt returns the original reference when nothing was cut.
+        // Treating that as a hit would remove and re-append the same stroke,
+        // churning z-order for no visual change.
+        if (pieces.length === 1 && pieces[0] === s) continue;
+        added.push(...pieces);
       }
+      removed.push(s);
     }
     if (!removed.length) return null;
     return { added, removed };
@@ -282,7 +292,20 @@ export function createInkEngine({
     /** Flattened raster, for email embedding and legacy-style previews. */
     toPNG() { return canvas.toDataURL('image/png'); },
 
-    destroy() { capture.detach(); },
+    /**
+     * Tear everything down. Cancelling the pending frame matters: rAF callbacks
+     * do not run while a tab is hidden, so a frame queued at unmount would pin
+     * the whole engine closure — including two offscreen canvases, ~10 MB each
+     * at 3× DPR — until the tab was foregrounded again.
+     */
+    destroy() {
+      destroyed = true;
+      if (rafHandle) cancelAnimationFrame(rafHandle);
+      rafHandle = 0;
+      capture.detach();
+      bgCanvas.width = bgCanvas.height = 0;
+      inkCanvas.width = inkCanvas.height = 0;
+    },
   };
 }
 

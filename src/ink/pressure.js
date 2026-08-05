@@ -50,6 +50,19 @@ export function hasRealPressure(sample) {
 }
 
 /**
+ * Is this sample *conclusive* about whether the device has a pressure axis?
+ *
+ * A pen reporting 0 at pen-down (common — iOS often has no force on the first
+ * touch of a contact) or exactly 0.5 (Chrome's "no axis" placeholder) tells us
+ * nothing. Deciding on such a sample and latching it would disable real Apple
+ * Pencil / Surface pressure for the entire stroke.
+ */
+function isConclusive(sample) {
+  if (sample.type !== 'pen') return true;                 // touch/mouse: never has pressure
+  return sample.pressure > 0 && sample.pressure !== 0.5;  // a real reading
+}
+
+/**
  * Per-stroke pressure resolver. One instance per stroke — it carries the EMA
  * state and the "does this device have pressure" decision, which is latched at
  * pen-down (matching how Xournal++ picks a pressure mode once per stroke, so a
@@ -63,7 +76,9 @@ export function createPressureResolver({ multiplier = 1 } = {}) {
   return {
     /** @returns {number} width factor in (0, ~1], or -1 to drop the sample */
     resolve(sample) {
-      if (real === null) real = hasRealPressure(sample);
+      // Stay undecided until a sample actually proves the case, rather than
+      // latching on sample 1 — see isConclusive().
+      if (real === null && isConclusive(sample)) real = hasRealPressure(sample);
 
       if (real) {
         // A hard 0 mid-stroke is a lift-off artefact, not a real reading.
@@ -82,10 +97,13 @@ export function createPressureResolver({ multiplier = 1 } = {}) {
         const slowness = Math.exp(-speed / SPEED_SCALE);
         target = SYNTH_MIN + (SYNTH_MAX - SYNTH_MIN) * slowness;
       }
-      // Ramp in from the previous width so the stroke start isn't a blob.
+      // Ramp in from a mid weight so the stroke start isn't a blob. Seeding
+      // from `target` put the first sample at SYNTH_MAX, producing exactly the
+      // heavy dot this is meant to avoid (there is no velocity yet, so `target`
+      // is always maximum on the first sample).
       lastPressure = prev
         ? lastPressure + (target - lastPressure) * SYNTH_SMOOTHING
-        : target;
+        : (SYNTH_MIN + SYNTH_MAX) / 2;
       prev = sample;
       return clamp(lastPressure * multiplier, 0.01, 2);
     },

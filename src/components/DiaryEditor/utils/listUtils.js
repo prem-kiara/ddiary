@@ -103,7 +103,10 @@ export function fixNumberedListsInDOM(editorEl) {
     // Tables are a structural break but don't reset the numeric sequence.
     // Save preResetCounters here so a data-continue block AFTER a table
     // (e.g. "4. Heading" → table → "5. Next heading") resumes correctly.
-    if (block.nodeName === 'TABLE') {
+    // Handwriting blocks behave exactly like tables here: a structural break
+    // that must NOT reset the numeric sequence. Without this, inserting a
+    // drawing between two numbered items restarts the numbering below it.
+    if (block.nodeName === 'TABLE' || block.classList?.contains('ddiary-ink')) {
       if (counters.some(c => c > 0)) preResetCounters = [...counters];
       return;
     }

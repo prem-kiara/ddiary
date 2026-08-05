@@ -65,6 +65,19 @@
       inkBlockHtml(doc) +
       '<p>Follow-up: circulate minutes.</p>';
 
+    // Count non-transparent pixels — the only honest test of "did it draw?".
+    // A previous check regex-matched `<canvas ...></canvas>` and passed while
+    // the block was actually rendering blank.
+    function inkedPixels(root) {
+      const c = root.querySelector('.' + INK_CLASS + ' canvas');
+      if (!c) return -1;
+      const ctx = c.getContext('2d');
+      const { data } = ctx.getImageData(0, 0, c.width, c.height);
+      let n = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 8) n++;
+      return n;
+    }
+
     // Let the observer run, then inspect.
     requestAnimationFrame(() => {
       const el = editor.querySelector('.' + INK_CLASS);
@@ -77,8 +90,12 @@
       document.getElementById('saved').textContent = saved.slice(0, 400) + (saved.length > 400 ? ' …' : '');
       log('saved content bytes  :', saved.length);
       log('  of which ink       :', contentInkBytes(saved), 'bytes');
-      log('  canvas serialised  :', /<canvas[^>]*>\s*<\/canvas>/.test(saved)
-            ? 'as EMPTY tag ✓ (bitmap not stored)' : 'UNEXPECTED');
+      // The canvas ELEMENT does survive innerHTML (only its bitmap does not),
+      // which is why hydration must key on a JS marker, never on canvas
+      // presence. Asserting the opposite here is what hid the blank-on-reopen
+      // bug — the old regex matched `<canvas width=... >` and read as a pass.
+      log('  canvas in saved    :', /<canvas/.test(saved)
+            ? 'element persists (bitmap does not) — redraw required' : 'absent');
 
       // ── Simulate reload in the read-only viewer ───────────────────────────
       const viewer = document.getElementById('viewer');
@@ -87,17 +104,28 @@
 
       requestAnimationFrame(() => {
         const vEl = viewer.querySelector('.' + INK_CLASS);
-        const vCanvas = vEl?.querySelector('canvas');
         const rt = decodeInk(vEl.getAttribute(INK_ATTR));
-        log('viewer re-hydrated   :', !!vCanvas);
+        const editorPx = inkedPixels(editor);
+        const viewerPx = inkedPixels(viewer);
+        log('editor inked pixels  :', editorPx);
+        log('viewer inked pixels  :', viewerPx);
         log('payload identical    :', JSON.stringify(rt) === JSON.stringify(doc) ? 'YES ✓' : 'NO ✗');
-        log('stroke count         :', rt.s.length);
-        window.__result = {
-          hydrated: !!canvas, viewerHydrated: !!vCanvas,
-          identical: JSON.stringify(rt) === JSON.stringify(doc),
-          savedBytes: saved.length, inkBytes: contentInkBytes(saved),
-          canvasEmptyInHtml: /<canvas[^>]*>\s*<\/canvas>/.test(saved),
-        };
+
+        // ── The regression that shipped-blocked: reopening the entry ────────
+        // Assign the saved string back into the SAME editor, exactly as
+        // "Edit entry", undo/redo, history restore and remote sync all do.
+        editor.innerHTML = saved;
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            const reopenPx = inkedPixels(editor);
+            log('after reopen pixels  :', reopenPx, reopenPx > 0 ? '✓ redrawn' : '✗ BLANK');
+            window.__result = {
+              editorPx, viewerPx, reopenPx,
+              identical: JSON.stringify(rt) === JSON.stringify(doc),
+              savedBytes: saved.length, inkBytes: contentInkBytes(saved),
+            };
+          });
+        });
       });
     });
   </script>

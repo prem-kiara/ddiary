@@ -58,7 +58,13 @@ export default function InkBlockModal({ initialDoc, onSave, onClose }) {
     const canvas = canvasRef.current;
     if (!holder || !canvas) return;
 
-    const width = Math.max(280, Math.min(holder.clientWidth, 900));
+    // clientWidth includes the holder's padding; without stripping it the
+    // canvas is wider than its container and forces a horizontal scrollbar.
+    const cs = getComputedStyle(holder);
+    const inner = holder.clientWidth
+      - (parseFloat(cs.paddingLeft) || 0)
+      - (parseFloat(cs.paddingRight) || 0);
+    const width = Math.max(280, Math.min(inner, 900));
     const engine = createInkEngine({
       canvas,
       width,
@@ -100,9 +106,12 @@ export default function InkBlockModal({ initialDoc, onSave, onClose }) {
   const handleSave = useCallback(() => {
     const e = engineRef.current;
     if (!e) return;
-    if (e.isEmpty()) { onClose(); return; }
+    // When editing an existing block, an empty canvas is a deliberate delete and
+    // must be saved through — bailing to onClose() silently reverted it and left
+    // the old drawing in the document.
+    if (e.isEmpty() && !initialDoc) { onClose(); return; }
     onSave(e.toJSON());
-  }, [onSave, onClose]);
+  }, [onSave, onClose, initialDoc]);
 
   // Esc closes; Ctrl+Z / Ctrl+Shift+Z drive the engine's own undo stack.
   useEffect(() => {

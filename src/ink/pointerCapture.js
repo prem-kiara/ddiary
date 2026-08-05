@@ -85,13 +85,25 @@ export function attachPointerCapture(el, handlers) {
     if (e.pointerType === 'pen') lastPenAt = performance.now();
     if (e.pointerType === 'touch') touchCount++;
 
-    // Second finger while a finger-stroke is running → that's a pan gesture.
     if (activeId !== null) {
-      if (activeType === 'touch' && e.pointerType === 'touch') {
+      // A pen arriving mid-touch-stroke means the "touch" was a palm that
+      // landed first — the normal writing posture. Discard the palm's stroke
+      // and hand control to the pen. Without this the palm keeps ownership and
+      // the pen is ignored for as long as the hand rests on the glass, which
+      // inverts palm rejection on exactly the devices it matters for.
+      if (activeType === 'touch' && e.pointerType === 'pen') {
+        try { el.releasePointerCapture(activeId); } catch { /* not fatal */ }
         activeId = activeType = null;
         onCancel?.();
+        // fall through and let the pen claim the stroke below
+      } else {
+        // Second finger while a finger-stroke is running → that's a pan gesture.
+        if (activeType === 'touch' && e.pointerType === 'touch') {
+          activeId = activeType = null;
+          onCancel?.();
+        }
+        return;
       }
-      return;
     }
     if (!canDraw(e.pointerType)) return;
 

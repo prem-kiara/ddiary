@@ -476,32 +476,64 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
 
   const handleInsertInk = useCallback(() => {
     editorRef.current?.focus();
-    setInkEditor({ doc: null, el: null });
+    // Remember where the caret was. Opening the modal moves focus out of the
+    // editor and collapses the selection, so without this the drawing would
+    // always be inserted at the very top of the entry rather than at the cursor.
+    const sel = window.getSelection();
+    const savedRange =
+      sel && sel.rangeCount && editorRef.current?.contains(sel.getRangeAt(0).commonAncestorContainer)
+        ? sel.getRangeAt(0).cloneRange()
+        : null;
+    setInkEditor({ doc: null, el: null, range: savedRange });
   }, []);
 
   /** Click an existing block to reopen it for editing. */
   const handleEditorClick = useCallback((e) => {
     const block = e.target.closest?.(`.${INK_CLASS}[${INK_ATTR}]`);
     if (!block) return;
+    const existing = decodeInk(block.getAttribute(INK_ATTR));
+    if (!existing) return;   // corrupt payload — leave it alone rather than overwrite it
     e.preventDefault();
-    setInkEditor({ doc: decodeInk(block.getAttribute(INK_ATTR)), el: block });
+    setInkEditor({ doc: existing, el: block, range: null });
   }, []);
 
   const handleInkSave = useCallback((inkDoc) => {
-    pushUndo();
-    if (inkEditor?.el) {
-      // Editing in place — swap the payload and let the observer redraw it.
-      inkEditor.el.setAttribute(INK_ATTR, encodeInk(inkDoc));
-      inkEditor.el.querySelector('canvas')?.remove();
-      hydratePendingInkBlocks(editorRef.current);
-    } else {
-      editorRef.current?.focus();
-      document.execCommand('insertHTML', false, inkBlockHtml(inkDoc) + '<p><br></p>');
-    }
+    const editing = inkEditor?.el || null;
+    const savedRange = inkEditor?.range || null;
+    const isBlank = !inkDoc?.s?.length;
+
+    // Close the modal first so the selection can return to the editor before
+    // execCommand runs — otherwise the insert can land inside the modal DOM
+    // and be discarded when it unmounts.
     setInkEditor(null);
-    setIsEmpty(false);
-    scheduleAutosave();
-  }, [inkEditor, pushUndo, scheduleAutosave]);
+
+    try {
+      pushUndo();
+      if (editing) {
+        if (isBlank) {
+          editing.remove();                       // erased to nothing → drop the block
+        } else {
+          editing.setAttribute(INK_ATTR, encodeInk(inkDoc));
+          hydratePendingInkBlocks(editorRef.current);
+        }
+      } else {
+        if (isBlank) return;
+        editorRef.current?.focus();
+        if (savedRange) {
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(savedRange);
+        }
+        document.execCommand('insertHTML', false, inkBlockHtml(inkDoc) + '<p><br></p>');
+      }
+      setIsEmpty(false);
+      scheduleAutosave();
+    } catch (err) {
+      // Encoding a very large drawing used to throw here and silently lose it.
+      console.error('Failed to insert drawing:', err);
+      showToast?.('Could not insert the drawing. Please try again.', 'warning');
+    }
+  }, [inkEditor, pushUndo, scheduleAutosave, showToast]);
 
   // ── Table column / row resize ────────────────────────────────────────────
   // Detects hover within 6px of a cell's right edge (col resize) or bottom
@@ -729,7 +761,10 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
       if (node.parentNode === editorRef.current) { block = node; break; }
       node = node.parentNode;
     }
-    if (block && block.nodeName !== 'TABLE') {
+    // Handwriting blocks are opaque: the numbering menu would insert a "1. "
+    // text node inside a contenteditable="false" element and make the block
+    // count as a list item, shifting numbering for everything below it.
+    if (block && block.nodeName !== 'TABLE' && !block.classList?.contains(INK_CLASS)) {
       e.preventDefault();
       const list      = detectListPrefix(block.textContent);
       const isNumbered = !!(list && list.type === 'numbered');
@@ -1036,8 +1071,12 @@ export default function DiaryEditor({ editingEntry, onSave, onCancel, showToast 
         if (prevBlock) {
           // Snapshot before a block-start merge so Ctrl+Z restores cleanly
           pushUndo();
-          // Don't merge into a table — just delete empty blocks above tables
-          if (prevBlock.nodeName === 'TABLE') {
+          // Don't merge into a table or a handwriting block — both are opaque
+          // containers. Merging a paragraph into an ink block would move the
+          // text inside a contenteditable="false", overflow:hidden element,
+          // making it invisible and uneditable while still persisting in
+          // `content`. Just delete empty blocks above them instead.
+          if (prevBlock.nodeName === 'TABLE' || prevBlock.classList?.contains(INK_CLASS)) {
             const isEmpty2 =
               block.innerHTML === '<br>' || block.innerHTML === '' || !block.textContent.trim();
             if (isEmpty2) {

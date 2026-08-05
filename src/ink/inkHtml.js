@@ -34,8 +34,18 @@ export const INK_ATTR  = 'data-ink';
 
 export function encodeInk(doc) {
   const json = JSON.stringify(doc);
-  // UTF-8 safe (colours/numbers are ASCII today, but don't assume it).
-  return btoa(String.fromCharCode(...new TextEncoder().encode(json)));
+  const bytes = new TextEncoder().encode(json);   // UTF-8 safe
+  // Convert in chunks. Spreading the whole array into String.fromCharCode puts
+  // one argument on the stack per byte and throws RangeError past ~100 KB on
+  // V8 — and lower on JavaScriptCore, i.e. exactly the iPad + Pencil case this
+  // feature exists for. A dense page of handwriting clears that easily, and the
+  // throw happened on the insert path, losing the entire drawing.
+  const CHUNK = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }
 
 export function decodeInk(b64) {
@@ -121,23 +131,40 @@ export function renderInkInto(el, { maxWidth, _retry = false } = {}) {
   const cssH  = authorH * scale;
 
   let canvas = el.querySelector('canvas');
+  const dpr = window.devicePixelRatio || 1;
+
+  // Get a context BEFORE attaching anything. If context creation fails (iOS
+  // Safari's per-page canvas memory cap, or context loss), we must not leave an
+  // empty canvas behind — it would look like a blank drawing and, worse, mark
+  // the block as rendered so it never retried.
+  const probe = canvas || document.createElement('canvas');
+  probe.width  = Math.max(1, Math.round(cssW * dpr));
+  probe.height = Math.max(1, Math.round(cssH * dpr));
+  const ctx = probe.getContext('2d');
+  if (!ctx) return;
+
   if (!canvas) {
-    canvas = document.createElement('canvas');
+    canvas = probe;
     canvas.style.display = 'block';
     canvas.style.pointerEvents = 'none';
     el.appendChild(canvas);
   }
-
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width  = Math.max(1, Math.round(cssW * dpr));
-  canvas.height = Math.max(1, Math.round(cssH * dpr));
   canvas.style.width  = cssW + 'px';
   canvas.style.height = cssH + 'px';
 
-  const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, cssW, cssH);
   for (const s of strokes) drawStroke(ctx, s, scale);
+
+  // Record what was drawn as a JS property, deliberately NOT an attribute:
+  // properties do not survive an innerHTML round trip, so after a reload,
+  // undo/redo, history restore or remote sync the block is correctly treated as
+  // needing a redraw — while during ordinary typing it is skipped as already
+  // current. Keying on canvas *presence* instead left every reopened entry
+  // showing a blank box, because the canvas element survives serialisation
+  // (only its bitmap does not).
+  el.__inkRenderedFor = payload;
+  el.__inkRenderedWidth = cssW;
 }
 
 /**
@@ -152,20 +179,23 @@ export function hydrateInkBlocks(root) {
 }
 
 /**
- * Hydrate only blocks that have no canvas yet.
+ * Hydrate blocks whose drawn output is missing or out of date.
  *
- * This is the variant safe to call from a MutationObserver: hydrating adds a
- * canvas, which would re-trigger the observer, but on the second pass the block
- * already has one and nothing mutates — so the loop terminates. The editor
- * relies on this to cover every path that assigns innerHTML (initial load,
- * version-history restore, undo/redo, and live collaborative sync) without
- * having to patch each one.
+ * Safe to call from a MutationObserver. Re-rendering an existing canvas only
+ * touches attributes, and the observer watches `childList` only, so the single
+ * canvas append is the one mutation that re-triggers it — and on that second
+ * pass the block is already current, so the loop terminates.
+ *
+ * This covers every path that assigns innerHTML (initial load, version-history
+ * restore, undo/redo, live collaborative sync) without patching each one.
  */
 export function hydratePendingInkBlocks(root) {
   if (!root) return 0;
   let n = 0;
   root.querySelectorAll(`.${INK_CLASS}[${INK_ATTR}]`).forEach(el => {
-    if (el.querySelector('canvas')) return;
+    const payload = el.getAttribute(INK_ATTR);
+    // Already drawn for this exact payload at this width → nothing to do.
+    if (el.__inkRenderedFor === payload && el.querySelector('canvas')) return;
     try { renderInkInto(el); n++; } catch { /* never break the editor */ }
   });
   return n;

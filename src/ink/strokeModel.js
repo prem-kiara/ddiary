@@ -103,23 +103,36 @@ function pointSegmentDist2(px, py, a, b) {
  */
 export function splitStrokeAt(stroke, x, y, radius) {
   const pts = stroke.points;
-  const keep = pts.map(p => (p.x - x) ** 2 + (p.y - y) ** 2 > radius * radius);
+  const r2 = radius * radius;
+  const keep = pts.map(p => (p.x - x) ** 2 + (p.y - y) ** 2 > r2);
 
-  if (keep.every(Boolean)) return [stroke];      // untouched
-  if (keep.every(k => !k))  return [];           // fully erased
+  // A vertex-only test misses the common case of the eraser crossing the middle
+  // of a long segment whose *endpoints* are both outside the disc — which made
+  // the eraser silently no-op on fast strokes, where samples are far apart.
+  // Segments passing through the disc are cut even when both ends survive.
+  const cut = new Array(Math.max(pts.length - 1, 0)).fill(false);
+  for (let i = 1; i < pts.length; i++) {
+    if (keep[i - 1] && keep[i] && pointSegmentDist2(x, y, pts[i - 1], pts[i]) <= r2) {
+      cut[i - 1] = true;
+    }
+  }
+
+  if (keep.every(Boolean) && !cut.some(Boolean)) return [stroke];  // untouched
+  if (keep.every(k => !k)) return [];                              // fully erased
 
   const out = [];
   let run = [];
+  const flush = () => {
+    // A single leftover point renders as a dot; usually undesirable debris.
+    if (run.length > 1) out.push({ ...stroke, points: run });
+    run = [];
+  };
   for (let i = 0; i < pts.length; i++) {
-    if (keep[i]) {
-      run.push(pts[i]);
-    } else if (run.length) {
-      // A single leftover point renders as a dot; usually undesirable debris.
-      if (run.length > 1) out.push({ ...stroke, points: run });
-      run = [];
-    }
+    if (!keep[i]) { flush(); continue; }
+    run.push(pts[i]);
+    if (cut[i]) flush();               // segment i→i+1 passes through the eraser
   }
-  if (run.length > 1) out.push({ ...stroke, points: run });
+  flush();
   return out;
 }
 
@@ -147,7 +160,10 @@ export function deserialize(doc) {
   const strokes = doc.s.map(st => {
     const points = [];
     const p = st.p || [];
-    for (let i = 0; i + 2 < p.length + 1; i += 3) {
+    // Strict bound: a trailing partial triple is discarded rather than emitted
+    // as a point with an undefined pressure, which would round-trip to null and
+    // permanently corrupt the stored payload on the next save.
+    for (let i = 0; i + 2 < p.length; i += 3) {
       points.push({ x: p[i], y: p[i + 1], p: p[i + 2] });
     }
     return { tool: st.t ?? TOOL.PEN, color: st.c || '#1a1a2e', size: st.z || 2, points };
