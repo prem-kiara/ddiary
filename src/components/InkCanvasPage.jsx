@@ -25,6 +25,9 @@ import {
   useInkTools, INK_COLORS, INK_SIZES, INK_BACKGROUNDS, INK_SMOOTHING,
 } from './ink/useInkTools';
 import { register as registerUnsaved, unregister as unregisterUnsaved } from '../utils/unsavedState';
+import { useConfirm } from '../contexts/ConfirmContext';
+import { useAuth } from '../contexts/AuthContext';
+import { saveSnapshot } from '../utils/diaryHistory';
 
 // A4 portrait aspect. Width adapts to the viewport; height follows.
 const PAGE_RATIO = 1123 / 794;
@@ -44,6 +47,8 @@ function pagesFromContent(html) {
 }
 
 export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToast }) {
+  const confirm = useConfirm();
+  const { user } = useAuth();
   const holderRef = useRef(null);
   const canvasRef = useRef(null);
   const engineRef = useRef(null);
@@ -61,6 +66,30 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
   // Keep the latest pages/index available to callbacks without re-creating them.
   const pagesRef = useRef(pages);   pagesRef.current = pages;
   const idxRef   = useRef(pageIdx); idxRef.current = pageIdx;
+  const dirtyRef = useRef(dirty);   dirtyRef.current = dirty;
+
+  // Re-sync when the entry resolves after first render.
+  //
+  // Reaching /canvas/:id without router state — a bookmarked or pasted URL, a
+  // session restore that dropped history.state — renders before `entries` has
+  // loaded, so the lazy initialisers above captured an empty note. Without this
+  // the user sees a blank page, draws one stroke, saves, and every page of the
+  // real note is replaced. DiaryEditor has the equivalent re-load effect, which
+  // is why the text editor never had this problem.
+  const loadedIdRef = useRef(editingEntry?.id ?? null);
+  useEffect(() => {
+    const id = editingEntry?.id ?? null;
+    if (id === loadedIdRef.current) return;
+    loadedIdRef.current = id;
+    if (dirtyRef.current) return;   // never clobber unsaved work
+    const next = pagesFromContent(editingEntry?.content);
+    pagesRef.current = next;
+    setPages(next);
+    setPageIdx(0);
+    idxRef.current = 0;
+    setTitle(editingEntry?.title || '');
+    engineRef.current?.loadJSON(next[0] || { v: 1, w: dims.w, h: dims.h, s: [] });
+  }, [editingEntry?.id, editingEntry?.content, editingEntry?.title, dims.w, dims.h]);
 
   // ── Measure the page before building the engine ───────────────────────────
   // A mount effect can run before the container has its final width, which
@@ -87,6 +116,14 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
   // Built once, as soon as a real width is known. Later container resizes are
   // deliberately ignored: this is a paged document, so a page keeps the size it
   // was authored at rather than reflowing ink when the window changes.
+  //
+  // Note this effect returns NO cleanup. It depends on `pageW`, and React runs
+  // the previous cleanup whenever a dependency changes — so destroying here
+  // tore the engine down on any resize (iPad rotation, a scrollbar appearing)
+  // while the early-return guard stopped it ever being rebuilt. The canvas kept
+  // showing its last painted frame, so it looked alive while drawing, undo and
+  // page switching all silently no-opped, and saving then wrote an empty note.
+  // Teardown belongs on unmount only, below.
   const builtRef = useRef(false);
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -104,8 +141,12 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
     engineRef.current = engine;
     if (pagesRef.current[0]) engine.loadJSON(pagesRef.current[0]);
     setReady(true);
-    return () => { engine.destroy(); engineRef.current = null; };
   }, [pageW]);
+
+  useEffect(() => () => {
+    engineRef.current?.destroy();
+    engineRef.current = null;
+  }, []);
 
   /** Persist whatever is on screen into the pages array. */
   const capture = useCallback(() => {
@@ -134,11 +175,20 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
     goToPage(next.length - 1);
   }, [capture, goToPage]);
 
-  const deletePage = useCallback(() => {
+  const deletePage = useCallback(async () => {
     if (pagesRef.current.length <= 1) {
-      engineRef.current?.clear();
+      engineRef.current?.clear();   // undoable via the engine's command stack
       return;
     }
+    // Deleting a page is NOT undoable — loadJSON resets the engine's undo
+    // stack — so it gets the same confirmation every other destructive action
+    // in the app uses. One mis-tap on a tablet would otherwise destroy a full
+    // page of handwriting with no way back.
+    const ok = await confirm(
+      `Delete page ${idxRef.current + 1} and everything written on it? This cannot be undone.`,
+      { title: 'Delete page', danger: true, okText: 'Delete page' },
+    );
+    if (!ok) return;
     const i = idxRef.current;
     const next = pagesRef.current.filter((_, k) => k !== i);
     pagesRef.current = next;
@@ -166,25 +216,44 @@ export default function InkCanvasPage({ editingEntry, onSave, onCancel, showToas
       return;
     }
     const content = filled.map(inkBlockHtml).join('');
+    // Firestore rejects documents over 1 MiB and the live-sync write path
+    // swallows that error, so the user must be told before it silently fails.
     const bytes = contentInkBytes(content);
-    if (bytes > SIZE_WARN_BYTES) {
-      // Firestore rejects documents over 1 MiB, and the live-sync write path
-      // swallows that error — so warn before it becomes a silent failure.
-      showToast?.(
-        `This note is very large (${Math.round(bytes / 1024)} KB). Consider splitting it across entries.`,
-        'warning',
-      );
-    }
     setSaving(true);
     try {
-      await onSave({ title: title.trim() || 'Handwritten note', content, kind: 'canvas' });
+      const finalTitle = title.trim() || 'Handwritten note';
+      await onSave({ title: finalTitle, content, kind: 'canvas' });
       setDirty(false);
-      showToast?.('Note saved!', 'success');
+      // Warn *instead of* the success toast — the app renders one toast slot,
+      // so a success message would immediately replace the warning whose whole
+      // purpose is to stop the note walking into Firestore's 1 MiB limit.
+      if (bytes > SIZE_WARN_BYTES) {
+        showToast?.(
+          `Saved — but this note is very large (${Math.round(bytes / 1024)} KB). Start a new note soon.`,
+          'warning',
+        );
+      } else {
+        showToast?.('Note saved!', 'success');
+      }
+
+      // Version snapshot, matching DiaryEditor. Without this a handwritten note
+      // has no history at all, so any bad save is unrecoverable.
+      if (editingEntry?.id) {
+        saveSnapshot({
+          uid:      user?.uid,
+          entryId:  editingEntry.id,
+          isShared: !!(editingEntry.isShared || editingEntry.isSharedWithMe),
+          title:    finalTitle,
+          content,
+          savedBy:  user?.displayName || user?.email || '',
+          type:     'manual',
+        }).catch(() => {});   // best-effort — never block the save
+      }
     } catch {
       showToast?.('Failed to save. Please try again.', 'warning');
     }
     setSaving(false);
-  }, [capture, title, onSave, showToast]);
+  }, [capture, title, onSave, showToast, editingEntry, user]);
 
   // ── Shortcuts ─────────────────────────────────────────────────────────────
   useEffect(() => {

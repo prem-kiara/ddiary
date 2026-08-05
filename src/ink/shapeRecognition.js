@@ -35,6 +35,19 @@ const CIRCLE_MIN_ROUNDNESS = 0.88;
 /** Max length-weighted mean radial deviation, as a fraction of the radius. */
 const CIRCLE_MAX_DEVIATION = 0.14;
 
+/**
+ * The safety net, and the most important constant here.
+ *
+ * A candidate is only accepted if **every** original sample lies within this
+ * fraction of the stroke's diagonal of the idealised shape. Cheap scalars like
+ * `roundness` describe a stroke's mass distribution, not its outline, so on
+ * their own they cannot tell a square from a circle (both are perfectly
+ * isotropic), an arrow from its own shaft, or a capital "U" from a triangle.
+ * Checking the residual directly is what makes recognition conservative:
+ * anything that does not genuinely look like the primitive stays freehand.
+ */
+const MAX_RESIDUAL_FRACTION = 0.075;
+
 /** Snap a near-horizontal / near-vertical line to exactly axis-aligned. */
 const AXIS_SNAP_DEG = 6;
 
@@ -85,10 +98,20 @@ function moments(pts) {
   return { m, cx, cy, Ixx, Iyy, Ixy };
 }
 
-/** 0 = perfectly straight, 1 = perfectly round. */
+/**
+ * 0 = perfectly straight, 1 = perfectly isotropic.
+ *
+ * NOTE this is isotropy, not circularity: a square, a diamond and a regular
+ * pentagon all score exactly 1.0, the same as a circle. It is only ever a
+ * cheap first pass — the residual check is what actually decides.
+ *
+ * Returns null for a degenerate tensor (all samples coincident). Previously
+ * this returned 0, which routed straight into the *destructive* line branch and
+ * replaced the stroke with a zero-length or wrongly-oriented line.
+ */
 function roundness(mo) {
   const tr = mo.Ixx + mo.Iyy;
-  if (tr <= 1e-9) return 0;
+  if (tr <= 1e-9) return null;
   const r = (4 * (mo.Ixx * mo.Iyy - mo.Ixy * mo.Ixy)) / (tr * tr);
   return r < 0 ? 0 : r > 1 ? 1 : r;
 }
@@ -105,14 +128,49 @@ function perpDistance(p, a, b) {
   return Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / len;
 }
 
-/** Intersection of two lines given as (point, angle). Null if near-parallel. */
+/**
+ * Intersection of two lines given as (point, angle). Null if near-parallel.
+ *
+ * The threshold is angular, not epsilon: rejecting only *exactly* parallel
+ * sides let nearly-parallel ones (the two strokes of a capital "U", a
+ * strikethrough doubling back) produce a finite but enormous intersection —
+ * measured thousands of pixels outside the stroke, which then got written to
+ * the document as a spike across the page.
+ */
+const MIN_INTERSECT_SIN = Math.sin(12 * Math.PI / 180);
+
 function lineIntersect(p1, a1, p2, a2) {
   const d1x = Math.cos(a1), d1y = Math.sin(a1);
   const d2x = Math.cos(a2), d2y = Math.sin(a2);
-  const den = d1x * d2y - d1y * d2x;
-  if (Math.abs(den) < 1e-9) return null;
+  const den = d1x * d2y - d1y * d2x;      // = sin(angle between the lines)
+  if (Math.abs(den) < MIN_INTERSECT_SIN) return null;
   const t = ((p2.x - p1.x) * d2y - (p2.y - p1.y) * d2x) / den;
   return { x: p1.x + t * d1x, y: p1.y + t * d1y };
+}
+
+/** Largest distance from any original sample to the candidate outline. */
+function maxResidual(pts, shapePts) {
+  if (shapePts.length < 2) return Infinity;
+  let worst = 0;
+  for (const p of pts) {
+    let best = Infinity;
+    for (let i = 1; i < shapePts.length; i++) {
+      const d = pointSegmentDist(p, shapePts[i - 1], shapePts[i]);
+      if (d < best) best = d;
+      if (best === 0) break;
+    }
+    if (best > worst) worst = best;
+  }
+  return worst;
+}
+
+function pointSegmentDist(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  if (len2 < 1e-12) return Math.hypot(p.x - a.x, p.y - a.y);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
 }
 
 /**
@@ -161,6 +219,36 @@ const normAngle = (a) => {
 };
 
 // ─── Shape builders ─────────────────────────────────────────────────────────
+
+/**
+ * How much the stroke doubles back along its own principal axis, as a fraction
+ * of its span.
+ *
+ * This is the signal that separates a genuine straight line from the things
+ * that merely *measure* straight: an arrow reverses at the head, a bracket
+ * reverses at both arms, a word written in a flat hand reverses on every
+ * letter. Residual alone cannot catch these — a proportionally small arrowhead
+ * stays inside any tolerance loose enough to accept an honestly wobbly line.
+ */
+function backtrackRatio(pts, angle, c) {
+  const dx = Math.cos(angle), dy = Math.sin(angle);
+  let prev = null, back = 0, lo = Infinity, hi = -Infinity;
+  for (const p of pts) {
+    const t = (p.x - c.x) * dx + (p.y - c.y) * dy;
+    if (t < lo) lo = t;
+    if (t > hi) hi = t;
+    if (prev !== null && t < prev) back += prev - t;
+    prev = t;
+  }
+  const span = hi - lo;
+  if (span < 1e-6) return Infinity;
+  // A stroke drawn right-to-left backtracks by definition; measure against
+  // whichever direction it actually travelled.
+  return Math.min(back, span * 2 - back) / span;
+}
+
+/** Max fraction of its own span a stroke may double back and still be a line. */
+const LINE_MAX_BACKTRACK = 0.05;
 
 function buildLine(pts, mo, pressure) {
   let angle = principalAngle(mo);
@@ -287,18 +375,40 @@ export function recognizeShape(stroke) {
 
   const pressure = meanPressure(pts);
   const round = roundness(mo);
+  if (round === null) return null;   // degenerate tensor — keep the freehand stroke
+
+  const tol = diag * MAX_RESIDUAL_FRACTION;
+  /** Accept a candidate only if it genuinely traces what the user drew. */
+  const accept = (kind, shapePts) =>
+    (shapePts && maxResidual(pts, shapePts) <= tol) ? { kind, points: shapePts } : null;
 
   // ── Straight line ────────────────────────────────────────────────────────
-  if (round < LINE_MAX_ROUNDNESS) return buildLine(pts, mo, pressure);
+  if (round < LINE_MAX_ROUNDNESS) {
+    // A long thin stroke has a tiny roundness even when it is an arrow, a
+    // bracket or a flat-written word, and collapsing those to two points
+    // silently deletes the arrowhead / arms / writing. Require both that the
+    // stroke tracks the fitted axis (residual) and that it never doubles back
+    // along it — the reversal is what those cases all have in common.
+    if (backtrackRatio(pts, principalAngle(mo), { x: mo.cx, y: mo.cy }) > LINE_MAX_BACKTRACK) {
+      return null;
+    }
+    return accept('line', buildLine(pts, mo, pressure).points);
+  }
 
   const closed =
     Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y)
       < diag * CLOSURE_FRACTION;
 
   // ── Circle ───────────────────────────────────────────────────────────────
+  // The residual gate is essential here: `roundness` is 1.0 for a square, a
+  // diamond and a regular pentagon just as much as for a circle, and a square's
+  // *mean* radial deviation also slips under CIRCLE_MAX_DEVIATION. Only
+  // measuring how far the corners actually sit from the fitted circle
+  // distinguishes them.
   if (round > CIRCLE_MIN_ROUNDNESS && closed) {
     const circle = buildCircle(pts, mo, pressure);
-    if (circle) return circle;
+    const ok = circle && accept('circle', circle.points);
+    if (ok) return ok;
   }
 
   // ── Polygon ──────────────────────────────────────────────────────────────
@@ -310,7 +420,11 @@ export function recognizeShape(stroke) {
   const sides = [];
   for (let i = 1; i < idx.length; i++) {
     const s = fitSide(pts, idx[i - 1], idx[i]);
-    if (s) sides.push(s);
+    // Bail rather than silently dropping a side: a dropped side turns a
+    // 4-sided shape into a 3-sided one and then intersects sides that were
+    // never adjacent.
+    if (!s) return null;
+    sides.push(s);
   }
   if (sides.length < 3 || sides.length > 5) return null;
 
@@ -332,16 +446,14 @@ export function recognizeShape(stroke) {
       if (Math.abs(d - 90) > RECT_ANGLE_TOL_DEG) { ok = false; break; }
     }
     if (ok) {
-      const poly = buildPolygon(use, pressure, { forceRight: true });
-      if (poly) return { kind: 'rectangle', points: poly };
+      const rect = accept('rectangle', buildPolygon(use, pressure, { forceRight: true }));
+      if (rect) return rect;
     }
-    const poly = buildPolygon(use, pressure);
-    return poly ? { kind: 'quadrilateral', points: poly } : null;
+    return accept('quadrilateral', buildPolygon(use, pressure));
   }
 
   if (use.length === 3) {
-    const poly = buildPolygon(use, pressure);
-    return poly ? { kind: 'triangle', points: poly } : null;
+    return accept('triangle', buildPolygon(use, pressure));
   }
 
   return null;

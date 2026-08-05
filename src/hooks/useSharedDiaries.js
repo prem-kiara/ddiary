@@ -30,6 +30,11 @@ export async function shareDiary(entry, owner) {
     content:   entry.content   || '',
     tag:       entry.tag       || null,
     drawings:  entry.drawings  || [],
+    // Carry the entry kind across. Without it a shared handwritten note opened
+    // in the *text* editor for collaborators: they could type into it, and the
+    // owner's next save from the canvas — which rebuilds content purely from
+    // ink pages — silently deleted everything they had written.
+    kind:      entry.kind      || null,
     ownerId:   owner.uid,
     ownerEmail: owner.email,
     ownerName: owner.displayName || owner.email,

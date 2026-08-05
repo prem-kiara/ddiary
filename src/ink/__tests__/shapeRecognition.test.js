@@ -191,6 +191,114 @@ describe('triangles', () => {
   });
 });
 
+describe('false positives that destroy ink (regression)', () => {
+  /** Largest distance from any input sample to the emitted outline. */
+  const residual = (input, out) => {
+    const seg = (p, a, b) => {
+      const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+      if (l2 < 1e-12) return Math.hypot(p.x - a.x, p.y - a.y);
+      let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+    };
+    let worst = 0;
+    for (const p of input.points) {
+      let best = Infinity;
+      for (let i = 1; i < out.points.length; i++) best = Math.min(best, seg(p, out.points[i-1], out.points[i]));
+      worst = Math.max(worst, best);
+    }
+    return worst;
+  };
+
+  it('does not turn a square box into a circle', () => {
+    // roundness() is exactly 1.0 for a square — identical to a circle — and a
+    // square's *mean* radial deviation also slips under the circle gate. Only
+    // the residual check separates them.
+    const sq = drawPath([[60, 60], [260, 60], [260, 260], [60, 260]], { perEdge: 26, wobble: 2, seed: 4 });
+    expect(recognizeShape(sq)?.kind).not.toBe('circle');
+  });
+
+  it('handles boxes across the aspect ratios that used to flip to a circle', () => {
+    for (const w of [200, 220, 250, 280, 300]) {
+      const box = drawPath([[60, 60], [60 + w, 60], [60 + w, 260], [60, 260]],
+                           { perEdge: 24, wobble: 2, seed: 6 });
+      const r = recognizeShape(box);
+      expect(r?.kind, `box ${w}×200`).not.toBe('circle');
+    }
+  });
+
+  it('does not amputate an arrowhead by collapsing the arrow to a line', () => {
+    // 240px shaft + a 24px head at 30°: roundness 0.0069, well inside the line gate.
+    const arrow = drawPath([[60, 200], [300, 200], [279, 188]], { perEdge: 40, wobble: 1, close: false, seed: 8 });
+    const r = recognizeShape(arrow);
+    if (r) expect(residual(arrow, r)).toBeLessThan(30);
+    expect(r?.points?.length === 2 && r.kind === 'line').toBe(false);
+  });
+
+  it('does not flatten a square bracket into a line', () => {
+    const bracket = drawPath([[100, 60], [82, 60], [82, 260], [100, 260]], { perEdge: 30, wobble: 1, close: false, seed: 12 });
+    const r = recognizeShape(bracket);
+    expect(r?.kind).not.toBe('line');
+  });
+
+  it('does not replace a capital U with a triangle', () => {
+    const u = drawPath([[40, 40], [40, 150], [90, 168], [140, 150], [140, 40]],
+                       { perEdge: 22, wobble: 1.2, close: false, seed: 14 });
+    const r = recognizeShape(u);
+    expect(['triangle', 'quadrilateral']).not.toContain(r?.kind);
+  });
+
+  it('never emits a corner far outside the stroke it came from', () => {
+    // Near-parallel fitted sides used to intersect thousands of px off-canvas
+    // and that garbage was written straight into the saved document.
+    const shapes = [
+      drawPath([[40, 40], [40, 150], [90, 168], [140, 150], [140, 40]], { perEdge: 22, wobble: 1.2, close: false, seed: 3 }),
+      drawPath([[40, 170], [60, 40], [90, 120], [120, 40], [140, 170]], { perEdge: 20, wobble: 1.2, close: false, seed: 5 }),
+      drawPath([[40, 100], [300, 104], [40, 112], [300, 116]], { perEdge: 30, wobble: 1.5, close: false, seed: 9 }),
+    ];
+    for (const s of shapes) {
+      const r = recognizeShape(s);
+      if (!r) continue;
+      const b = {
+        minX: Math.min(...s.points.map(p => p.x)), maxX: Math.max(...s.points.map(p => p.x)),
+        minY: Math.min(...s.points.map(p => p.y)), maxY: Math.max(...s.points.map(p => p.y)),
+      };
+      const diag = Math.hypot(b.maxX - b.minX, b.maxY - b.minY);
+      for (const p of r.points) {
+        expect(p.x).toBeGreaterThan(b.minX - diag);
+        expect(p.x).toBeLessThan(b.maxX + diag);
+        expect(p.y).toBeGreaterThan(b.minY - diag);
+        expect(p.y).toBeLessThan(b.maxY + diag);
+      }
+    }
+  });
+
+  it('returns null for a degenerate tensor instead of a bogus line', () => {
+    // Duplicate samples used to yield a zero-length line, or a horizontal one
+    // for a diagonal stroke.
+    const dup = { points: [
+      { x: 5, y: 5, p: 0.5 }, { x: 5, y: 5, p: 0.5 }, { x: 5, y: 5, p: 0.5 }, { x: 5, y: 5, p: 0.5 },
+    ] };
+    expect(recognizeShape(dup)).toBeNull();
+  });
+
+  it('every accepted shape stays close to the stroke it replaced', () => {
+    const cases = [
+      drawPath([[60, 60], [360, 66], [356, 260], [58, 254]], { perEdge: 26, wobble: 2.5, seed: 3 }),
+      drawCircle({ wobble: 3 }),
+      drawPath([[200, 50], [360, 300], [40, 296]], { perEdge: 30, wobble: 2.5, seed: 7 }),
+      drawPath([[40, 300], [400, 302]], { perEdge: 60, wobble: 2, close: false }),
+    ];
+    for (const c of cases) {
+      const r = recognizeShape(c);
+      expect(r).toBeTruthy();
+      const xs = c.points.map(p => p.x), ys = c.points.map(p => p.y);
+      const diag = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+      expect(residual(c, r)).toBeLessThan(diag * 0.075 + 1e-6);
+    }
+  });
+});
+
 describe('rejection — freehand must survive untouched', () => {
   it('ignores a stroke that is too small to be a deliberate shape', () => {
     expect(recognizeShape(drawPath([[0, 0], [12, 0], [12, 12], [0, 12]], { perEdge: 4, wobble: 0.3 })))

@@ -8,6 +8,8 @@
 import React, { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import InkCanvasPage from './src/components/InkCanvasPage';
+import { ConfirmProvider } from './src/contexts/ConfirmContext';
+import { AuthProvider } from './src/contexts/AuthContext';
 import './src/styles/diary.css';
 
 function Harness() {
@@ -54,4 +56,13 @@ function Harness() {
   );
 }
 
-createRoot(document.getElementById('root')).render(<Harness />);
+// Real providers — the canvas uses useConfirm (page delete) and useAuth
+// (snapshot authorship). Firebase has placeholder config here, which is fine:
+// nothing in this harness signs in or writes.
+createRoot(document.getElementById('root')).render(
+  <AuthProvider>
+    <ConfirmProvider>
+      <Harness />
+    </ConfirmProvider>
+  </AuthProvider>
+);
