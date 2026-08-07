@@ -31,6 +31,15 @@ export default defineConfig({
         skipWaiting: true,
         clientsClaim: true,
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        // Never answer /__/auth/* from the SPA fallback.
+        //
+        // Firebase serves its sign-in handler there. The service worker's
+        // navigate fallback would otherwise return the cached index.html for it,
+        // so the sign-in popup renders this app instead of the handler and the
+        // handshake never completes — which is exactly what happened when
+        // authDomain was first pointed at our own domain: two windows, no login.
+        // Required before authDomain can be moved to diary.dhanamfinance.com.
+        navigateFallbackDenylist: [/^\/__\/auth\//],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

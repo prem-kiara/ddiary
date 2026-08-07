@@ -188,43 +188,61 @@ SENDER_EMAIL=tech@dhanam.finance
 ```
 
 
-### Firebase authDomain — do NOT change without these prerequisites
+### Firebase authDomain / iPad sign-in — OPEN ISSUE (handed over 2026-08-07)
 
-Current value is `ddiary-a72ca.firebaseapp.com`. It works for browsers and must
-stay that way until the two prerequisites below are done.
+**Production is on `ddiary-a72ca.firebaseapp.com` and web sign-in works. Leave
+it that way unless the Azure question below is settled.**
 
-**Why anyone would want to change it:** Firebase parks its sign-in handshake
-state on the authDomain origin. When that differs from the app's origin it is
-*third-party storage*, which WebKit blocks (Safari 16.1+ and every iOS WebView).
-`signInWithRedirect` therefore fails silently in the iOS app — correct password,
-no session, bounced back to the sign-in page. Serving the handler from our own
-domain makes the handshake first-party and fixes it.
+**The goal.** The native iOS shell (see `ios/`, branch `feat/native-ink`) cannot
+sign in. WKWebView blocks popups, so `signInWithPopup` fails outright with
+`auth/popup-blocked`; the code already falls back to `signInWithRedirect` on
+native (`isNativeApp()` in `src/utils/platform.js`). But redirect *also* fails,
+because Firebase parks the handshake state on the authDomain origin — third-party
+storage, which WebKit blocks. The documented fix is to serve the auth handler
+from our own domain so the handshake is first-party.
 
-**Attempted 2026-08-05 and rolled back the same night.** Flipping authDomain
-alone broke sign-in immediately with `AADSTS50011`, because the redirect URI
-becomes `https://diary.dhanamfinance.com/__/auth/handler`, which was not
-registered in Azure. The popup path uses the same URI, so browsers broke too.
+**Done already:**
+- nginx proxies `/__/auth/` to Firebase. Verified byte-identical to the real
+  handler. Inert while authDomain points at firebaseapp.com — safe to leave.
+- Service worker excludes `/__/auth/` from the SPA navigation fallback
+  (`navigateFallbackDenylist` in `vite.config.js`). Deployed. Without this the
+  sign-in popup renders this app instead of Firebase's handler.
+- Suren added `https://diary.dhanamfinance.com/__/auth/handler` in Azure.
 
-**Required order if this is attempted again:**
+**Still failing.** Two attempts to flip authDomain to `diary.dhanamfinance.com`
+(2026-08-05 night, 2026-08-07 morning) both produced `AADSTS50011: The redirect
+URI ... does not match the redirect URIs configured for the application
+1e2755ba-bac8-4556-84bf-e3a52bf3114e`, for browsers as well as the iPad, and
+both were rolled back within minutes.
 
-1. **Azure** — app registration `1e2755ba-bac8-4556-84bf-e3a52bf3114e` →
-   Authentication → add redirect URI
-   `https://diary.dhanamfinance.com/__/auth/handler`.
-   Keep the existing firebaseapp.com URI; both can coexist, so nothing breaks
-   mid-switch.
-2. **Service worker** — exclude `/__/auth/` from the navigation fallback. The
-   PWA service worker otherwise serves cached `index.html` for the handler URL,
-   so the sign-in popup renders the app instead of Firebase's handler.
-3. **Only then** set `VITE_FIREBASE_AUTH_DOMAIN=diary.dhanamfinance.com`,
-   rebuild and deploy.
+**Unverified and the most likely cause:** which *platform* the URI sits under in
+Azure. Firebase's handler uses `response_mode=form_post`, which only matches the
+**Web** platform list. If it was added under **Single-page application (SPA)**,
+Azure rejects it exactly like this. Check:
+App registration `1e2755ba-...` → Authentication → confirm the URI is under
+**Web**, alongside the existing firebaseapp.com one.
 
-**nginx is already prepared** — `/__/auth/` proxies to Firebase and was verified
-byte-identical to the real handler. That block is inert while authDomain points
-at firebaseapp.com, so it is safe to leave in place.
+**Do NOT trust these checks — all three gave false positives here:**
+- `curl` against the OAuth authorize endpoint. It returns HTTP 200 with a
+  JS-rendered page, so the AADSTS error is never in the response body. A
+  deliberately invalid URI "passed" this check.
+- "Web login still works" without unregistering the service worker first. The
+  browser serves a cached bundle, so the test cannot fail.
+- Any regex/grep assertion that has not been shown to fail on the bad case.
+Always include a negative control.
 
-**Verifying any auth change:** unregister the service worker before testing, or
-the browser serves a cached bundle and the test cannot fail — which is exactly
-how the 2026-08-05 breakage got past a "login still works" check.
+**Alternative worth considering instead:** do Microsoft OAuth natively in the
+shell (`ASWebAuthenticationSession` in Swift), then hand the credential to the
+web layer via `signInWithCredential`. That needs a *mobile* redirect URI
+(`msauth.finance.dhanam.diary://auth`) under **Mobile and desktop applications**
+— a separate list that cannot affect the web flow at all. More Swift work, but
+zero production risk and it removes the whole class of problem (WebView storage
+rules, service worker interference, shared auth path).
+
+**Also still to do for the native app**, independent of sign-in: wire PencilKit
+into the diary (it currently uses the web canvas) and convert `PKDrawing` to the
+`src/ink` JSON format so handwriting renders on laptops and in PDF export.
+PencilKit itself is proven working on device.
 
 ---
 
