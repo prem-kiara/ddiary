@@ -168,7 +168,7 @@ functions/
 Set in `.env` (frontend, never committed):
 ```
 VITE_FIREBASE_API_KEY
-VITE_FIREBASE_AUTH_DOMAIN         # currently ddiary-a72ca.firebaseapp.com — see the note below before changing
+VITE_FIREBASE_AUTH_DOMAIN         # diary.dhanamfinance.com since 2026-08-07 — see the note below
 VITE_FIREBASE_PROJECT_ID
 VITE_FIREBASE_STORAGE_BUCKET
 VITE_FIREBASE_MESSAGING_SENDER_ID
@@ -188,10 +188,20 @@ SENDER_EMAIL=tech@dhanam.finance
 ```
 
 
-### Firebase authDomain / iPad sign-in — OPEN ISSUE (handed over 2026-08-07)
+### Firebase authDomain / iPad sign-in — root cause found, flip deployed 2026-08-07
 
-**Production is on `ddiary-a72ca.firebaseapp.com` and web sign-in works. Leave
-it that way unless the Azure question below is settled.**
+**Current state:** authDomain is `diary.dhanamfinance.com` (flipped and deployed
+2026-08-07 afternoon). Sign-in verification per the protocol below is the
+gate on calling this closed: web (private window + service worker unregistered),
+then iPad `signInWithRedirect`.
+
+**Root cause of both `AADSTS50011` failures (2026-08-05 night, 2026-08-07
+morning):** the Azure redirect URI *was* registered, and under the correct
+**Web** platform — but typo'd as `/__auth/handler` (missing the slash before
+`auth`), so Entra's exact-match check rejected the real URI. Screenshots of the
+Authentication blade settled it: platform type was never the problem (ruling
+out the suspected Web-vs-SPA mix-up); spelling was. Corrected 2026-08-07 by
+Prem, character-checked against the working firebaseapp.com row.
 
 **The goal.** The native iOS shell (see `ios/`, branch `feat/native-ink`) cannot
 sign in. WKWebView blocks popups, so `signInWithPopup` fails outright with
@@ -201,26 +211,19 @@ because Firebase parks the handshake state on the authDomain origin — third-pa
 storage, which WebKit blocks. The documented fix is to serve the auth handler
 from our own domain so the handshake is first-party.
 
-**Done already:**
-- nginx proxies `/__/auth/` to Firebase. Verified byte-identical to the real
-  handler. Inert while authDomain points at firebaseapp.com — safe to leave.
-- Service worker excludes `/__/auth/` from the SPA navigation fallback
-  (`navigateFallbackDenylist` in `vite.config.js`). Deployed. Without this the
-  sign-in popup renders this app instead of Firebase's handler.
-- Suren added `https://diary.dhanamfinance.com/__/auth/handler` in Azure.
-
-**Still failing.** Two attempts to flip authDomain to `diary.dhanamfinance.com`
-(2026-08-05 night, 2026-08-07 morning) both produced `AADSTS50011: The redirect
-URI ... does not match the redirect URIs configured for the application
-1e2755ba-bac8-4556-84bf-e3a52bf3114e`, for browsers as well as the iPad, and
-both were rolled back within minutes.
-
-**Unverified and the most likely cause:** which *platform* the URI sits under in
-Azure. Firebase's handler uses `response_mode=form_post`, which only matches the
-**Web** platform list. If it was added under **Single-page application (SPA)**,
-Azure rejects it exactly like this. Check:
-App registration `1e2755ba-...` → Authentication → confirm the URI is under
-**Web**, alongside the existing firebaseapp.com one.
+**Done (all verified 2026-08-07):**
+- nginx proxies `/__/auth/` to Firebase — all five handler resources
+  (`handler`, `handler.js`, `experiments.js`, `iframe`, `iframe.js`)
+  byte-identical to the firebaseapp.com originals.
+- Service worker excludes `/__/*` from the SPA navigation fallback
+  (`navigateFallbackDenylist: [/^\/__\//]` in `vite.config.js`). Deployed —
+  confirmed present in the live `sw.js`. Without this the sign-in popup renders
+  this app instead of Firebase's handler.
+- Azure Web redirect URI fixed to exactly
+  `https://diary.dhanamfinance.com/__/auth/handler`; firebaseapp.com URI kept
+  alongside (both coexist, so a rollback needs no Azure change).
+- `VITE_FIREBASE_AUTH_DOMAIN=diary.dhanamfinance.com` built and deployed;
+  live bundle confirmed to carry the new authDomain.
 
 **Do NOT trust these checks — all three gave false positives here:**
 - `curl` against the OAuth authorize endpoint. It returns HTTP 200 with a
@@ -231,13 +234,18 @@ App registration `1e2755ba-...` → Authentication → confirm the URI is under
 - Any regex/grep assertion that has not been shown to fail on the bad case.
 Always include a negative control.
 
-**Alternative worth considering instead:** do Microsoft OAuth natively in the
+**Rollback if sign-in ever regresses:** set
+`VITE_FIREBASE_AUTH_DOMAIN=ddiary-a72ca.firebaseapp.com` in `.env`, rebuild,
+scp to EC2 (~3 min). No Azure or nginx change needed — both URIs are
+registered and the proxy is inert under the firebaseapp.com authDomain.
+
+**Fallback if the iPad retest still fails:** do Microsoft OAuth natively in the
 shell (`ASWebAuthenticationSession` in Swift), then hand the credential to the
-web layer via `signInWithCredential`. That needs a *mobile* redirect URI
-(`msauth.finance.dhanam.diary://auth`) under **Mobile and desktop applications**
-— a separate list that cannot affect the web flow at all. More Swift work, but
-zero production risk and it removes the whole class of problem (WebView storage
-rules, service worker interference, shared auth path).
+web layer via `signInWithCredential`. Its Azure prerequisite is already done —
+`msauth.finance.dhanam.diary://auth` is registered under the iOS/macOS platform
+(2026-08-07), a separate list that cannot affect the web flow at all. More
+Swift work, but zero production risk and it removes the whole class of problem
+(WebView storage rules, service worker interference, shared auth path).
 
 **Also still to do for the native app**, independent of sign-in: wire PencilKit
 into the diary (it currently uses the web canvas) and convert `PKDrawing` to the
@@ -519,5 +527,6 @@ pm2 restart ddiary-server   # or ddiary-crons
 | 2026-05-26 | Fixed WhatsApp task link — `buildTaskAppLink` was returning bare `/tasks` (no task ID) for personal tasks and `?workspace=` (wrong param) for workspace tasks; now uses correct deep link format: `/tasks?task=<id>` and `/tasks?task=<id>&wsId=<wsId>`; also updated `APP_URL` from legacy `dhanamdiary.web.app` to `diary.dhanamfinance.com` | `src/utils/whatsapp.js` |
 | 2026-05-26 | Multi-recipient email — `SendNowPanel` now supports adding multiple recipients (pills + search, "Email All N" button, per-pill WhatsApp); `WorkspaceCollabPanel` and `TaskCard` both gain an "Also send to…" toggle that adds extra recipients to any on-demand email send | `src/components/shared/SendNowPanel.jsx`, `src/components/WorkspaceCollabPanel.jsx`, `src/components/TaskManager/TaskCard.jsx` |
 | 2026-05-26 | On-demand Email + WhatsApp for Diary, Sheets, and Team Board tasks — added `sendDiaryShareNow`/`sendSheetShareNow` to `emailNotifications.js`; added `sendDiaryWhatsApp`/`sendSheetWhatsApp` to `whatsapp.js`; created reusable `SendNowPanel` (org search + contact phone lookup + Email Now + WhatsApp buttons); added "Send" button to `DiaryView` (inline panel below action row); added "Send" button to `GridToolbar` (inline panel below toolbar); added Email Now + WhatsApp buttons to `WorkspaceCollabPanel` non-compact mode (after Reassign section); threaded `showToast` through `TaskDetailModal` → `WorkspaceCollabPanel` and `App.jsx SheetGridPage` → `SpreadsheetGrid` | `src/utils/emailNotifications.js`, `src/utils/whatsapp.js`, `src/components/shared/SendNowPanel.jsx` (new), `src/components/DiaryView.jsx`, `src/components/SpreadsheetGrid/GridToolbar.jsx`, `src/components/SpreadsheetGrid/index.jsx`, `src/components/WorkspaceCollabPanel.jsx`, `src/components/KanbanBoard/TaskDetailModal.jsx`, `src/App.jsx` |
+| 2026-08-07 | **authDomain switched to diary.dhanamfinance.com** — root cause of the 2026-08-05 `AADSTS50011` incident was a typo'd Azure redirect URI (`/__auth/handler`, missing slash, under Web). Fixed in the portal (exact URI verified char-by-char against the working firebaseapp.com entry), added `navigateFallbackDenylist: [/^\/__\//]` to the PWA workbox config, verified all 5 `/__/auth/*` resources byte-identical through nginx, then flipped `VITE_FIREBASE_AUTH_DOMAIN` and deployed. Mobile URI `msauth.finance.dhanam.diary://auth` (iOS/macOS) also registered for a possible future native sign-in. | `vite.config.js`, `.env` (not committed), Azure portal, `CLAUDE.md` |
 | 2026-07-22 | **Incident: email + reminders silently down ~1 month (since ~2026-06-20).** codpulse (Kiara Microcredit) took over port 3002 while `ddiary-server`/`ddiary-crons` had dropped out of PM2, so nginx `/api/notify` hit codpulse and returned 404 ("Could not send email" in the app). Fix (live on EC2): DDiary moved to port 3003 (`.env`), nginx `proxy_pass` repointed, both PM2 processes restarted + `pm2 save`; codpulse left untouched on 3002. Crons then cleared the due-reminder backlog (16 sent, 0 errors; Firestore lock prevents duplicates). Repo synced to match production. | `ec2/.env.template`, `ec2/server.js`, `ec2/nginx-diary.dhanamfinance.com.conf`, `SETUP-GUIDE.md`, `CLAUDE.md` |
 | 2026-06-09 | Auto-number `#` column in DiaryEditor tables — any table whose first column header is exactly `#` now auto-numbers data rows (1, 2, 3 …) dynamically; renumbering fires on every keystroke (`handleEditorInput` rAF), on Enter/Tab new-row creation, on right-click row insert/delete, and on version history restore; cursor skips the `#` cell automatically when a new row is added via Enter or Tab | `src/components/DiaryEditor/utils/tableUtils.js`, `src/components/DiaryEditor/index.jsx` |
